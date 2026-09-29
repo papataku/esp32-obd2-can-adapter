@@ -24,8 +24,8 @@ bool CanMonitor::begin() {
                            TWAI_ALERT_BUS_RECOVERED | TWAI_ALERT_ERR_PASS |
                            TWAI_ALERT_ABOVE_ERR_WARN | TWAI_ALERT_BELOW_ERR_WARN;
 
-  const auto timing = TWAI_TIMING_CONFIG_500KBITS();
-  const auto filter = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+  const twai_timing_config_t timing = TWAI_TIMING_CONFIG_500KBITS();
+  const twai_filter_config_t filter = TWAI_FILTER_CONFIG_ACCEPT_ALL();
   if (twai_driver_install(&general, &timing, &filter) != ESP_OK) {
     vQueueDelete(frame_queue_); frame_queue_ = nullptr;
     setError("twai_driver_install failed"); return false;
