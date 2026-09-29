@@ -5,6 +5,8 @@ ESP32を使って、**ELM327互換としても使える高機能CAN/OBD-IIアダ
 初期ターゲットは **M5Dial (ESP32-S3) + M5Stack Mini CAN Unit U179** です。  
 単なるELM327エミュレータではなく、RAW CAN、ISO-TP、OBD-II、UDS、ECU discovery、USB Native protocolを一つのデバイスにまとめます。
 
+> **Current implementation:** `main` is currently the Phase 1 receive-only baseline. See [docs/STATUS.md](docs/STATUS.md) for verified and pending gates.
+
 ## 目的
 
 市販のKW905/ELM327系アダプタは手軽ですが、ELM内部処理やBLE/Serial経由で情報が抽象化されるため、以下の用途では制約があります。
