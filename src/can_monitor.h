@@ -40,6 +40,7 @@ class CanMonitor {
  private:
   static void rxTaskThunk(void* arg);
   void rxTask();
+  void maybeUpdateDriverStats(uint64_t now_us);
   void updateDriverStats();
   void setError(const char* message);
 
