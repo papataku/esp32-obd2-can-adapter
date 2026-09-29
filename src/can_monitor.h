@@ -1,0 +1,55 @@
+#pragma once
+
+#include <Arduino.h>
+#include <driver/twai.h>
+
+namespace m5can {
+
+struct CapturedFrame {
+  uint64_t timestamp_us = 0;
+  uint32_t identifier = 0;
+  uint8_t dlc = 0;
+  bool extended = false;
+  bool rtr = false;
+  bool self = false;
+  uint8_t data[8]{};
+};
+
+struct CanStats {
+  uint64_t rx_frames = 0;
+  uint64_t std_frames = 0;
+  uint64_t ext_frames = 0;
+  uint64_t rtr_frames = 0;
+  uint64_t app_queue_drops = 0;
+  uint32_t driver_rx_missed = 0;
+  uint32_t driver_rx_overrun = 0;
+  uint32_t driver_bus_error = 0;
+  uint32_t driver_arb_lost = 0;
+  uint32_t rx_queue_depth = 0;
+  twai_state_t state = TWAI_STATE_STOPPED;
+};
+
+class CanMonitor {
+ public:
+  bool begin();
+  bool pop(CapturedFrame& frame, TickType_t wait_ticks = 0);
+  CanStats stats() const;
+  bool running() const { return running_; }
+  const char* lastError() const { return last_error_; }
+
+ private:
+  static void rxTaskThunk(void* arg);
+  void rxTask();
+  void updateDriverStats();
+  void setError(const char* message);
+
+  QueueHandle_t frame_queue_ = nullptr;
+  TaskHandle_t rx_task_ = nullptr;
+  mutable portMUX_TYPE stats_mux_ = portMUX_INITIALIZER_UNLOCKED;
+  CanStats stats_{};
+  volatile bool running_ = false;
+  uint64_t last_status_poll_us_ = 0;
+  char last_error_[96] = "not started";
+};
+
+}  // namespace m5can
