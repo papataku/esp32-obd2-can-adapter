@@ -8,7 +8,7 @@ serial = (root / "src" / "serial_protocol.cpp").read_text()
 
 checks = {
     "listen-only present": "TWAI_MODE_LISTEN_ONLY" in src,
-    "TX queue disabled": "kTwaiTxQueueLen = 0" in cfg,
+    "TX queue constant disabled": "kTwaiTxQueueLen = 0" in cfg,\n    "TWAI config TX queue disabled": "general.tx_queue_len = 0" in src,
     "no twai_transmit": "twai_transmit(" not in src,
     "no normal mode": "TWAI_MODE_NORMAL" not in src,
     "no TX lease": "TX_LEASE" not in src,
