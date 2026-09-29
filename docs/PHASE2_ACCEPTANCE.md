@@ -16,9 +16,11 @@ Expected:
 - all C++ translation units compile with host warnings-as-errors
 - C++ Native protocol tests pass
 - Python Native protocol tests pass
+- capture-validator tests pass
 - static safety check confirms:
   - Listen-Only remains present
-  - TX queue remains zero
+  - TX queue constant is zero
+  - effective TWAI `tx_queue_len` is zero
   - no `twai_transmit()`
   - no Normal mode
   - no TX Lease
@@ -50,25 +52,53 @@ Expected:
 Run:
 
 ```bash
-python3 tools/native_capture.py --port /dev/cu.usbmodemXXXX --jsonl logs/test.jsonl
+python3 tools/native_capture.py \
+  --port /dev/cu.usbmodemXXXX \
+  --jsonl logs/test.jsonl
 ```
 
-Capture representative vehicle traffic.
+Capture representative active vehicle traffic for at least 120 seconds.
 
-Required:
+Then run the strict acceptance validator:
 
-- malformed packet count = 0
+```bash
+PYTHONPATH=tools python3 tools/validate_capture.py \
+  logs/<capture>.m5can \
+  --min-duration 120 \
+  --report logs/<capture>-acceptance.json
+```
+
+The validator exits 0 only when all of the following are satisfied:
+
+- CAN frames are present
+- STATS packets are present
+- malformed Native packets = 0
+- semantic decode errors = 0
 - unexplained device sequence gaps = 0
+- CAN timestamp regressions = 0
+- capture timestamp span meets `--min-duration`
 - app drop = 0
 - driver missed = 0
 - driver overrun = 0
-- no reset/hang
-- M5Dial remains responsive
+- bus error count = 0
+- arbitration-lost count = 0
+- Native host-input error count = 0
 
-Then run:
+The JSON report also records:
+
+- CAN frame count
+- standard / extended / RTR counts
+- timestamp span
+- average observed CAN frame rate
+- packet type counts
+- maximum observed error counters
+
+For independent re-decoding, also run:
 
 ```bash
-python3 tools/decode_log.py logs/<capture>.m5can --jsonl logs/<capture>.jsonl
+python3 tools/decode_log.py \
+  logs/<capture>.m5can \
+  --jsonl logs/<capture>.jsonl
 ```
 
 Expected: `bad=0`.
@@ -80,6 +110,7 @@ Do not proceed to Phase 3 if any of these occur:
 - Native packet corruption under normal traffic
 - sequence gaps not explained by reconnect/reset
 - receive drops under expected bus load
+- CAN timestamp regression without an understood device reset
 - text/native mode boundary ambiguity
 - host input can starve CAN draining
 - any CAN TX path appears in Phase 2
