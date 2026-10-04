@@ -27,6 +27,7 @@ struct CanStats {
   uint64_t tx_success = 0;
   uint64_t query_count = 0;
   uint64_t query_timeout = 0;
+  bool query_active = false;
   uint32_t driver_rx_missed = 0;
   uint32_t driver_rx_overrun = 0;
   uint32_t driver_bus_error = 0;
@@ -46,6 +47,7 @@ class CanMonitor {
   bool acquireLease(uint32_t duration_ms);
   void revokeLease();
   uint32_t leaseRemainingMs() const;
+  bool faultLocked() const { return fault_locked_; }
   bool query(const DiagnosticRequest& request, DiagnosticResult& result,
              TickType_t wait_ticks);
 

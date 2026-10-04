@@ -7,6 +7,18 @@
 #include "app_config.h"
 
 namespace m5can {
+namespace {
+struct QueryActiveReset {
+  CanStats* stats = nullptr;
+  portMUX_TYPE* mux = nullptr;
+  ~QueryActiveReset() {
+    if (!stats || !mux) return;
+    portENTER_CRITICAL(mux);
+    stats->query_active = false;
+    portEXIT_CRITICAL(mux);
+  }
+};
+}  // namespace
 
 void CanMonitor::setError(const char* message) {
   std::strncpy(last_error_, message ? message : "unknown", sizeof(last_error_) - 1);
@@ -250,6 +262,10 @@ bool CanMonitor::appendSingleFrameResponse(const DiagnosticRequest& request,
 
 DiagnosticResult CanMonitor::performQuery(const DiagnosticRequest& request) {
   DiagnosticResult result{};
+  portENTER_CRITICAL(&stats_mux_);
+  stats_.query_active = true;
+  portEXIT_CRITICAL(&stats_mux_);
+  QueryActiveReset query_active_reset{&stats_, &stats_mux_};
   const uint64_t transaction_start_us = static_cast<uint64_t>(esp_timer_get_time());
 
   portENTER_CRITICAL(&stats_mux_);
