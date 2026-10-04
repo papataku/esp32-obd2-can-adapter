@@ -13,10 +13,20 @@ void putU32(uint8_t* p, uint32_t v) {
 void putU64(uint8_t* p, uint64_t v) {
   for (int i = 0; i < 8; ++i) p[i] = static_cast<uint8_t>(v >> (8 * i));
 }
-void uppercase(char* s) {
-  for (; *s; ++s) {
-    if (*s >= 'a' && *s <= 'z') *s = static_cast<char>(*s - 'a' + 'A');
+void uppercaseCopy(const char* input, char* output, size_t capacity) {
+  if (!output || capacity == 0) return;
+  size_t p = 0;
+  if (input) {
+    for (const char* s = input; *s && p + 1 < capacity; ++s) {
+      const char c = *s;
+      output[p++] = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+    }
   }
+  output[p] = '\0';
+}
+bool isHexChar(char c) {
+  return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') ||
+         (c >= 'a' && c <= 'f');
 }
 
 }  // namespace
@@ -41,7 +51,7 @@ void SerialProtocol::emitTextHello() {
   Serial.printf("#HELLO,%s,%s,mode=LISTEN_ONLY,bitrate=%lu,tx=DISABLED,proto=TEXT\n",
                 cfg::kFirmwareName, cfg::kFirmwareVersion,
                 static_cast<unsigned long>(cfg::kCanBitrate));
-  Serial.println("#COMMANDS,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON");
+  Serial.println("#COMMANDS,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON; ATZ enters ELM");
 }
 
 void SerialProtocol::emitTextFrame(const CapturedFrame& frame) {
@@ -60,6 +70,64 @@ void SerialProtocol::emitTextFrame(const CapturedFrame& frame) {
                 static_cast<unsigned long>(frame.identifier),
                 static_cast<unsigned>(frame.dlc), data_hex,
                 frame.rtr ? "RTR" : "DATA");
+}
+
+bool SerialProtocol::looksLikeElmCommand(const char* text) const {
+  if (!text) return false;
+  char compact[96]{};
+  size_t p = 0;
+  for (const char* s = text; *s && p + 1 < sizeof(compact); ++s) {
+    if (*s == ' ' || *s == '\t') continue;
+    compact[p++] = *s;
+  }
+  compact[p] = '\0';
+  if (p >= 2 &&
+      (compact[0] == 'A' || compact[0] == 'a') &&
+      (compact[1] == 'T' || compact[1] == 't')) return true;
+  if (p != 4 && p != 6) return false;
+  for (size_t i = 0; i < p; ++i) {
+    if (!isHexChar(compact[i])) return false;
+  }
+  return true;
+}
+
+void SerialProtocol::enterElmMode() {
+  if (elm_mode_) return;
+  stream_enabled_ = false;
+  native_mode_ = false;
+  elm_mode_ = true;
+  elm_.reset();
+}
+
+void SerialProtocol::leaveElmMode() {
+  elm_mode_ = false;
+  stream_enabled_ = false;
+}
+
+void SerialProtocol::writeElmLine(const char* text) {
+  if (text && text[0]) {
+    Serial.write(reinterpret_cast<const uint8_t*>(text), std::strlen(text));
+  }
+  static const uint8_t kCr[] = {'\r'};
+  static const uint8_t kLf[] = {'\n'};
+  Serial.write(kCr, sizeof(kCr));
+  if (elm_.linefeed()) Serial.write(kLf, sizeof(kLf));
+}
+
+void SerialProtocol::writeElmPrompt() {
+  static const uint8_t kPrompt[] = {'>'};
+  Serial.write(kPrompt, sizeof(kPrompt));
+}
+
+void SerialProtocol::handleElmLine() {
+  const bool echo_before = elm_.echo();
+  if (echo_before) writeElmLine(text_input_);
+
+  const ElmResult result = elm_.execute(text_input_);
+  if (result.reply[0]) writeElmLine(result.reply);
+  writeElmPrompt();
+
+  if (result.action == ElmAction::ExitElmMode) leaveElmMode();
 }
 
 void SerialProtocol::emitNativePacket(native::PacketType type, const uint8_t* payload,
@@ -131,12 +199,13 @@ void SerialProtocol::emitNativeFrame(const CapturedFrame& frame) {
 }
 
 void SerialProtocol::emitFrame(const CapturedFrame& frame) {
-  if (!stream_enabled_) return;
+  if (elm_mode_ || !stream_enabled_) return;
   if (native_mode_) emitNativeFrame(frame);
   else emitTextFrame(frame);
 }
 
 void SerialProtocol::emitStats(bool forced) {
+  if (elm_mode_) return;
   const uint32_t now = millis();
   if (!forced && now - last_stats_ms_ < cfg::kStatsEmitMs) return;
   last_stats_ms_ = now;
@@ -161,6 +230,7 @@ void SerialProtocol::emitStats(bool forced) {
 
 void SerialProtocol::enterNativeMode() {
   if (native_mode_) return;
+  elm_mode_ = false;
   stream_enabled_ = false;
   Serial.println("#OK,NATIVE,ON,COBS+CRC32,version=1");
   Serial.flush();
@@ -168,7 +238,7 @@ void SerialProtocol::enterNativeMode() {
   native_discard_until_delimiter_ = false;
   native_mode_ = true;
   emitNativeHello();
-  emitNativeEvent("TX_DISABLED_PHASE2");
+  emitNativeEvent("TX_DISABLED_PHASE3A");
 }
 
 void SerialProtocol::leaveNativeMode() {
@@ -181,26 +251,30 @@ void SerialProtocol::leaveNativeMode() {
 }
 
 void SerialProtocol::handleTextLine() {
-  text_input_[text_input_len_] = '\0';
-  uppercase(text_input_);
+  if (looksLikeElmCommand(text_input_)) {
+    enterElmMode();
+    handleElmLine();
+    return;
+  }
 
-  if (!std::strcmp(text_input_, "INFO") || !std::strcmp(text_input_, "ATI")) {
+  char command[129]{};
+  uppercaseCopy(text_input_, command, sizeof(command));
+  if (!std::strcmp(command, "INFO")) {
     emitTextHello();
-  } else if (!std::strcmp(text_input_, "STATS")) {
+  } else if (!std::strcmp(command, "STATS")) {
     emitStats(true);
-  } else if (!std::strcmp(text_input_, "STREAM ON")) {
+  } else if (!std::strcmp(command, "STREAM ON")) {
     stream_enabled_ = true;
     Serial.println("#OK,STREAM,ON");
-  } else if (!std::strcmp(text_input_, "STREAM OFF")) {
+  } else if (!std::strcmp(command, "STREAM OFF")) {
     stream_enabled_ = false;
     Serial.println("#OK,STREAM,OFF");
-  } else if (!std::strcmp(text_input_, "NATIVE ON")) {
+  } else if (!std::strcmp(command, "NATIVE ON")) {
     enterNativeMode();
-  } else if (!std::strcmp(text_input_, "HELP") || !std::strcmp(text_input_, "?")) {
-    Serial.println("#HELP,Phase2 receive-only: INFO STATS HELP STREAM ON STREAM OFF NATIVE ON");
-    Serial.println("#HELP,Native: PING GET_INFO GET_STATS START_STREAM STOP_STREAM TEXT_MODE");
+  } else if (!std::strcmp(command, "HELP") || !std::strcmp(command, "?")) {
+    Serial.println("#HELP,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON; ATZ enters ELM");
   } else if (text_input_len_) {
-    Serial.printf("#ERR,UNKNOWN_COMMAND,%s\n", text_input_);
+    Serial.printf("#ERR,UNKNOWN_COMMAND,%s\n", command);
   }
 }
 
@@ -287,9 +361,15 @@ void SerialProtocol::pollInput() {
     const char c = static_cast<char>(byte);
     if (c == '\n' || c == '\r') {
       if (text_overflow_) {
-        Serial.println("#ERR,LINE_TOO_LONG");
+        if (elm_mode_) {
+          writeElmLine("?");
+          writeElmPrompt();
+        } else {
+          Serial.println("#ERR,LINE_TOO_LONG");
+        }
       } else if (text_input_len_) {
-        handleTextLine();
+        if (elm_mode_) handleElmLine();
+        else handleTextLine();
       }
       text_input_len_ = 0;
       text_overflow_ = false;

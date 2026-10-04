@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include "can_monitor.h"
+#include "elm_compat.h"
 #include "native_protocol.h"
 
 namespace m5can {
@@ -15,11 +16,19 @@ class SerialProtocol {
   void pollInput();
   void emitFrame(const CapturedFrame& frame);
   void emitStats(bool forced = false);
+  bool elmMode() const { return elm_mode_; }
 
  private:
   void emitTextHello();
   void emitTextFrame(const CapturedFrame& frame);
   void handleTextLine();
+
+  void enterElmMode();
+  void leaveElmMode();
+  void handleElmLine();
+  void writeElmLine(const char* text);
+  void writeElmPrompt();
+  bool looksLikeElmCommand(const char* text) const;
 
   void enterNativeMode();
   void leaveNativeMode();
@@ -36,6 +45,8 @@ class SerialProtocol {
   const char* stateName(twai_state_t state) const;
 
   CanMonitor& monitor_;
+  ElmCompat elm_{};
+  bool elm_mode_ = false;
   bool native_mode_ = false;
   bool stream_enabled_ = true;
   uint16_t native_tx_sequence_ = 0;
