@@ -6,6 +6,7 @@ namespace m5can {
 
 constexpr size_t kDiagnosticMaxPayload = 96;
 constexpr size_t kDiagnosticMaxResponses = 8;
+constexpr size_t kDiagnosticMaxRawFrames = 48;
 
 enum class DiagnosticStatus : uint8_t {
   Ok,
@@ -17,7 +18,7 @@ enum class DiagnosticStatus : uint8_t {
   DriverError,
   BusOff,
   ModeError,
-  MultiFrameRequired,
+  IsoTpError,
 };
 
 struct DiagnosticRequest {
@@ -25,6 +26,12 @@ struct DiagnosticRequest {
   uint8_t length = 0;
   uint8_t data[8]{};
   uint32_t timeout_ms = 200;
+};
+
+struct DiagnosticRawFrame {
+  uint32_t can_id = 0;
+  uint8_t dlc = 0;
+  uint8_t data[8]{};
 };
 
 struct DiagnosticMessage {
@@ -39,6 +46,8 @@ struct DiagnosticResult {
   uint32_t transaction_us = 0;
   uint8_t response_count = 0;
   DiagnosticMessage responses[kDiagnosticMaxResponses]{};
+  uint8_t raw_frame_count = 0;
+  DiagnosticRawFrame raw_frames[kDiagnosticMaxRawFrames]{};
 };
 
 class DiagnosticPolicy {
@@ -48,7 +57,8 @@ class DiagnosticPolicy {
   static bool allowedResponseId(uint32_t can_id);
   static bool responseMatches(const DiagnosticRequest& request,
                               const uint8_t* payload, size_t payload_len);
-  static uint32_t transactionBudgetMs(uint32_t response_timeout_ms);
+  static uint32_t transactionBudgetMs(uint32_t response_timeout_ms,
+                                      bool allow_response_pending = false);
 };
 
 }  // namespace m5can

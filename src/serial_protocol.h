@@ -28,7 +28,7 @@ class SerialProtocol {
   void handleElmLine();
   void writeElmLine(const char* text);
   void writeElmPrompt();
-  void writeElmDiagnosticMessage(const DiagnosticMessage& message);
+  void writeElmRawFrame(const DiagnosticRawFrame& frame);
   void writeElmDiagnosticResult(const DiagnosticResult& result);
   bool looksLikeElmCommand(const char* text) const;
 
@@ -49,6 +49,7 @@ class SerialProtocol {
   CanMonitor& monitor_;
   ElmCompat elm_{};
   bool elm_mode_ = false;
+  bool elm_query_pending_ = false;
   bool native_mode_ = false;
   bool stream_enabled_ = true;
   uint16_t native_tx_sequence_ = 0;

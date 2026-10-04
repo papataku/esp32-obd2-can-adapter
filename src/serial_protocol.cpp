@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "app_config.h"
+#include "elm_response_formatter.h"
 
 namespace m5can {
 namespace {
@@ -98,12 +99,14 @@ void SerialProtocol::enterElmMode() {
   if (elm_mode_) return;
   stream_enabled_ = false;
   native_mode_ = false;
+  elm_query_pending_ = false;
   elm_mode_ = true;
   elm_.reset();
 }
 
 void SerialProtocol::leaveElmMode() {
   monitor_.revokeLease();
+  elm_query_pending_ = false;
   elm_mode_ = false;
   stream_enabled_ = false;
 }
@@ -121,43 +124,24 @@ void SerialProtocol::writeElmPrompt() {
   Serial.write(kPrompt, sizeof(kPrompt));
 }
 
-void SerialProtocol::writeElmDiagnosticMessage(const DiagnosticMessage& message) {
-  static constexpr char kHex[] = "0123456789ABCDEF";
-  char id[9]{};
-  if (elm_.headers()) {
-    std::snprintf(id, sizeof(id), "%08lX",
-                  static_cast<unsigned long>(message.can_id));
-    serialWriteText(id);
-    if (elm_.spaces() && message.length) serialWriteText(" ");
+void SerialProtocol::writeElmRawFrame(
+    const DiagnosticRawFrame& frame) {
+  char line[128]{};
+  if (ElmResponseFormatter::formatRawFrame(
+          frame, elm_.headers(), elm_.spaces(),
+          line, sizeof(line))) {
+    writeElmLine(line);
   }
-
-  if (!elm_.autoFormatting()) {
-    const uint8_t pci = static_cast<uint8_t>(message.length & 0x0F);
-    char byte[3] = {kHex[(pci >> 4) & 0x0F], kHex[pci & 0x0F], '\0'};
-    serialWriteText(byte);
-    if (elm_.spaces() && message.length) serialWriteText(" ");
-  }
-
-  for (uint16_t i = 0; i < message.length; ++i) {
-    const uint8_t value = message.data[i];
-    char byte[3] = {kHex[(value >> 4) & 0x0F], kHex[value & 0x0F], '\0'};
-    serialWriteText(byte);
-    if (elm_.spaces() && i + 1 < message.length) serialWriteText(" ");
-  }
-
-  static const uint8_t kCr[] = {'\r'};
-  static const uint8_t kLf[] = {'\n'};
-  Serial.write(kCr, sizeof(kCr));
-  if (elm_.linefeed()) Serial.write(kLf, sizeof(kLf));
 }
 
-void SerialProtocol::writeElmDiagnosticResult(const DiagnosticResult& result) {
+void SerialProtocol::writeElmDiagnosticResult(
+    const DiagnosticResult& result) {
   switch (result.status) {
     case DiagnosticStatus::Ok:
-      for (uint8_t i = 0; i < result.response_count; ++i) {
-        writeElmDiagnosticMessage(result.responses[i]);
+      for (uint8_t i = 0; i < result.raw_frame_count; ++i) {
+        writeElmRawFrame(result.raw_frames[i]);
       }
-      if (!result.response_count) writeElmLine("NO DATA");
+      if (!result.raw_frame_count) writeElmLine("NO DATA");
       break;
     case DiagnosticStatus::NoData:
       writeElmLine("NO DATA");
@@ -175,9 +159,7 @@ void SerialProtocol::writeElmDiagnosticResult(const DiagnosticResult& result) {
     case DiagnosticStatus::BusOff:
       writeElmLine("BUS ERROR");
       break;
-    case DiagnosticStatus::MultiFrameRequired:
-      writeElmLine("BUFFER FULL");
-      break;
+    case DiagnosticStatus::IsoTpError:
     case DiagnosticStatus::DriverError:
     case DiagnosticStatus::ModeError:
     default:
@@ -195,13 +177,17 @@ void SerialProtocol::handleElmLine() {
   if (echo_before) writeElmLine(text_input_);
 
   const ElmResult result = elm_.execute(text_input_);
+  bool prompt_now = true;
+
   switch (result.action) {
     case ElmAction::ReplyOnly:
       if (result.reply[0]) writeElmLine(result.reply);
       break;
 
     case ElmAction::LeaseAcquire:
-      writeElmLine(monitor_.acquireLease(cfg::kTxLeaseDefaultMs) ? "OK" : "CAN ERROR");
+      writeElmLine(
+          monitor_.acquireLease(cfg::kTxLeaseDefaultMs)
+              ? "OK" : "CAN ERROR");
       break;
 
     case ElmAction::LeaseRevoke:
@@ -211,10 +197,12 @@ void SerialProtocol::handleElmLine() {
 
     case ElmAction::LeaseStatus: {
       char status[96]{};
-      std::snprintf(status, sizeof(status), "M5CAN TX=%s REM=%lums HDR=%08lX",
-                    monitor_.leaseRemainingMs() ? "LEASED" : "LOCKED",
-                    static_cast<unsigned long>(monitor_.leaseRemainingMs()),
-                    static_cast<unsigned long>(elm_.effectiveHeader()));
+      std::snprintf(
+          status, sizeof(status),
+          "M5CAN TX=%s REM=%lums HDR=%08lX",
+          monitor_.leaseRemainingMs() ? "LEASED" : "LOCKED",
+          static_cast<unsigned long>(monitor_.leaseRemainingMs()),
+          static_cast<unsigned long>(elm_.effectiveHeader()));
       writeElmLine(status);
       break;
     }
@@ -225,16 +213,18 @@ void SerialProtocol::handleElmLine() {
       request.length = result.request.length;
       std::memcpy(request.data, result.request.data, request.length);
       const uint32_t configured_timeout =
-          elm_.timeout4ms() ? static_cast<uint32_t>(elm_.timeout4ms()) * 4U : 200U;
-      request.timeout_ms = std::max<uint32_t>(20, std::min<uint32_t>(configured_timeout, 1000));
+          elm_.timeout4ms()
+              ? static_cast<uint32_t>(elm_.timeout4ms()) * 4U
+              : 200U;
+      request.timeout_ms =
+          std::max<uint32_t>(
+              20, std::min<uint32_t>(configured_timeout, 1000));
 
-      DiagnosticResult diagnostic{};
-      const uint32_t wait_ms =
-          DiagnosticPolicy::transactionBudgetMs(request.timeout_ms) + 500U;
-      if (!monitor_.query(request, diagnostic, pdMS_TO_TICKS(wait_ms))) {
+      if (!monitor_.submitQuery(request)) {
         writeElmLine("BUSY");
       } else {
-        writeElmDiagnosticResult(diagnostic);
+        elm_query_pending_ = true;
+        prompt_now = false;
       }
       break;
     }
@@ -244,7 +234,7 @@ void SerialProtocol::handleElmLine() {
       break;
   }
 
-  writeElmPrompt();
+  if (prompt_now) writeElmPrompt();
   if (result.action == ElmAction::ExitElmMode) leaveElmMode();
 }
 
@@ -473,6 +463,16 @@ void SerialProtocol::processNativeByte(uint8_t byte) {
 }
 
 void SerialProtocol::pollInput() {
+  if (elm_mode_ && elm_query_pending_) {
+    DiagnosticResult result{};
+    if (monitor_.pollQueryResult(result)) {
+      elm_query_pending_ = false;
+      writeElmDiagnosticResult(result);
+      writeElmPrompt();
+    }
+    return;
+  }
+
   constexpr size_t kMaxBytesPerPoll = 256;
   size_t processed = 0;
   while (Serial.available() > 0 && processed < kMaxBytesPerPoll) {

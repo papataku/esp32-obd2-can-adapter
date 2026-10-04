@@ -8,6 +8,7 @@ namespace m5can {
 
 enum class IsoTpEventType : uint8_t {
   None,
+  Progress,
   Complete,
   NeedFlowControl,
   Overflow,

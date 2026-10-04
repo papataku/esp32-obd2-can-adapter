@@ -22,6 +22,9 @@ constexpr uint32_t kTxLeaseDefaultMs = 3000;
 constexpr uint32_t kTxLeaseMaxMs = 5000;
 constexpr uint32_t kMinDiagnosticIntervalMs = 50;
 constexpr uint64_t kPostResponseQuietUs = 10000;
+constexpr uint64_t kIsoTpCfTimeoutUs = 100000;
+constexpr uint32_t kResponsePendingExtensionMs = 500;
+constexpr uint32_t kMaxResponsePendingWindowMs = 1000;
 
 constexpr size_t kNativeMaxPayload = 128;
 constexpr size_t kNativeMaxDecodedPacket = 160;
@@ -29,6 +32,6 @@ constexpr size_t kNativeMaxEncodedPacket = 192;
 constexpr uint8_t kNativeProtocolVersion = 1;
 
 constexpr const char* kFirmwareName = "M5CAN-Dial";
-constexpr const char* kFirmwareVersion = "0.3.1-phase3b";
+constexpr const char* kFirmwareVersion = "0.3.2-phase3c";
 
 }  // namespace m5can::cfg

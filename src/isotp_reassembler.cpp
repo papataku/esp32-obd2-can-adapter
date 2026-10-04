@@ -86,7 +86,7 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
       event.type = IsoTpEventType::Collision;
       return event;
     }
-    if (total_len == 0 || total_len > kDiagnosticMaxPayload) {
+    if (total_len <= 7 || total_len > kDiagnosticMaxPayload) {
       event.type = IsoTpEventType::Overflow;
       return event;
     }
@@ -144,6 +144,9 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
       event.response_id = can_id;
       event.message = session->message;
       session->active = false;
+    } else {
+      event.type = IsoTpEventType::Progress;
+      event.response_id = can_id;
     }
     return event;
   }

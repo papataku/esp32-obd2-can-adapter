@@ -43,11 +43,16 @@ class CanMonitor {
   CanStats stats() const;
   bool running() const { return running_; }
   const char* lastError() const { return last_error_; }
+  bool faultLocked() const { return fault_locked_; }
 
   bool acquireLease(uint32_t duration_ms);
   void revokeLease();
   uint32_t leaseRemainingMs() const;
-  bool faultLocked() const { return fault_locked_; }
+
+  bool submitQuery(const DiagnosticRequest& request);
+  bool pollQueryResult(DiagnosticResult& result);
+  bool queryPending() const { return query_in_flight_; }
+
   bool query(const DiagnosticRequest& request, DiagnosticResult& result,
              TickType_t wait_ticks);
 
@@ -57,7 +62,8 @@ class CanMonitor {
 
   bool installDriver(twai_mode_t mode);
   bool switchDriverMode(twai_mode_t mode);
-  CapturedFrame captureMessage(const twai_message_t& message, uint64_t timestamp_us);
+  CapturedFrame captureMessage(const twai_message_t& message,
+                               uint64_t timestamp_us);
   void maybeUpdateDriverStats(uint64_t now_us);
   void updateDriverStats();
   void setError(const char* message);
@@ -65,10 +71,13 @@ class CanMonitor {
   bool leaseAllowsBudget(uint32_t budget_ms) const;
   bool waitForRateLimit();
   DiagnosticResult performQuery(const DiagnosticRequest& request);
-  bool appendSingleFrameResponse(const DiagnosticRequest& request,
-                                 const CapturedFrame& frame,
-                                 DiagnosticResult& result,
-                                 bool& multi_frame_match);
+
+  esp_err_t transmitOwnedFrame(const twai_message_t& message,
+                               uint32_t wait_ms);
+  static twai_message_t makeDiagnosticRequestFrame(
+      const DiagnosticRequest& request);
+  static twai_message_t makeFlowControlFrame(uint32_t can_id);
+
   void enterFaultLocked(const char* reason);
 
   QueueHandle_t frame_queue_ = nullptr;
@@ -81,6 +90,7 @@ class CanMonitor {
   CanStats stats_{};
   volatile bool running_ = false;
   volatile bool fault_locked_ = false;
+  volatile bool query_in_flight_ = false;
   uint64_t last_status_poll_us_ = 0;
   uint64_t last_tx_us_ = 0;
   uint64_t lease_deadline_ms_ = 0;
