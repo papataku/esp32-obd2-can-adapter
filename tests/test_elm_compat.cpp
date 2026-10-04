@@ -56,6 +56,10 @@ int main() {
   expect_reply(elm, "ATST32", "OK");
   assert(elm.timeout4ms() == 0x32);
 
+  assert(elm.execute("ATM5TX1").action == ElmAction::LeaseAcquire);
+  assert(elm.execute("ATM5TX0").action == ElmAction::LeaseRevoke);
+  assert(elm.execute("ATM5STAT").action == ElmAction::LeaseStatus);
+
   expect_reply(elm, "ATSH18DB33F1", "?");
   expect_reply(elm, "ATCPGG", "?");
   expect_reply(elm, "ATSP6", "?");
@@ -67,7 +71,6 @@ int main() {
   assert(obd.request.extended);
   assert(obd.request.length == 2);
   assert(obd.request.data[0] == 0x01 && obd.request.data[1] == 0x0C);
-  assert(std::strcmp(obd.reply, "M5CAN TX LOCKED") == 0);
 
   ElmResult uds = elm.execute("22 20 12");
   assert(uds.action == ElmAction::VehicleRead);

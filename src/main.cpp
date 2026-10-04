@@ -22,7 +22,7 @@ void setup() {
   }
 
   g_can_ok = true;
-  Serial.println("#READY,Phase 2 receive-only CAN monitor; TX path absent");
+  Serial.println("#READY,Phase 3B ELM read-only TX capability; lease required");
 }
 
 void loop() {

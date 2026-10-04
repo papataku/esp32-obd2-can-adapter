@@ -7,6 +7,9 @@ namespace m5can {
 enum class ElmAction : uint8_t {
   ReplyOnly,
   VehicleRead,
+  LeaseAcquire,
+  LeaseRevoke,
+  LeaseStatus,
   ExitElmMode,
 };
 

@@ -28,6 +28,8 @@ class SerialProtocol {
   void handleElmLine();
   void writeElmLine(const char* text);
   void writeElmPrompt();
+  void writeElmDiagnosticMessage(const DiagnosticMessage& message);
+  void writeElmDiagnosticResult(const DiagnosticResult& result);
   bool looksLikeElmCommand(const char* text) const;
 
   void enterNativeMode();

@@ -1,5 +1,7 @@
 #include "serial_protocol.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 #include "app_config.h"
@@ -13,13 +15,16 @@ void putU32(uint8_t* p, uint32_t v) {
 void putU64(uint8_t* p, uint64_t v) {
   for (int i = 0; i < 8; ++i) p[i] = static_cast<uint8_t>(v >> (8 * i));
 }
-void uppercaseCopy(const char* input, char* output, size_t capacity) {
+void uppercaseCopy(const char* input, char* output, size_t capacity,
+                   bool remove_spaces = false) {
   if (!output || capacity == 0) return;
   size_t p = 0;
   if (input) {
     for (const char* s = input; *s && p + 1 < capacity; ++s) {
-      const char c = *s;
-      output[p++] = (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+      char c = *s;
+      if (remove_spaces && (c == ' ' || c == '\t')) continue;
+      if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+      output[p++] = c;
     }
   }
   output[p] = '\0';
@@ -27,6 +32,10 @@ void uppercaseCopy(const char* input, char* output, size_t capacity) {
 bool isHexChar(char c) {
   return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') ||
          (c >= 'a' && c <= 'f');
+}
+void serialWriteText(const char* text) {
+  if (!text) return;
+  Serial.write(reinterpret_cast<const uint8_t*>(text), std::strlen(text));
 }
 
 }  // namespace
@@ -48,7 +57,7 @@ const char* SerialProtocol::stateName(twai_state_t state) const {
 }
 
 void SerialProtocol::emitTextHello() {
-  Serial.printf("#HELLO,%s,%s,mode=LISTEN_ONLY,bitrate=%lu,tx=DISABLED,proto=TEXT\n",
+  Serial.printf("#HELLO,%s,%s,mode=LISTEN_ONLY,bitrate=%lu,proto=TEXT\n",
                 cfg::kFirmwareName, cfg::kFirmwareVersion,
                 static_cast<unsigned long>(cfg::kCanBitrate));
   Serial.println("#COMMANDS,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON; ATZ enters ELM");
@@ -75,15 +84,9 @@ void SerialProtocol::emitTextFrame(const CapturedFrame& frame) {
 bool SerialProtocol::looksLikeElmCommand(const char* text) const {
   if (!text) return false;
   char compact[96]{};
-  size_t p = 0;
-  for (const char* s = text; *s && p + 1 < sizeof(compact); ++s) {
-    if (*s == ' ' || *s == '\t') continue;
-    compact[p++] = *s;
-  }
-  compact[p] = '\0';
-  if (p >= 2 &&
-      (compact[0] == 'A' || compact[0] == 'a') &&
-      (compact[1] == 'T' || compact[1] == 't')) return true;
+  uppercaseCopy(text, compact, sizeof(compact), true);
+  const size_t p = std::strlen(compact);
+  if (p >= 2 && compact[0] == 'A' && compact[1] == 'T') return true;
   if (p != 4 && p != 6) return false;
   for (size_t i = 0; i < p; ++i) {
     if (!isHexChar(compact[i])) return false;
@@ -100,14 +103,13 @@ void SerialProtocol::enterElmMode() {
 }
 
 void SerialProtocol::leaveElmMode() {
+  monitor_.revokeLease();
   elm_mode_ = false;
   stream_enabled_ = false;
 }
 
 void SerialProtocol::writeElmLine(const char* text) {
-  if (text && text[0]) {
-    Serial.write(reinterpret_cast<const uint8_t*>(text), std::strlen(text));
-  }
+  serialWriteText(text);
   static const uint8_t kCr[] = {'\r'};
   static const uint8_t kLf[] = {'\n'};
   Serial.write(kCr, sizeof(kCr));
@@ -119,14 +121,130 @@ void SerialProtocol::writeElmPrompt() {
   Serial.write(kPrompt, sizeof(kPrompt));
 }
 
+void SerialProtocol::writeElmDiagnosticMessage(const DiagnosticMessage& message) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  char id[9]{};
+  if (elm_.headers()) {
+    std::snprintf(id, sizeof(id), "%08lX",
+                  static_cast<unsigned long>(message.can_id));
+    serialWriteText(id);
+    if (elm_.spaces() && message.length) serialWriteText(" ");
+  }
+
+  if (!elm_.autoFormatting()) {
+    const uint8_t pci = static_cast<uint8_t>(message.length & 0x0F);
+    char byte[3] = {kHex[(pci >> 4) & 0x0F], kHex[pci & 0x0F], '\0'};
+    serialWriteText(byte);
+    if (elm_.spaces() && message.length) serialWriteText(" ");
+  }
+
+  for (uint16_t i = 0; i < message.length; ++i) {
+    const uint8_t value = message.data[i];
+    char byte[3] = {kHex[(value >> 4) & 0x0F], kHex[value & 0x0F], '\0'};
+    serialWriteText(byte);
+    if (elm_.spaces() && i + 1 < message.length) serialWriteText(" ");
+  }
+
+  static const uint8_t kCr[] = {'\r'};
+  static const uint8_t kLf[] = {'\n'};
+  Serial.write(kCr, sizeof(kCr));
+  if (elm_.linefeed()) Serial.write(kLf, sizeof(kLf));
+}
+
+void SerialProtocol::writeElmDiagnosticResult(const DiagnosticResult& result) {
+  switch (result.status) {
+    case DiagnosticStatus::Ok:
+      for (uint8_t i = 0; i < result.response_count; ++i) {
+        writeElmDiagnosticMessage(result.responses[i]);
+      }
+      if (!result.response_count) writeElmLine("NO DATA");
+      break;
+    case DiagnosticStatus::NoData:
+      writeElmLine("NO DATA");
+      break;
+    case DiagnosticStatus::LeaseRequired:
+      writeElmLine("M5CAN TX LOCKED");
+      break;
+    case DiagnosticStatus::InvalidRequest:
+      writeElmLine("?");
+      break;
+    case DiagnosticStatus::Busy:
+    case DiagnosticStatus::RateLimited:
+      writeElmLine("BUSY");
+      break;
+    case DiagnosticStatus::BusOff:
+      writeElmLine("BUS ERROR");
+      break;
+    case DiagnosticStatus::MultiFrameRequired:
+      writeElmLine("BUFFER FULL");
+      break;
+    case DiagnosticStatus::DriverError:
+    case DiagnosticStatus::ModeError:
+    default:
+      writeElmLine("CAN ERROR");
+      break;
+  }
+}
+
 void SerialProtocol::handleElmLine() {
+  char compact[96]{};
+  uppercaseCopy(text_input_, compact, sizeof(compact), true);
+  if (!std::strcmp(compact, "ATZ")) monitor_.revokeLease();
+
   const bool echo_before = elm_.echo();
   if (echo_before) writeElmLine(text_input_);
 
   const ElmResult result = elm_.execute(text_input_);
-  if (result.reply[0]) writeElmLine(result.reply);
-  writeElmPrompt();
+  switch (result.action) {
+    case ElmAction::ReplyOnly:
+      if (result.reply[0]) writeElmLine(result.reply);
+      break;
 
+    case ElmAction::LeaseAcquire:
+      writeElmLine(monitor_.acquireLease(cfg::kTxLeaseDefaultMs) ? "OK" : "CAN ERROR");
+      break;
+
+    case ElmAction::LeaseRevoke:
+      monitor_.revokeLease();
+      writeElmLine("OK");
+      break;
+
+    case ElmAction::LeaseStatus: {
+      char status[96]{};
+      std::snprintf(status, sizeof(status), "M5CAN TX=%s REM=%lums HDR=%08lX",
+                    monitor_.leaseRemainingMs() ? "LEASED" : "LOCKED",
+                    static_cast<unsigned long>(monitor_.leaseRemainingMs()),
+                    static_cast<unsigned long>(elm_.effectiveHeader()));
+      writeElmLine(status);
+      break;
+    }
+
+    case ElmAction::VehicleRead: {
+      DiagnosticRequest request{};
+      request.can_id = result.request.can_id;
+      request.length = result.request.length;
+      std::memcpy(request.data, result.request.data, request.length);
+      const uint32_t configured_timeout =
+          elm_.timeout4ms() ? static_cast<uint32_t>(elm_.timeout4ms()) * 4U : 200U;
+      request.timeout_ms = std::max<uint32_t>(20, std::min<uint32_t>(configured_timeout, 1000));
+
+      DiagnosticResult diagnostic{};
+      const uint32_t wait_ms =
+          DiagnosticPolicy::transactionBudgetMs(request.timeout_ms) + 500U;
+      if (!monitor_.query(request, diagnostic, pdMS_TO_TICKS(wait_ms))) {
+        writeElmLine("BUSY");
+      } else {
+        writeElmDiagnosticResult(diagnostic);
+      }
+      break;
+    }
+
+    case ElmAction::ExitElmMode:
+      if (result.reply[0]) writeElmLine(result.reply);
+      break;
+  }
+
+  writeElmPrompt();
   if (result.action == ElmAction::ExitElmMode) leaveElmMode();
 }
 
@@ -146,7 +264,7 @@ void SerialProtocol::emitNativeHello() {
   size_t p = 0;
   payload[p++] = cfg::kNativeProtocolVersion;
   putU32(&payload[p], cfg::kCanBitrate); p += 4;
-  payload[p++] = 0;
+  payload[p++] = 0;  // Native TX commands are not exposed yet.
   payload[p++] = stream_enabled_ ? 1 : 0;
 
   const size_t name_len = std::strlen(cfg::kFirmwareName);
@@ -214,22 +332,29 @@ void SerialProtocol::emitStats(bool forced) {
     return;
   }
   const CanStats s = monitor_.stats();
-  Serial.printf("#STATS,rx=%llu,std=%llu,ext=%llu,rtr=%llu,drop=%llu,missed=%lu,overrun=%lu,buserr=%lu,arb_lost=%lu,driver_q=%lu,state=%s,stream=%s\n",
+  Serial.printf("#STATS,rx=%llu,std=%llu,ext=%llu,rtr=%llu,drop=%llu,tx=%llu/%llu,q=%llu,to=%llu,missed=%lu,overrun=%lu,buserr=%lu,arb_lost=%lu,driver_q=%lu,state=%s,lease_ms=%lu,stream=%s\n",
                 static_cast<unsigned long long>(s.rx_frames),
                 static_cast<unsigned long long>(s.std_frames),
                 static_cast<unsigned long long>(s.ext_frames),
                 static_cast<unsigned long long>(s.rtr_frames),
                 static_cast<unsigned long long>(s.app_queue_drops),
+                static_cast<unsigned long long>(s.tx_success),
+                static_cast<unsigned long long>(s.tx_attempts),
+                static_cast<unsigned long long>(s.query_count),
+                static_cast<unsigned long long>(s.query_timeout),
                 static_cast<unsigned long>(s.driver_rx_missed),
                 static_cast<unsigned long>(s.driver_rx_overrun),
                 static_cast<unsigned long>(s.driver_bus_error),
                 static_cast<unsigned long>(s.driver_arb_lost),
                 static_cast<unsigned long>(s.rx_queue_depth),
-                stateName(s.state), stream_enabled_ ? "ON" : "OFF");
+                stateName(s.state),
+                static_cast<unsigned long>(monitor_.leaseRemainingMs()),
+                stream_enabled_ ? "ON" : "OFF");
 }
 
 void SerialProtocol::enterNativeMode() {
   if (native_mode_) return;
+  monitor_.revokeLease();
   elm_mode_ = false;
   stream_enabled_ = false;
   Serial.println("#OK,NATIVE,ON,COBS+CRC32,version=1");
@@ -238,7 +363,7 @@ void SerialProtocol::enterNativeMode() {
   native_discard_until_delimiter_ = false;
   native_mode_ = true;
   emitNativeHello();
-  emitNativeEvent("TX_DISABLED_PHASE3A");
+  emitNativeEvent("ELM_TX_LEASE_NOT_AVAILABLE_IN_NATIVE_YET");
 }
 
 void SerialProtocol::leaveNativeMode() {

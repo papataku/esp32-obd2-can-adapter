@@ -3,8 +3,6 @@
 #include <cstdio>
 #include <cstring>
 
-#include "app_config.h"
-
 namespace m5can {
 namespace {
 
@@ -205,15 +203,21 @@ ElmResult ElmCompat::execute(const char* command) {
     return result;
   }
 
-  if (!std::strcmp(cmd, "ATM5TEXT")) {
-    result.action = ElmAction::ExitElmMode;
-    setReply(result, "OK");
+  if (!std::strcmp(cmd, "ATM5TX1")) {
+    result.action = ElmAction::LeaseAcquire;
+    return result;
+  }
+  if (!std::strcmp(cmd, "ATM5TX0")) {
+    result.action = ElmAction::LeaseRevoke;
     return result;
   }
   if (!std::strcmp(cmd, "ATM5STAT")) {
-    std::snprintf(result.reply, sizeof(result.reply),
-                  "M5CAN P7 HDR=%08lX TX=LOCKED",
-                  static_cast<unsigned long>(effectiveHeader()));
+    result.action = ElmAction::LeaseStatus;
+    return result;
+  }
+  if (!std::strcmp(cmd, "ATM5TEXT")) {
+    result.action = ElmAction::ExitElmMode;
+    setReply(result, "OK");
     return result;
   }
 
@@ -235,7 +239,6 @@ ElmResult ElmCompat::execute(const char* command) {
   result.request.extended = true;
   result.request.length = length;
   std::memcpy(result.request.data, bytes, length);
-  setReply(result, "M5CAN TX LOCKED");
   return result;
 }
 
