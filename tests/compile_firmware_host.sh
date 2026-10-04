@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 for source in "$ROOT"/src/*.cpp; do
   echo "syntax: $source"
   g++ -std=c++17 -Wall -Wextra -Werror     -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"     -fsyntax-only "$source"
@@ -15,4 +16,7 @@ g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/inclu
 g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"   "$ROOT/tests/test_diagnostic_policy.cpp"   "$ROOT/src/diagnostic_policy.cpp"   "$ROOT/tests/host_stubs/stubs.cpp"   -o /tmp/m5can-policy-test
 /tmp/m5can-policy-test
 
-echo "PASS all Phase 3B firmware translation units"
+g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"   "$ROOT/tests/test_isotp_reassembler.cpp"   "$ROOT/src/isotp_reassembler.cpp"   "$ROOT/src/diagnostic_policy.cpp"   "$ROOT/tests/host_stubs/stubs.cpp"   -o /tmp/m5can-isotp-test
+/tmp/m5can-isotp-test
+
+echo "PASS all Phase 3C-prep firmware translation units"
