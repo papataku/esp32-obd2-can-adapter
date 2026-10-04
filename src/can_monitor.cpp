@@ -9,6 +9,8 @@
 namespace m5can {
 namespace {
 struct QueryActiveReset {
+  QueryActiveReset(CanStats* stats_in, portMUX_TYPE* mux_in)
+      : stats(stats_in), mux(mux_in) {}
   CanStats* stats = nullptr;
   portMUX_TYPE* mux = nullptr;
   ~QueryActiveReset() {
