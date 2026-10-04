@@ -9,7 +9,7 @@ namespace {
 
 uint16_t statusColor(bool fault, bool query_active, uint32_t fps) {
   if (fault) return TFT_RED;
-  if (query_active) return TFT_YELLOW;
+  if (query_active) return TFT_WHITE;
   if (fps > 0) return TFT_GREEN;
   return TFT_LIGHTGREY;
 }
@@ -111,7 +111,7 @@ void Ui::update(const CanMonitor& can) {
                             120, 34, &fonts::Font4);
 
   M5Dial.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5Dial.Display.drawString(fps, 120, 88, &fonts::Font7);
+  M5Dial.Display.drawString(fps, 120, 88, &fonts::Font4);
   M5Dial.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   M5Dial.Display.drawString("CAN frame/s", 120, 121, &fonts::Font2);
 
@@ -119,13 +119,13 @@ void Ui::update(const CanMonitor& can) {
   M5Dial.Display.drawString(rx_total, 120, 145, &fonts::Font2);
   M5Dial.Display.drawString(diag_rate, 120, 166, &fonts::Font2);
 
-  M5Dial.Display.setTextColor(lease_ms ? TFT_YELLOW : TFT_LIGHTGREY, TFT_BLACK);
+  M5Dial.Display.setTextColor(lease_ms ? TFT_WHITE : TFT_LIGHTGREY, TFT_BLACK);
   M5Dial.Display.drawString(tx_state, 120, 190, &fonts::Font2);
 
   const bool has_errors = stats.app_queue_drops || stats.driver_rx_missed ||
                           stats.driver_rx_overrun || stats.driver_bus_error;
-  M5Dial.Display.setTextColor(has_errors ? TFT_RED : TFT_DARKGREY, TFT_BLACK);
-  M5Dial.Display.drawString(errors, 120, 213, &fonts::Font1);
+  M5Dial.Display.setTextColor(has_errors ? TFT_RED : TFT_LIGHTGREY, TFT_BLACK);
+  M5Dial.Display.drawString(errors, 120, 213, &fonts::Font2);
 }
 
 }  // namespace m5can
