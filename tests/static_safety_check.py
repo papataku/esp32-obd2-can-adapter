@@ -6,11 +6,14 @@ src_files = list((root / "src").glob("*.[ch]pp"))
 src = "\n".join(p.read_text() for p in src_files)
 cfg = (root / "include" / "app_config.h").read_text()
 serial = (root / "src" / "serial_protocol.cpp").read_text()
+serial_h = (root / "src" / "serial_protocol.h").read_text()
 elm = (root / "src" / "elm_compat.cpp").read_text()
 can = (root / "src" / "can_monitor.cpp").read_text()
 policy = (root / "src" / "diagnostic_policy.cpp").read_text()
 isotp = (root / "src" / "isotp_reassembler.cpp").read_text()
 transaction = (root / "src" / "diagnostic_transaction.cpp").read_text()
+ble = (root / "src" / "ble_elm_transport.cpp").read_text()
+ble_h = (root / "src" / "ble_elm_transport.h").read_text()
 
 required_elm = (
     "ATZ", "ATE0", "ATL0", "ATS0", "ATH1", "ATAL",
@@ -87,6 +90,31 @@ checks = {
         "RAW_TX" not in src and "SEND_CAN" not in src,
     "all current Analyzer AT commands implemented":
         all(command in elm for command in required_elm),
+
+    "BLE Nordic UART service configured":
+        "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" in cfg and
+        "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" in cfg and
+        "6E400003-B5A3-F393-E0A9-E50E24DCCA9E" in cfg,
+    "BLE characteristic is write + notify":
+        "PROPERTY_WRITE" in ble and "PROPERTY_WRITE_NR" in ble and
+        "PROPERTY_NOTIFY" in ble,
+    "BLE notifications use safe default MTU chunks":
+        "kNotificationChunk = 20" in ble,
+    "BLE input uses bounded ring buffer":
+        "kRxBufferSize = 512" in ble_h and "rx_overflow" in ble,
+    "BLE disconnect revokes TX lease":
+        "takeDisconnectEvent" in serial and
+        "monitor_.revokeLease()" in
+        serial.split("void SerialProtocol::handleBleDisconnect", 1)[1]
+              .split("void SerialProtocol::handleUsbLine", 1)[0],
+    "BLE and USB have exclusive ELM ownership":
+        "enum class ElmLink" in serial_h and
+        "elm_link_ != ElmLink::None && elm_link_ != link" in serial,
+    "BLE is ELM-only, Native remains USB":
+        "processBleByte" in serial and
+        "processNativeByte(byte)" not in
+        serial.split("void SerialProtocol::processBleByte", 1)[1]
+              .split("void SerialProtocol::pollUsbInput", 1)[0],
 }
 
 failed = []
@@ -98,4 +126,4 @@ for name, ok in checks.items():
 if failed:
     raise SystemExit("failed: " + ", ".join(failed))
 
-print(f"{len(checks)} Phase 3C safety/compatibility checks passed")
+print(f"{len(checks)} Phase 3D safety/compatibility checks passed")

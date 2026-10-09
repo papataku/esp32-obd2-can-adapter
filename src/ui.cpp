@@ -21,6 +21,20 @@ const char* statusText(bool fault, bool query_active, uint32_t fps) {
   return "CAN IDLE";
 }
 
+const char* bleText(bool ready, bool connected, bool elm) {
+  if (!ready) return "BLE ERROR";
+  if (elm) return "BLE ELM";
+  if (connected) return "BLE LINK";
+  return "BLE WAIT";
+}
+
+uint16_t bleColor(bool ready, bool connected, bool elm) {
+  if (!ready) return TFT_RED;
+  if (elm) return TFT_GREEN;
+  if (connected) return TFT_WHITE;
+  return TFT_LIGHTGREY;
+}
+
 }  // namespace
 
 void Ui::begin() {
@@ -43,7 +57,8 @@ void Ui::showFatal(const char* title, const char* detail) {
   M5Dial.Display.drawString(detail ? detail : "unknown", 120, 135, &fonts::Font2);
 }
 
-void Ui::update(const CanMonitor& can) {
+void Ui::update(const CanMonitor& can, bool ble_ready,
+                bool ble_connected, bool ble_elm) {
   M5Dial.update();
   const uint32_t now = millis();
   if (now - last_refresh_ms_ < cfg::kDisplayRefreshMs) return;
@@ -60,11 +75,14 @@ void Ui::update(const CanMonitor& can) {
   const uint32_t elapsed = now - last_rate_ms_;
   if (elapsed >= 1000) {
     frames_per_second_ =
-        static_cast<uint32_t>((stats.rx_frames - last_rx_frames_) * 1000ULL / elapsed);
+        static_cast<uint32_t>(
+            (stats.rx_frames - last_rx_frames_) * 1000ULL / elapsed);
     queries_per_second_x10_ =
-        static_cast<uint32_t>((stats.query_count - last_query_count_) * 10000ULL / elapsed);
+        static_cast<uint32_t>(
+            (stats.query_count - last_query_count_) * 10000ULL / elapsed);
     tx_per_second_x10_ =
-        static_cast<uint32_t>((stats.tx_success - last_tx_success_) * 10000ULL / elapsed);
+        static_cast<uint32_t>(
+            (stats.tx_success - last_tx_success_) * 10000ULL / elapsed);
 
     last_rx_frames_ = stats.rx_frames;
     last_query_count_ = stats.query_count;
@@ -72,7 +90,8 @@ void Ui::update(const CanMonitor& can) {
     last_rate_ms_ = now;
   }
 
-  const bool fault = can.faultLocked() || stats.state == TWAI_STATE_BUS_OFF;
+  const bool fault =
+      can.faultLocked() || stats.state == TWAI_STATE_BUS_OFF;
   const uint32_t lease_ms = can.leaseRemainingMs();
 
   char fps[20]{};
@@ -81,10 +100,12 @@ void Ui::update(const CanMonitor& can) {
   char tx_state[32]{};
   char errors[40]{};
 
-  snprintf(fps, sizeof(fps), "%lu", static_cast<unsigned long>(frames_per_second_));
+  snprintf(fps, sizeof(fps), "%lu",
+           static_cast<unsigned long>(frames_per_second_));
   snprintf(rx_total, sizeof(rx_total), "RX %llu",
            static_cast<unsigned long long>(stats.rx_frames));
-  snprintf(diag_rate, sizeof(diag_rate), "DIAG %lu.%lu/s  TX %lu.%lu/s",
+  snprintf(diag_rate, sizeof(diag_rate),
+           "DIAG %lu.%lu/s  TX %lu.%lu/s",
            static_cast<unsigned long>(queries_per_second_x10_ / 10),
            static_cast<unsigned long>(queries_per_second_x10_ % 10),
            static_cast<unsigned long>(tx_per_second_x10_ / 10),
@@ -105,13 +126,20 @@ void Ui::update(const CanMonitor& can) {
   M5Dial.Display.fillScreen(TFT_BLACK);
   M5Dial.Display.setTextDatum(middle_center);
 
-  M5Dial.Display.setTextColor(statusColor(fault, stats.query_active, frames_per_second_),
-                              TFT_BLACK);
-  M5Dial.Display.drawString(statusText(fault, stats.query_active, frames_per_second_),
-                            120, 34, &fonts::Font4);
+  M5Dial.Display.setTextColor(
+      bleColor(ble_ready, ble_connected, ble_elm), TFT_BLACK);
+  M5Dial.Display.drawString(
+      bleText(ble_ready, ble_connected, ble_elm),
+      120, 13, &fonts::Font2);
+
+  M5Dial.Display.setTextColor(
+      statusColor(fault, stats.query_active, frames_per_second_), TFT_BLACK);
+  M5Dial.Display.drawString(
+      statusText(fault, stats.query_active, frames_per_second_),
+      120, 37, &fonts::Font4);
 
   M5Dial.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5Dial.Display.drawString(fps, 120, 88, &fonts::Font4);
+  M5Dial.Display.drawString(fps, 120, 89, &fonts::Font4);
   M5Dial.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   M5Dial.Display.drawString("CAN frame/s", 120, 121, &fonts::Font2);
 
@@ -119,12 +147,15 @@ void Ui::update(const CanMonitor& can) {
   M5Dial.Display.drawString(rx_total, 120, 145, &fonts::Font2);
   M5Dial.Display.drawString(diag_rate, 120, 166, &fonts::Font2);
 
-  M5Dial.Display.setTextColor(lease_ms ? TFT_WHITE : TFT_LIGHTGREY, TFT_BLACK);
+  M5Dial.Display.setTextColor(
+      lease_ms ? TFT_WHITE : TFT_LIGHTGREY, TFT_BLACK);
   M5Dial.Display.drawString(tx_state, 120, 190, &fonts::Font2);
 
-  const bool has_errors = stats.app_queue_drops || stats.driver_rx_missed ||
-                          stats.driver_rx_overrun || stats.driver_bus_error;
-  M5Dial.Display.setTextColor(has_errors ? TFT_RED : TFT_LIGHTGREY, TFT_BLACK);
+  const bool has_errors =
+      stats.app_queue_drops || stats.driver_rx_missed ||
+      stats.driver_rx_overrun || stats.driver_bus_error;
+  M5Dial.Display.setTextColor(
+      has_errors ? TFT_RED : TFT_LIGHTGREY, TFT_BLACK);
   M5Dial.Display.drawString(errors, 120, 213, &fonts::Font2);
 }
 

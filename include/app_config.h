@@ -26,12 +26,20 @@ constexpr uint64_t kIsoTpCfTimeoutUs = 100000;
 constexpr uint32_t kResponsePendingExtensionMs = 500;
 constexpr uint32_t kMaxResponsePendingWindowMs = 1000;
 
+constexpr const char* kBleDeviceName = "M5CAN-Dial";
+constexpr const char* kBleServiceUuid =
+    "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+constexpr const char* kBleRxUuid =
+    "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
+constexpr const char* kBleTxUuid =
+    "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
+
 constexpr size_t kNativeMaxPayload = 128;
 constexpr size_t kNativeMaxDecodedPacket = 160;
 constexpr size_t kNativeMaxEncodedPacket = 192;
 constexpr uint8_t kNativeProtocolVersion = 1;
 
 constexpr const char* kFirmwareName = "M5CAN-Dial";
-constexpr const char* kFirmwareVersion = "0.3.2-phase3c";
+constexpr const char* kFirmwareVersion = "0.3.3-phase3d-ble";
 
 }  // namespace m5can::cfg

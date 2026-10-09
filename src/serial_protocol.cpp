@@ -34,10 +34,6 @@ bool isHexChar(char c) {
   return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') ||
          (c >= 'a' && c <= 'f');
 }
-void serialWriteText(const char* text) {
-  if (!text) return;
-  Serial.write(reinterpret_cast<const uint8_t*>(text), std::strlen(text));
-}
 
 }  // namespace
 
@@ -57,11 +53,21 @@ const char* SerialProtocol::stateName(twai_state_t state) const {
   }
 }
 
+void SerialProtocol::resetLine(LineBuffer& line) {
+  line.len = 0;
+  line.overflow = false;
+  line.data[0] = '\0';
+}
+
 void SerialProtocol::emitTextHello() {
-  Serial.printf("#HELLO,%s,%s,mode=LISTEN_ONLY,bitrate=%lu,proto=TEXT\n",
-                cfg::kFirmwareName, cfg::kFirmwareVersion,
-                static_cast<unsigned long>(cfg::kCanBitrate));
-  Serial.println("#COMMANDS,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON; ATZ enters ELM");
+  Serial.printf(
+      "#HELLO,%s,%s,mode=LISTEN_ONLY,bitrate=%lu,proto=TEXT,ble=%s\n",
+      cfg::kFirmwareName, cfg::kFirmwareVersion,
+      static_cast<unsigned long>(cfg::kCanBitrate),
+      ble_ ? "ENABLED" : "DISABLED");
+  Serial.println(
+      "#COMMANDS,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON; "
+      "ATZ enters USB ELM");
 }
 
 void SerialProtocol::emitTextFrame(const CapturedFrame& frame) {
@@ -73,55 +79,75 @@ void SerialProtocol::emitTextFrame(const CapturedFrame& frame) {
       data_hex[i * 2 + 1] = kHex[frame.data[i] & 0x0F];
     }
   }
-  Serial.printf(frame.extended
-                    ? "@FRAME,%llu,E,%08lX,%u,%s,%s\n"
-                    : "@FRAME,%llu,S,%03lX,%u,%s,%s\n",
-                static_cast<unsigned long long>(frame.timestamp_us),
-                static_cast<unsigned long>(frame.identifier),
-                static_cast<unsigned>(frame.dlc), data_hex,
-                frame.rtr ? "RTR" : "DATA");
+  Serial.printf(
+      frame.extended
+          ? "@FRAME,%llu,E,%08lX,%u,%s,%s\n"
+          : "@FRAME,%llu,S,%03lX,%u,%s,%s\n",
+      static_cast<unsigned long long>(frame.timestamp_us),
+      static_cast<unsigned long>(frame.identifier),
+      static_cast<unsigned>(frame.dlc), data_hex,
+      frame.rtr ? "RTR" : "DATA");
 }
 
 bool SerialProtocol::looksLikeElmCommand(const char* text) const {
   if (!text) return false;
   char compact[96]{};
   uppercaseCopy(text, compact, sizeof(compact), true);
-  const size_t p = std::strlen(compact);
-  if (p >= 2 && compact[0] == 'A' && compact[1] == 'T') return true;
-  if (p != 4 && p != 6) return false;
-  for (size_t i = 0; i < p; ++i) {
+  const size_t length = std::strlen(compact);
+  if (length >= 2 && compact[0] == 'A' && compact[1] == 'T') return true;
+  if (length != 4 && length != 6) return false;
+  for (size_t i = 0; i < length; ++i) {
     if (!isHexChar(compact[i])) return false;
   }
   return true;
 }
 
-void SerialProtocol::enterElmMode() {
-  if (elm_mode_) return;
-  stream_enabled_ = false;
-  native_mode_ = false;
-  elm_query_pending_ = false;
-  elm_mode_ = true;
-  elm_.reset();
+bool SerialProtocol::claimElm(ElmLink link) {
+  if (native_mode_) return false;
+  if (elm_link_ != ElmLink::None && elm_link_ != link) return false;
+
+  if (!elm_mode_) {
+    stream_enabled_ = false;
+    elm_.reset();
+    elm_mode_ = true;
+    elm_link_ = link;
+  }
+  return elm_link_ == link;
 }
 
 void SerialProtocol::leaveElmMode() {
   monitor_.revokeLease();
-  elm_query_pending_ = false;
   elm_mode_ = false;
+  elm_link_ = ElmLink::None;
   stream_enabled_ = false;
+  elm_.reset();
+}
+
+void SerialProtocol::writeElmBytes(const uint8_t* data, size_t length) {
+  if (!data || !length) return;
+  if (elm_link_ == ElmLink::Ble) {
+    if (ble_) ble_->write(data, length);
+    return;
+  }
+  if (elm_link_ == ElmLink::Usb) {
+    Serial.write(data, length);
+  }
 }
 
 void SerialProtocol::writeElmLine(const char* text) {
-  serialWriteText(text);
+  if (text && text[0]) {
+    writeElmBytes(
+        reinterpret_cast<const uint8_t*>(text), std::strlen(text));
+  }
   static const uint8_t kCr[] = {'\r'};
   static const uint8_t kLf[] = {'\n'};
-  Serial.write(kCr, sizeof(kCr));
-  if (elm_.linefeed()) Serial.write(kLf, sizeof(kLf));
+  writeElmBytes(kCr, sizeof(kCr));
+  if (elm_.linefeed()) writeElmBytes(kLf, sizeof(kLf));
 }
 
 void SerialProtocol::writeElmPrompt() {
   static const uint8_t kPrompt[] = {'>'};
-  Serial.write(kPrompt, sizeof(kPrompt));
+  writeElmBytes(kPrompt, sizeof(kPrompt));
 }
 
 void SerialProtocol::writeElmRawFrame(
@@ -168,15 +194,20 @@ void SerialProtocol::writeElmDiagnosticResult(
   }
 }
 
-void SerialProtocol::handleElmLine() {
+void SerialProtocol::handleElmLine(const char* line, ElmLink link) {
+  if (!claimElm(link)) {
+    if (link == ElmLink::Ble) writeBleBusy();
+    else Serial.println("#ERR,ELM_SESSION_ACTIVE");
+    return;
+  }
+
   char compact[96]{};
-  uppercaseCopy(text_input_, compact, sizeof(compact), true);
+  uppercaseCopy(line, compact, sizeof(compact), true);
   if (!std::strcmp(compact, "ATZ")) monitor_.revokeLease();
 
-  const bool echo_before = elm_.echo();
-  if (echo_before) writeElmLine(text_input_);
+  if (elm_.echo()) writeElmLine(line);
 
-  const ElmResult result = elm_.execute(text_input_);
+  const ElmResult result = elm_.execute(line);
   bool prompt_now = true;
 
   switch (result.action) {
@@ -199,10 +230,11 @@ void SerialProtocol::handleElmLine() {
       char status[96]{};
       std::snprintf(
           status, sizeof(status),
-          "M5CAN TX=%s REM=%lums HDR=%08lX",
+          "M5CAN TX=%s REM=%lums HDR=%08lX LINK=%s",
           monitor_.leaseRemainingMs() ? "LEASED" : "LOCKED",
           static_cast<unsigned long>(monitor_.leaseRemainingMs()),
-          static_cast<unsigned long>(elm_.effectiveHeader()));
+          static_cast<unsigned long>(elm_.effectiveHeader()),
+          elm_link_ == ElmLink::Ble ? "BLE" : "USB");
       writeElmLine(status);
       break;
     }
@@ -212,6 +244,7 @@ void SerialProtocol::handleElmLine() {
       request.can_id = result.request.can_id;
       request.length = result.request.length;
       std::memcpy(request.data, result.request.data, request.length);
+
       const uint32_t configured_timeout =
           elm_.timeout4ms()
               ? static_cast<uint32_t>(elm_.timeout4ms()) * 4U
@@ -238,15 +271,173 @@ void SerialProtocol::handleElmLine() {
   if (result.action == ElmAction::ExitElmMode) leaveElmMode();
 }
 
-void SerialProtocol::emitNativePacket(native::PacketType type, const uint8_t* payload,
-                                      uint16_t payload_len, uint8_t flags) {
+void SerialProtocol::writeBleBusy() {
+  if (!ble_ || !ble_->connected()) return;
+  static const uint8_t kBusy[] = {'B','U','S','Y','\r','>'};
+  ble_->write(kBusy, sizeof(kBusy));
+}
+
+void SerialProtocol::handleBleDisconnect() {
+  if (!ble_ || !ble_->takeDisconnectEvent()) return;
+
+  // A dropped wireless link must immediately remove authorization.
+  monitor_.revokeLease();
+  resetLine(ble_line_);
+
+  if (elm_link_ == ElmLink::Ble) {
+    elm_link_ = ElmLink::None;
+    elm_mode_ = false;
+    elm_.reset();
+  }
+  // If a CAN owner transaction is still completing, keep
+  // elm_query_pending_ set until its result is drained below.
+}
+
+void SerialProtocol::handleUsbLine(const char* line) {
+  if (elm_mode_ && elm_link_ == ElmLink::Usb) {
+    handleElmLine(line, ElmLink::Usb);
+    return;
+  }
+
+  if (looksLikeElmCommand(line)) {
+    if (elm_link_ == ElmLink::Ble) {
+      Serial.println("#ERR,BLE_ELM_ACTIVE");
+      return;
+    }
+    handleElmLine(line, ElmLink::Usb);
+    return;
+  }
+
+  char command[129]{};
+  uppercaseCopy(line, command, sizeof(command));
+  if (!std::strcmp(command, "INFO")) {
+    emitTextHello();
+  } else if (!std::strcmp(command, "STATS")) {
+    emitStats(true);
+  } else if (!std::strcmp(command, "STREAM ON")) {
+    stream_enabled_ = true;
+    Serial.println("#OK,STREAM,ON");
+  } else if (!std::strcmp(command, "STREAM OFF")) {
+    stream_enabled_ = false;
+    Serial.println("#OK,STREAM,OFF");
+  } else if (!std::strcmp(command, "NATIVE ON")) {
+    if (elm_link_ != ElmLink::None) {
+      Serial.println("#ERR,ELM_SESSION_ACTIVE");
+    } else {
+      enterNativeMode();
+    }
+  } else if (!std::strcmp(command, "HELP") ||
+             !std::strcmp(command, "?")) {
+    Serial.println(
+        "#HELP,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON; "
+        "BLE exposes ELM only");
+  } else if (command[0]) {
+    Serial.printf("#ERR,UNKNOWN_COMMAND,%s\n", command);
+  }
+}
+
+void SerialProtocol::processUsbByte(uint8_t byte) {
+  if (native_mode_) {
+    processNativeByte(byte);
+    return;
+  }
+
+  const char c = static_cast<char>(byte);
+  if (c == '\n' || c == '\r') {
+    if (usb_line_.overflow) {
+      if (elm_mode_ && elm_link_ == ElmLink::Usb) {
+        writeElmLine("?");
+        writeElmPrompt();
+      } else {
+        Serial.println("#ERR,LINE_TOO_LONG");
+      }
+    } else if (usb_line_.len) {
+      usb_line_.data[usb_line_.len] = '\0';
+      handleUsbLine(usb_line_.data);
+    }
+    resetLine(usb_line_);
+    return;
+  }
+
+  if (c < 0x20 || c > 0x7E) return;
+  if (usb_line_.len < sizeof(usb_line_.data) - 1) {
+    usb_line_.data[usb_line_.len++] = c;
+  } else {
+    usb_line_.overflow = true;
+  }
+}
+
+void SerialProtocol::processBleByte(uint8_t byte) {
+  const char c = static_cast<char>(byte);
+  if (c == '\n' || c == '\r') {
+    if (ble_line_.overflow) {
+      if (elm_link_ == ElmLink::None ||
+          elm_link_ == ElmLink::Ble) {
+        if (claimElm(ElmLink::Ble)) {
+          writeElmLine("?");
+          writeElmPrompt();
+        }
+      } else {
+        writeBleBusy();
+      }
+    } else if (ble_line_.len) {
+      ble_line_.data[ble_line_.len] = '\0';
+      if (native_mode_ || elm_link_ == ElmLink::Usb) {
+        writeBleBusy();
+      } else {
+        handleElmLine(ble_line_.data, ElmLink::Ble);
+      }
+    }
+    resetLine(ble_line_);
+    return;
+  }
+
+  if (c < 0x20 || c > 0x7E) return;
+  if (ble_line_.len < sizeof(ble_line_.data) - 1) {
+    ble_line_.data[ble_line_.len++] = c;
+  } else {
+    ble_line_.overflow = true;
+  }
+}
+
+void SerialProtocol::pollUsbInput() {
+  constexpr size_t kMaxBytesPerPoll = 256;
+  size_t processed = 0;
+  while (Serial.available() > 0 &&
+         processed < kMaxBytesPerPoll) {
+    const int value = Serial.read();
+    if (value < 0) break;
+    processUsbByte(static_cast<uint8_t>(value));
+    ++processed;
+  }
+}
+
+void SerialProtocol::pollBleInput() {
+  if (!ble_ || !ble_->connected()) return;
+
+  constexpr size_t kMaxBytesPerPoll = 256;
+  size_t processed = 0;
+  while (ble_->available() > 0 &&
+         processed < kMaxBytesPerPoll) {
+    const int value = ble_->read();
+    if (value < 0) break;
+    processBleByte(static_cast<uint8_t>(value));
+    ++processed;
+  }
+}
+
+void SerialProtocol::emitNativePacket(
+    native::PacketType type, const uint8_t* payload,
+    uint16_t payload_len, uint8_t flags) {
   uint8_t wire[cfg::kNativeMaxEncodedPacket]{};
   const uint16_t sequence = native_tx_sequence_;
-  const size_t n = native::encodePacket(type, flags, sequence,
-                                        payload, payload_len, wire, sizeof(wire));
+  const size_t n = native::encodePacket(
+      type, flags, sequence, payload, payload_len,
+      wire, sizeof(wire));
   if (!n) return;
   Serial.write(wire, n);
-  native_tx_sequence_ = static_cast<uint16_t>(native_tx_sequence_ + 1);
+  native_tx_sequence_ =
+      static_cast<uint16_t>(native_tx_sequence_ + 1);
 }
 
 void SerialProtocol::emitNativeHello() {
@@ -254,17 +445,22 @@ void SerialProtocol::emitNativeHello() {
   size_t p = 0;
   payload[p++] = cfg::kNativeProtocolVersion;
   putU32(&payload[p], cfg::kCanBitrate); p += 4;
-  payload[p++] = 0;  // Native TX commands are not exposed yet.
+  payload[p++] = 0;
   payload[p++] = stream_enabled_ ? 1 : 0;
 
   const size_t name_len = std::strlen(cfg::kFirmwareName);
   const size_t ver_len = std::strlen(cfg::kFirmwareVersion);
-  if (name_len > 31 || ver_len > 31 || p + name_len + ver_len + 2 > sizeof(payload)) return;
+  if (name_len > 31 || ver_len > 31 ||
+      p + name_len + ver_len + 2 > sizeof(payload)) return;
   payload[p++] = static_cast<uint8_t>(name_len);
-  std::memcpy(&payload[p], cfg::kFirmwareName, name_len); p += name_len;
+  std::memcpy(&payload[p], cfg::kFirmwareName, name_len);
+  p += name_len;
   payload[p++] = static_cast<uint8_t>(ver_len);
-  std::memcpy(&payload[p], cfg::kFirmwareVersion, ver_len); p += ver_len;
-  emitNativePacket(native::PacketType::Hello, payload, static_cast<uint16_t>(p));
+  std::memcpy(&payload[p], cfg::kFirmwareVersion, ver_len);
+  p += ver_len;
+  emitNativePacket(
+      native::PacketType::Hello, payload,
+      static_cast<uint16_t>(p));
 }
 
 void SerialProtocol::emitNativeStats() {
@@ -283,30 +479,44 @@ void SerialProtocol::emitNativeStats() {
   putU32(&payload[p], s.rx_queue_depth); p += 4;
   payload[p++] = static_cast<uint8_t>(s.state);
   putU64(&payload[p], native_rx_errors_); p += 8;
-  emitNativePacket(native::PacketType::Stats, payload, static_cast<uint16_t>(p));
+  emitNativePacket(
+      native::PacketType::Stats, payload,
+      static_cast<uint16_t>(p));
 }
 
 void SerialProtocol::emitNativeEvent(const char* text) {
   if (!text) return;
   const size_t n = strnlen(text, cfg::kNativeMaxPayload);
-  emitNativePacket(native::PacketType::Event,
-                   reinterpret_cast<const uint8_t*>(text),
-                   static_cast<uint16_t>(n));
+  emitNativePacket(
+      native::PacketType::Event,
+      reinterpret_cast<const uint8_t*>(text),
+      static_cast<uint16_t>(n));
 }
 
-void SerialProtocol::emitNativeReply(native::Command command, native::Status status) {
+void SerialProtocol::emitNativeReply(
+    native::Command command, native::Status status) {
   const uint8_t payload[2] = {
-      static_cast<uint8_t>(command), static_cast<uint8_t>(status)};
-  emitNativePacket(native::PacketType::CommandReply, payload, sizeof(payload));
+      static_cast<uint8_t>(command),
+      static_cast<uint8_t>(status)};
+  emitNativePacket(
+      native::PacketType::CommandReply,
+      payload, sizeof(payload));
 }
 
-void SerialProtocol::emitNativeFrame(const CapturedFrame& frame) {
+void SerialProtocol::emitNativeFrame(
+    const CapturedFrame& frame) {
   uint8_t payload[32]{};
-  const size_t n = native::buildCanFramePayload(frame, payload, sizeof(payload));
-  if (n) emitNativePacket(native::PacketType::CanFrame, payload, static_cast<uint16_t>(n));
+  const size_t n = native::buildCanFramePayload(
+      frame, payload, sizeof(payload));
+  if (n) {
+    emitNativePacket(
+        native::PacketType::CanFrame,
+        payload, static_cast<uint16_t>(n));
+  }
 }
 
-void SerialProtocol::emitFrame(const CapturedFrame& frame) {
+void SerialProtocol::emitFrame(
+    const CapturedFrame& frame) {
   if (elm_mode_ || !stream_enabled_) return;
   if (native_mode_) emitNativeFrame(frame);
   else emitTextFrame(frame);
@@ -315,37 +525,44 @@ void SerialProtocol::emitFrame(const CapturedFrame& frame) {
 void SerialProtocol::emitStats(bool forced) {
   if (elm_mode_) return;
   const uint32_t now = millis();
-  if (!forced && now - last_stats_ms_ < cfg::kStatsEmitMs) return;
+  if (!forced &&
+      now - last_stats_ms_ < cfg::kStatsEmitMs) return;
   last_stats_ms_ = now;
+
   if (native_mode_) {
     emitNativeStats();
     return;
   }
+
   const CanStats s = monitor_.stats();
-  Serial.printf("#STATS,rx=%llu,std=%llu,ext=%llu,rtr=%llu,drop=%llu,tx=%llu/%llu,q=%llu,to=%llu,missed=%lu,overrun=%lu,buserr=%lu,arb_lost=%lu,driver_q=%lu,state=%s,lease_ms=%lu,stream=%s\n",
-                static_cast<unsigned long long>(s.rx_frames),
-                static_cast<unsigned long long>(s.std_frames),
-                static_cast<unsigned long long>(s.ext_frames),
-                static_cast<unsigned long long>(s.rtr_frames),
-                static_cast<unsigned long long>(s.app_queue_drops),
-                static_cast<unsigned long long>(s.tx_success),
-                static_cast<unsigned long long>(s.tx_attempts),
-                static_cast<unsigned long long>(s.query_count),
-                static_cast<unsigned long long>(s.query_timeout),
-                static_cast<unsigned long>(s.driver_rx_missed),
-                static_cast<unsigned long>(s.driver_rx_overrun),
-                static_cast<unsigned long>(s.driver_bus_error),
-                static_cast<unsigned long>(s.driver_arb_lost),
-                static_cast<unsigned long>(s.rx_queue_depth),
-                stateName(s.state),
-                static_cast<unsigned long>(monitor_.leaseRemainingMs()),
-                stream_enabled_ ? "ON" : "OFF");
+  Serial.printf(
+      "#STATS,rx=%llu,std=%llu,ext=%llu,rtr=%llu,"
+      "drop=%llu,tx=%llu/%llu,q=%llu,to=%llu,"
+      "missed=%lu,overrun=%lu,buserr=%lu,arb_lost=%lu,"
+      "driver_q=%lu,state=%s,lease_ms=%lu,ble=%s,stream=%s\n",
+      static_cast<unsigned long long>(s.rx_frames),
+      static_cast<unsigned long long>(s.std_frames),
+      static_cast<unsigned long long>(s.ext_frames),
+      static_cast<unsigned long long>(s.rtr_frames),
+      static_cast<unsigned long long>(s.app_queue_drops),
+      static_cast<unsigned long long>(s.tx_success),
+      static_cast<unsigned long long>(s.tx_attempts),
+      static_cast<unsigned long long>(s.query_count),
+      static_cast<unsigned long long>(s.query_timeout),
+      static_cast<unsigned long>(s.driver_rx_missed),
+      static_cast<unsigned long>(s.driver_rx_overrun),
+      static_cast<unsigned long>(s.driver_bus_error),
+      static_cast<unsigned long>(s.driver_arb_lost),
+      static_cast<unsigned long>(s.rx_queue_depth),
+      stateName(s.state),
+      static_cast<unsigned long>(monitor_.leaseRemainingMs()),
+      ble_ && ble_->connected() ? "LINK" : "WAIT",
+      stream_enabled_ ? "ON" : "OFF");
 }
 
 void SerialProtocol::enterNativeMode() {
-  if (native_mode_) return;
+  if (native_mode_ || elm_link_ != ElmLink::None) return;
   monitor_.revokeLease();
-  elm_mode_ = false;
   stream_enabled_ = false;
   Serial.println("#OK,NATIVE,ON,COBS+CRC32,version=1");
   Serial.flush();
@@ -353,7 +570,7 @@ void SerialProtocol::enterNativeMode() {
   native_discard_until_delimiter_ = false;
   native_mode_ = true;
   emitNativeHello();
-  emitNativeEvent("ELM_TX_LEASE_NOT_AVAILABLE_IN_NATIVE_YET");
+  emitNativeEvent("BLE_ELM_AVAILABLE_SEPARATELY");
 }
 
 void SerialProtocol::leaveNativeMode() {
@@ -365,41 +582,17 @@ void SerialProtocol::leaveNativeMode() {
   emitTextHello();
 }
 
-void SerialProtocol::handleTextLine() {
-  if (looksLikeElmCommand(text_input_)) {
-    enterElmMode();
-    handleElmLine();
-    return;
-  }
-
-  char command[129]{};
-  uppercaseCopy(text_input_, command, sizeof(command));
-  if (!std::strcmp(command, "INFO")) {
-    emitTextHello();
-  } else if (!std::strcmp(command, "STATS")) {
-    emitStats(true);
-  } else if (!std::strcmp(command, "STREAM ON")) {
-    stream_enabled_ = true;
-    Serial.println("#OK,STREAM,ON");
-  } else if (!std::strcmp(command, "STREAM OFF")) {
-    stream_enabled_ = false;
-    Serial.println("#OK,STREAM,OFF");
-  } else if (!std::strcmp(command, "NATIVE ON")) {
-    enterNativeMode();
-  } else if (!std::strcmp(command, "HELP") || !std::strcmp(command, "?")) {
-    Serial.println("#HELP,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON; ATZ enters ELM");
-  } else if (text_input_len_) {
-    Serial.printf("#ERR,UNKNOWN_COMMAND,%s\n", command);
-  }
-}
-
-void SerialProtocol::handleNativePacket(const native::DecodedPacket& packet) {
-  if (packet.type != native::PacketType::Command || packet.payload_len != 1) {
+void SerialProtocol::handleNativePacket(
+    const native::DecodedPacket& packet) {
+  if (packet.type != native::PacketType::Command ||
+      packet.payload_len != 1) {
     ++native_rx_errors_;
     emitNativeEvent("BAD_HOST_PACKET");
     return;
   }
-  const auto command = static_cast<native::Command>(packet.payload[0]);
+
+  const auto command =
+      static_cast<native::Command>(packet.payload[0]);
   switch (command) {
     case native::Command::Ping:
       emitNativeReply(command, native::Status::Ok);
@@ -441,10 +634,12 @@ void SerialProtocol::processNativeByte(uint8_t byte) {
     }
     return;
   }
+
   if (byte == 0) {
     if (!native_input_len_) return;
     native::DecodedPacket packet{};
-    if (native::decodePacket(native_input_, native_input_len_, packet)) {
+    if (native::decodePacket(
+            native_input_, native_input_len_, packet)) {
       handleNativePacket(packet);
     } else {
       ++native_rx_errors_;
@@ -453,60 +648,36 @@ void SerialProtocol::processNativeByte(uint8_t byte) {
     native_input_len_ = 0;
     return;
   }
+
   if (native_input_len_ >= sizeof(native_input_)) {
     ++native_rx_errors_;
     native_input_len_ = 0;
     native_discard_until_delimiter_ = true;
     return;
   }
+
   native_input_[native_input_len_++] = byte;
 }
 
 void SerialProtocol::pollInput() {
-  if (elm_mode_ && elm_query_pending_) {
+  handleBleDisconnect();
+
+  if (elm_query_pending_) {
     DiagnosticResult result{};
     if (monitor_.pollQueryResult(result)) {
       elm_query_pending_ = false;
-      writeElmDiagnosticResult(result);
-      writeElmPrompt();
-    }
-    return;
-  }
-
-  constexpr size_t kMaxBytesPerPoll = 256;
-  size_t processed = 0;
-  while (Serial.available() > 0 && processed < kMaxBytesPerPoll) {
-    const uint8_t byte = static_cast<uint8_t>(Serial.read());
-    ++processed;
-    if (native_mode_) {
-      processNativeByte(byte);
-      continue;
-    }
-
-    const char c = static_cast<char>(byte);
-    if (c == '\n' || c == '\r') {
-      if (text_overflow_) {
-        if (elm_mode_) {
-          writeElmLine("?");
-          writeElmPrompt();
-        } else {
-          Serial.println("#ERR,LINE_TOO_LONG");
-        }
-      } else if (text_input_len_) {
-        if (elm_mode_) handleElmLine();
-        else handleTextLine();
+      if (elm_link_ != ElmLink::None) {
+        writeElmDiagnosticResult(result);
+        writeElmPrompt();
       }
-      text_input_len_ = 0;
-      text_overflow_ = false;
-      continue;
     }
-    if (c < 0x20 || c > 0x7E) continue;
-    if (text_input_len_ < sizeof(text_input_) - 1) {
-      text_input_[text_input_len_++] = c;
-    } else {
-      text_overflow_ = true;
-    }
+    if (elm_query_pending_) return;
   }
+
+  // BLE first so an iPad command can claim an idle ELM session
+  // deterministically. USB remains available for debug/native use.
+  pollBleInput();
+  pollUsbInput();
 }
 
 }  // namespace m5can

@@ -6,7 +6,8 @@ namespace m5can {
 class Ui {
  public:
   void begin();
-  void update(const CanMonitor& can);
+  void update(const CanMonitor& can, bool ble_ready,
+              bool ble_connected, bool ble_elm);
   void showFatal(const char* title, const char* detail);
 
  private:
