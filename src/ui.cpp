@@ -2,6 +2,8 @@
 
 #include <M5Dial.h>
 
+#include <cstring>
+
 #include "app_config.h"
 
 namespace m5can {
@@ -46,15 +48,41 @@ void Ui::begin() {
   M5Dial.Display.setRotation(0);
   M5Dial.Display.fillScreen(TFT_BLACK);
   M5Dial.Display.setTextDatum(middle_center);
+
+  // Static label is drawn once. Dynamic fields below are updated only
+  // when their rendered text actually changes.
+  M5Dial.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  M5Dial.Display.drawString("CAN frame/s", 120, 121, &fonts::Font2);
+}
+
+bool Ui::updateLine(char* cache, size_t cache_size,
+                    const char* text, int32_t y, int32_t h,
+                    uint16_t color, const lgfx::IFont* font) {
+  if (!cache || cache_size == 0 || !text || !font) return false;
+  if (std::strncmp(cache, text, cache_size) == 0) return false;
+
+  // Only erase the line being replaced. Never clear the full 240x240 LCD
+  // during normal updates: a full-screen black frame is visible as flicker.
+  M5Dial.Display.fillRect(8, y, 224, h, TFT_BLACK);
+  M5Dial.Display.setTextDatum(middle_center);
+  M5Dial.Display.setTextColor(color, TFT_BLACK);
+  M5Dial.Display.drawString(text, 120, y + h / 2, font);
+
+  std::strncpy(cache, text, cache_size - 1);
+  cache[cache_size - 1] = '\0';
+  return true;
 }
 
 void Ui::showFatal(const char* title, const char* detail) {
+  // A full clear is acceptable for a one-shot fatal screen.
   M5Dial.Display.fillScreen(TFT_BLACK);
   M5Dial.Display.setTextDatum(middle_center);
   M5Dial.Display.setTextColor(TFT_RED, TFT_BLACK);
-  M5Dial.Display.drawString(title ? title : "FATAL", 120, 95, &fonts::Font4);
+  M5Dial.Display.drawString(
+      title ? title : "FATAL", 120, 95, &fonts::Font4);
   M5Dial.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5Dial.Display.drawString(detail ? detail : "unknown", 120, 135, &fonts::Font2);
+  M5Dial.Display.drawString(
+      detail ? detail : "unknown", 120, 135, &fonts::Font2);
 }
 
 void Ui::update(const CanMonitor& can, bool ble_ready,
@@ -123,40 +151,57 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
            static_cast<unsigned long>(stats.driver_rx_overrun),
            static_cast<unsigned long>(stats.driver_bus_error));
 
-  M5Dial.Display.fillScreen(TFT_BLACK);
-  M5Dial.Display.setTextDatum(middle_center);
+  const char* ble = bleText(ble_ready, ble_connected, ble_elm);
+  const uint16_t ble_color = bleColor(ble_ready, ble_connected, ble_elm);
+  if (std::strncmp(cached_ble_, ble, sizeof(cached_ble_)) != 0 ||
+      cached_ble_color_ != ble_color) {
+    cached_ble_[0] = '\0';
+    updateLine(cached_ble_, sizeof(cached_ble_),
+               ble, 3, 20, ble_color, &fonts::Font2);
+    cached_ble_color_ = ble_color;
+  }
 
-  M5Dial.Display.setTextColor(
-      bleColor(ble_ready, ble_connected, ble_elm), TFT_BLACK);
-  M5Dial.Display.drawString(
-      bleText(ble_ready, ble_connected, ble_elm),
-      120, 13, &fonts::Font2);
+  const char* status =
+      statusText(fault, stats.query_active, frames_per_second_);
+  const uint16_t status_color =
+      statusColor(fault, stats.query_active, frames_per_second_);
+  if (std::strncmp(cached_status_, status, sizeof(cached_status_)) != 0 ||
+      cached_status_color_ != status_color) {
+    cached_status_[0] = '\0';
+    updateLine(cached_status_, sizeof(cached_status_),
+               status, 22, 32, status_color, &fonts::Font4);
+    cached_status_color_ = status_color;
+  }
 
-  M5Dial.Display.setTextColor(
-      statusColor(fault, stats.query_active, frames_per_second_), TFT_BLACK);
-  M5Dial.Display.drawString(
-      statusText(fault, stats.query_active, frames_per_second_),
-      120, 37, &fonts::Font4);
+  updateLine(cached_fps_, sizeof(cached_fps_),
+             fps, 69, 39, TFT_WHITE, &fonts::Font4);
+  updateLine(cached_rx_, sizeof(cached_rx_),
+             rx_total, 133, 23, TFT_WHITE, &fonts::Font2);
+  updateLine(cached_diag_, sizeof(cached_diag_),
+             diag_rate, 156, 22, TFT_WHITE, &fonts::Font2);
 
-  M5Dial.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5Dial.Display.drawString(fps, 120, 89, &fonts::Font4);
-  M5Dial.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  M5Dial.Display.drawString("CAN frame/s", 120, 121, &fonts::Font2);
-
-  M5Dial.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-  M5Dial.Display.drawString(rx_total, 120, 145, &fonts::Font2);
-  M5Dial.Display.drawString(diag_rate, 120, 166, &fonts::Font2);
-
-  M5Dial.Display.setTextColor(
-      lease_ms ? TFT_WHITE : TFT_LIGHTGREY, TFT_BLACK);
-  M5Dial.Display.drawString(tx_state, 120, 190, &fonts::Font2);
+  const uint16_t tx_color =
+      lease_ms ? TFT_WHITE : TFT_LIGHTGREY;
+  if (std::strncmp(cached_tx_, tx_state, sizeof(cached_tx_)) != 0 ||
+      cached_tx_color_ != tx_color) {
+    cached_tx_[0] = '\0';
+    updateLine(cached_tx_, sizeof(cached_tx_),
+               tx_state, 179, 22, tx_color, &fonts::Font2);
+    cached_tx_color_ = tx_color;
+  }
 
   const bool has_errors =
       stats.app_queue_drops || stats.driver_rx_missed ||
       stats.driver_rx_overrun || stats.driver_bus_error;
-  M5Dial.Display.setTextColor(
-      has_errors ? TFT_RED : TFT_LIGHTGREY, TFT_BLACK);
-  M5Dial.Display.drawString(errors, 120, 213, &fonts::Font2);
+  const uint16_t error_color =
+      has_errors ? TFT_RED : TFT_LIGHTGREY;
+  if (std::strncmp(cached_errors_, errors, sizeof(cached_errors_)) != 0 ||
+      cached_error_color_ != error_color) {
+    cached_errors_[0] = '\0';
+    updateLine(cached_errors_, sizeof(cached_errors_),
+               errors, 202, 24, error_color, &fonts::Font2);
+    cached_error_color_ = error_color;
+  }
 }
 
 }  // namespace m5can

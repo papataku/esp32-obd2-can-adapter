@@ -12,6 +12,7 @@ can = (root / "src" / "can_monitor.cpp").read_text()
 policy = (root / "src" / "diagnostic_policy.cpp").read_text()
 isotp = (root / "src" / "isotp_reassembler.cpp").read_text()
 transaction = (root / "src" / "diagnostic_transaction.cpp").read_text()
+ui = (root / "src" / "ui.cpp").read_text()
 ble = (root / "src" / "ble_elm_transport.cpp").read_text()
 ble_h = (root / "src" / "ble_elm_transport.h").read_text()
 
@@ -115,6 +116,9 @@ checks = {
         "processNativeByte(byte)" not in
         serial.split("void SerialProtocol::processBleByte", 1)[1]
               .split("void SerialProtocol::pollUsbInput", 1)[0],
+    "normal UI updates never full-screen clear":
+        "fillScreen(" not in
+        ui.split("void Ui::update(", 1)[1],
 }
 
 failed = []
