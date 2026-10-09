@@ -1,8 +1,6 @@
 #pragma once
 
 #include <Arduino.h>
-#include <M5Dial.h>
-
 #include "can_monitor.h"
 
 namespace m5can {
@@ -14,10 +12,6 @@ class Ui {
   void showFatal(const char* title, const char* detail);
 
  private:
-  bool updateLine(char* cache, size_t cache_size,
-                  const char* text, int32_t y, int32_t h,
-                  uint16_t color, const lgfx::IFont* font);
-
   uint32_t last_refresh_ms_ = 0;
   uint64_t last_rx_frames_ = 0;
   uint64_t last_query_count_ = 0;

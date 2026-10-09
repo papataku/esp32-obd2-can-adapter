@@ -37,6 +37,23 @@ uint16_t bleColor(bool ready, bool connected, bool elm) {
   return TFT_LIGHTGREY;
 }
 
+template <typename FontT>
+bool updateLine(char* cache, size_t cache_size,
+                const char* text, int32_t y, int32_t h,
+                uint16_t color, const FontT* font) {
+  if (!cache || cache_size == 0 || !text || !font) return false;
+  if (std::strncmp(cache, text, cache_size) == 0) return false;
+
+  M5Dial.Display.fillRect(8, y, 224, h, TFT_BLACK);
+  M5Dial.Display.setTextDatum(middle_center);
+  M5Dial.Display.setTextColor(color, TFT_BLACK);
+  M5Dial.Display.drawString(text, 120, y + h / 2, font);
+
+  std::strncpy(cache, text, cache_size - 1);
+  cache[cache_size - 1] = '\0';
+  return true;
+}
+
 }  // namespace
 
 void Ui::begin() {
@@ -53,24 +70,6 @@ void Ui::begin() {
   // when their rendered text actually changes.
   M5Dial.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   M5Dial.Display.drawString("CAN frame/s", 120, 121, &fonts::Font2);
-}
-
-bool Ui::updateLine(char* cache, size_t cache_size,
-                    const char* text, int32_t y, int32_t h,
-                    uint16_t color, const lgfx::IFont* font) {
-  if (!cache || cache_size == 0 || !text || !font) return false;
-  if (std::strncmp(cache, text, cache_size) == 0) return false;
-
-  // Only erase the line being replaced. Never clear the full 240x240 LCD
-  // during normal updates: a full-screen black frame is visible as flicker.
-  M5Dial.Display.fillRect(8, y, 224, h, TFT_BLACK);
-  M5Dial.Display.setTextDatum(middle_center);
-  M5Dial.Display.setTextColor(color, TFT_BLACK);
-  M5Dial.Display.drawString(text, 120, y + h / 2, font);
-
-  std::strncpy(cache, text, cache_size - 1);
-  cache[cache_size - 1] = '\0';
-  return true;
 }
 
 void Ui::showFatal(const char* title, const char* detail) {
