@@ -48,6 +48,6 @@ void loop() {
   }
 
   g_serial.emitStats(false);
-  g_ui.update(g_can, g_ble_ok, g_ble.connected(), g_serial.elmOverBle());
+  g_ui.update(g_can, g_ble_ok, g_ble.connected(), g_serial.elmOverBle(), g_serial.demoActive());
   delay(1);
 }
