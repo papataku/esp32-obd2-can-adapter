@@ -6,6 +6,7 @@
 
 #include "app_config.h"
 #include "elm_response_formatter.h"
+#include "demo_drive.h"
 
 namespace m5can {
 namespace {
@@ -37,7 +38,29 @@ bool isHexChar(char c) {
 
 }  // namespace
 
+bool SerialProtocol::demoActive() const {
+  // AUTO only until a real CAN frame has ever been observed this boot.
+  // Forced ON is also refused on a live bus. Only test values, no CAN TX.
+  if (demo_setting_ == DemoSetting::Off) return false;
+  return monitor_.stats().rx_frames == 0;
+}
+const char* SerialProtocol::demoSetting() const {
+  return demo_setting_ == DemoSetting::Auto ? "AUTO" :
+         demo_setting_ == DemoSetting::On ? "ON" : "OFF";
+}
+void SerialProtocol::emitDemoResponse(const ElmVehicleRequest& item) {
+  if (item.length != 2 || item.data[0] != 0x01) {
+    writeElmLine("NO DATA"); return;
+  }
+  DiagnosticRawFrame frames[2]{};
+  const uint8_t n = DemoDrive::frames(item.data[1],
+                                     millis() - demo_start_ms_, frames);
+  if (!n) { writeElmLine("NO DATA"); return; }
+  for (uint8_t i=0;i<n;++i) writeElmRawFrame(frames[i]);
+}
+
 void SerialProtocol::begin() {
+  demo_start_ms_ = millis();
   Serial.begin(cfg::kSerialBaud);
   delay(80);
   emitTextHello();
@@ -243,6 +266,8 @@ bool SerialProtocol::queueNextBatchRequest() {
     // Refresh per item so a slow 16-DID batch cannot expire halfway.
     if (!DiagnosticPolicy::allowedReadRequest(request)) {
       writeElmLine("?");
+    } else if (demoActive()) {
+      emitDemoResponse(item);
     } else if (elm_link_ == ElmLink::None ||
                (elm_link_ == ElmLink::Ble &&
                 (!ble_ || !ble_->connected()))) {
@@ -288,7 +313,16 @@ void SerialProtocol::handleElmLine(const char* line, ElmLink link) {
 
   switch (result.action) {
     case ElmAction::ReplyOnly:
-      if (result.reply[0]) writeElmLine(result.reply);
+      if (result.reply[0]) {
+        if (!std::strcmp(compact, "ATM5CAP")) {
+          char caps[200]{};
+          std::snprintf(caps, sizeof(caps), "%s DEMO=1 MODE=%s",
+                        result.reply, demoActive() ? "DEMO" : "CAN");
+          writeElmLine(caps);
+        } else {
+          writeElmLine(result.reply);
+        }
+      }
       break;
 
     case ElmAction::BatchRead: {
@@ -355,6 +389,8 @@ void SerialProtocol::handleElmLine(const char* line, ElmLink link) {
       // Keep authorization internal, bounded and restricted to safe reads.
       if (!DiagnosticPolicy::allowedReadRequest(request)) {
         writeElmLine("?");
+      } else if (demoActive()) {
+        emitDemoResponse(result.request);
       } else if (monitor_.faultLocked() ||
                  !monitor_.acquireLease(cfg::kTxLeaseDefaultMs)) {
         writeElmLine("M5CAN TX LOCKED");
@@ -430,6 +466,14 @@ void SerialProtocol::handleUsbLine(const char* line) {
   } else if (!std::strcmp(command, "STREAM OFF")) {
     stream_enabled_ = false;
     Serial.println("#OK,STREAM,OFF");
+  } else if (!std::strcmp(command, "DEMO AUTO") ||
+             !std::strcmp(command, "DEMO ON") ||
+             !std::strcmp(command, "DEMO OFF")) {
+    demo_setting_ = !std::strcmp(command, "DEMO OFF") ? DemoSetting::Off :
+                    !std::strcmp(command, "DEMO ON") ? DemoSetting::On : DemoSetting::Auto;
+    Serial.printf("#DEMO,setting=%s,active=%s,can_rx=%llu\\n",
+                  demoSetting(),demoActive()?"YES":"NO",
+                  static_cast<unsigned long long>(monitor_.stats().rx_frames));
   } else if (!std::strcmp(command, "NATIVE ON")) {
     if (elm_link_ != ElmLink::None) {
       Serial.println("#ERR,ELM_SESSION_ACTIVE");
@@ -440,7 +484,7 @@ void SerialProtocol::handleUsbLine(const char* line) {
              !std::strcmp(command, "?")) {
     Serial.println(
         "#HELP,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON; "
-        "BLE exposes ELM only");
+        "BLE exposes ELM only; DEMO AUTO/ON/OFF (USB)");
   } else if (command[0]) {
     Serial.printf("#ERR,UNKNOWN_COMMAND,%s\n", command);
   }
@@ -667,7 +711,7 @@ void SerialProtocol::emitStats(bool forced) {
       stateName(s.state),
       static_cast<unsigned long>(monitor_.leaseRemainingMs()),
       ble_ && ble_->connected() ? "LINK" : "WAIT",
-      stream_enabled_ ? "ON" : "OFF");
+      stream_enabled_ ? "ON" : "OFF", demoActive() ? "ON" : "OFF");
 }
 
 void SerialProtocol::enterNativeMode() {
