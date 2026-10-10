@@ -55,6 +55,8 @@ class DiagnosticPolicy {
   static bool allowedHeader(uint32_t can_id);
   static bool allowedReadRequest(const DiagnosticRequest& request);
   static bool allowedResponseId(uint32_t can_id);
+  static bool responseBelongsToRequest(const DiagnosticRequest& request,
+                                       uint32_t response_can_id);
   static bool responseMatches(const DiagnosticRequest& request,
                               const uint8_t* payload, size_t payload_len);
   static uint32_t transactionBudgetMs(uint32_t response_timeout_ms,
