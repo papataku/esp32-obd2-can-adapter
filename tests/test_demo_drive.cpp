@@ -13,6 +13,27 @@ int main() {
   assert(ice.rpm>3000 && ice.speed_kmh>0);
   const auto regen=DemoDrive::sample(9000);
   assert(regen.power_kw<0);
+  // An upshift must be visible as RPM falling while vehicle speed rises.
+  const auto before_first_shift=DemoDrive::sample(3000);
+  const auto after_first_shift=DemoDrive::sample(3370);
+  assert(before_first_shift.rpm>after_first_shift.rpm+1400);
+  assert(after_first_shift.speed_kmh>before_first_shift.speed_kmh);
+  const auto before_second_shift=DemoDrive::sample(4800);
+  const auto after_second_shift=DemoDrive::sample(5150);
+  assert(before_second_shift.rpm>after_second_shift.rpm+1400);
+  assert(after_second_shift.speed_kmh>before_second_shift.speed_kmh);
+  assert(DemoDrive::sample(6800).speed_kmh>DemoDrive::sample(9550).speed_kmh+70);
+  assert(DemoDrive::sample(8800).power_kw<-15.0f);
+  assert(DemoDrive::sample(10400).power_kw>0.0f);
+  // Short radio/renderer sampling intervals should see continuous motion,
+  // not discontinuities at each scripted shift or loop boundary.
+  for(uint32_t t=10;t<DemoDrive::kCycleMs+10;t+=10) {
+    const auto prev=DemoDrive::sample(t-10);
+    const auto cur=DemoDrive::sample(t);
+    assert(std::abs(static_cast<int>(cur.rpm)-static_cast<int>(prev.rpm))<140);
+    assert(std::abs(static_cast<int>(cur.speed_kmh)-
+                    static_cast<int>(prev.speed_kmh))<4);
+  }
   // Seamless repeat and continuous data (not a giant frame-discontinuity).
   assert(DemoDrive::sample(DemoDrive::kCycleMs).rpm==DemoDrive::sample(0).rpm);
   assert(DemoDrive::sample(DemoDrive::kCycleMs).speed_kmh==
