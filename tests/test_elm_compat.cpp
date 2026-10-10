@@ -59,10 +59,11 @@ int main() {
   {
     const ElmResult caps = elm.execute("ATM5CAP");
     assert(caps.action == ElmAction::ReplyOnly);
-    assert(std::strstr(caps.reply, "M5CAN-CAPS PROTO=1.0 ") != nullptr);
-    assert(std::strstr(caps.reply, "FW=0.4.0-phase3d-batch1") != nullptr);
+    assert(std::strstr(caps.reply, "M5CAN-CAPS PROTO=1.1 ") != nullptr);
+    assert(std::strstr(caps.reply, "FW=0.4.1-phase3d-implicit") != nullptr);
     assert(std::strstr(caps.reply, "BATCH=16 ") != nullptr);
     assert(std::strstr(caps.reply, "OPS=OBD01,UDS22 ") != nullptr);
+    assert(std::strstr(caps.reply, "LEASE=IMPLICIT") != nullptr);
   }
   {
     const ElmResult one = elm.execute("ATM5B01:2012");
