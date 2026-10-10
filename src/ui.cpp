@@ -84,9 +84,16 @@ void Ui::showFatal(const char* title, const char* detail) {
       detail ? detail : "unknown", 120, 135, &fonts::Font2);
 }
 
-void Ui::update(const CanMonitor& can, bool ble_ready,
-                bool ble_connected, bool ble_elm, bool demo_active) {
+bool Ui::pollDemoToggle() {
   M5Dial.update();
+  const auto touch=M5Dial.Touch.getDetail();
+  if (!touch.wasPressed()) return false;
+  return demo_touch_.onPress(touch.x,touch.y,millis());
+}
+
+void Ui::update(const CanMonitor& can, bool ble_ready,
+                bool ble_connected, bool ble_elm, bool demo_auto,
+                bool demo_active) {
   const uint32_t now = millis();
   if (now - last_refresh_ms_ < cfg::kDisplayRefreshMs) return;
   last_refresh_ms_ = now;
@@ -168,12 +175,33 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
       cached_status_color_ != status_color) {
     cached_status_[0] = '\0';
     updateLine(cached_status_, sizeof(cached_status_),
-               status, 22, 32, status_color, &fonts::Font4);
+               status, 22, 27, status_color, &fonts::Font4);
     cached_status_color_ = status_color;
   }
 
+  // Two clearly distinct concepts: the selected DEMO setting (AUTO/OFF)
+  // and the actual response source (DEMO DRIVE/CAN LIVE/IDLE/ERROR).
+  // Only the central highlighted soft key is touch sensitive.
+  const char* mode_label = demo_auto ? "DEMO AUTO  TAP" : "DEMO OFF  TAP";
+  const uint16_t mode_color = demo_auto ? TFT_GREEN : TFT_LIGHTGREY;
+  if (std::strncmp(cached_demo_mode_,mode_label,sizeof(cached_demo_mode_))!=0 ||
+      cached_demo_mode_color_!=mode_color) {
+    M5Dial.Display.fillRect(35,50,170,21,TFT_BLACK);
+    M5Dial.Display.fillRect(DemoTouchControl::kLeft,
+                            DemoTouchControl::kTop,
+                            DemoTouchControl::kRight-DemoTouchControl::kLeft,
+                            DemoTouchControl::kBottom-DemoTouchControl::kTop,
+                            mode_color);
+    M5Dial.Display.setTextDatum(middle_center);
+    M5Dial.Display.setTextColor(TFT_BLACK,mode_color);
+    M5Dial.Display.drawString(mode_label,120,60,&fonts::Font2);
+    std::strncpy(cached_demo_mode_,mode_label,sizeof(cached_demo_mode_)-1);
+    cached_demo_mode_[sizeof(cached_demo_mode_)-1]='\0';
+    cached_demo_mode_color_=mode_color;
+  }
+
   updateLine(cached_fps_, sizeof(cached_fps_),
-             fps, 69, 39, TFT_WHITE, &fonts::Font4);
+             fps, 72, 36, TFT_WHITE, &fonts::Font4);
   updateLine(cached_rx_, sizeof(cached_rx_),
              rx_total, 133, 23, TFT_WHITE, &fonts::Font2);
   updateLine(cached_diag_, sizeof(cached_diag_),
