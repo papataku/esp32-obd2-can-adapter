@@ -28,4 +28,10 @@ g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/inclu
 g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"   "$ROOT/tests/test_kw905_golden_multiframe.cpp"   "$ROOT/src/diagnostic_transaction.cpp"   "$ROOT/src/isotp_reassembler.cpp"   "$ROOT/src/diagnostic_policy.cpp"   "$ROOT/src/elm_response_formatter.cpp"   "$ROOT/tests/host_stubs/stubs.cpp"   -o /tmp/m5can-golden-test
 /tmp/m5can-golden-test
 
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_diagnostic_request_pacer.cpp" \
+  -o /tmp/m5can-request-pacer-test
+/tmp/m5can-request-pacer-test
+
 echo "PASS all Phase 3C firmware translation units"
