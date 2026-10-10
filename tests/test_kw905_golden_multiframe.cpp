@@ -99,6 +99,19 @@ int main() {
   assert(transaction.result().responses[0].data[1] == 0x20);
   assert(transaction.result().responses[0].data[2] == 0x12);
 
+  // ECU01 physical UDS request must NEVER accept another ECU's First Frame
+  // and must not emit Flow Control for another diagnostic conversation.
+  transaction.begin(
+      req(0x18DA01F1U,{0x22,0x20,0x12}),3000);
+  assert(transaction.onFrame(
+      frame(0x18DAF102U,3100,
+            {0x10,0x27,0x62,0x20,0x12,0x70,0x00,0x0F}))
+             .event == TransactionEvent::None);
+  assert(transaction.onFrame(
+      frame(0x18DAF101U,3200,
+            {0x10,0x27,0x62,0x20,0x12,0x70,0x00,0x0F}))
+             .event == TransactionEvent::NeedFlowControl);
+
   std::cout << "PASS KW905 multiframe golden-output tests\n";
   return 0;
 }
