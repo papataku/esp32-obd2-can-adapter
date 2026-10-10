@@ -15,7 +15,7 @@ static void expect_reply(ElmCompat& elm, const char* command, const char* reply)
 int main() {
   ElmCompat elm;
 
-  expect_reply(elm, "ATZ", "M5CAN v0.3 ELM-CAN compatible");
+  expect_reply(elm, "ATZ", "M5CAN v0.4 ELM-CAN compatible");
   assert(elm.echo());
   assert(!elm.linefeed());
   assert(!elm.spaces());
@@ -36,7 +36,7 @@ int main() {
   expect_reply(elm, "ATCAF1", "OK");
   expect_reply(elm, "ATCFC1", "OK");
   expect_reply(elm, "ATSP7", "OK");
-  expect_reply(elm, "ATI", "M5CAN v0.3 ELM-CAN compatible");
+  expect_reply(elm, "ATI", "M5CAN v0.4 ELM-CAN compatible");
   expect_reply(elm, "ATDP", "ISO 15765-4 (CAN 29/500)");
   expect_reply(elm, "ATDPN", "A7");
   expect_reply(elm, "AT@1", "M5CAN-Dial");
@@ -60,7 +60,7 @@ int main() {
     const ElmResult caps = elm.execute("ATM5CAP");
     assert(caps.action == ElmAction::ReplyOnly);
     assert(std::strstr(caps.reply, "M5CAN-CAPS PROTO=1.0 ") != nullptr);
-    assert(std::strstr(caps.reply, "FW=0.3.3-phase3d-ble") != nullptr);
+    assert(std::strstr(caps.reply, "FW=0.4.0-phase3d-batch1") != nullptr);
     assert(std::strstr(caps.reply, "BATCH=16 ") != nullptr);
     assert(std::strstr(caps.reply, "OPS=OBD01,UDS22 ") != nullptr);
   }
