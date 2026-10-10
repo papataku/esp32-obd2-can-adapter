@@ -4,6 +4,7 @@
 #include <driver/twai.h>
 
 #include "diagnostic_policy.h"
+#include "diagnostic_request_pacer.h"
 
 namespace m5can {
 
@@ -69,7 +70,7 @@ class CanMonitor {
   void setError(const char* message);
 
   bool leaseAllowsBudget(uint32_t budget_ms) const;
-  bool waitForRateLimit();
+  bool waitForRateLimit(uint32_t request_can_id);
   DiagnosticResult performQuery(const DiagnosticRequest& request);
 
   esp_err_t transmitOwnedFrame(const twai_message_t& message,
@@ -92,7 +93,7 @@ class CanMonitor {
   volatile bool fault_locked_ = false;
   volatile bool query_in_flight_ = false;
   uint64_t last_status_poll_us_ = 0;
-  uint64_t last_tx_us_ = 0;
+  DiagnosticRequestPacer diagnostic_pacer_{};
   uint64_t lease_deadline_ms_ = 0;
   char last_error_[96] = "not started";
 };
