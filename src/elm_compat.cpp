@@ -210,8 +210,8 @@ ElmResult ElmCompat::execute(const char* command) {
     // Firmware version and protocol version are intentionally independent.
     // New firmware can preserve V1 compatibility or advertise V2 explicitly.
     std::snprintf(result.reply, sizeof(result.reply),
-                  "M5CAN-CAPS PROTO=1.0 FW=%s BATCH=16 "
-                  "OPS=OBD01,UDS22 STREAM=0",
+                  "M5CAN-CAPS PROTO=1.1 FW=%s BATCH=16 "
+                  "OPS=OBD01,UDS22 STREAM=0 LEASE=IMPLICIT",
                   cfg::kFirmwareVersion);
     return result;
   }
