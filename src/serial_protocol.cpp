@@ -59,7 +59,7 @@ void SerialProtocol::setDemoAuto(bool enabled) {
     saved=settings.putBool("auto",enabled)!=0;
     settings.end();
   }
-  Serial.printf("#DEMO,setting=%s,active=%s,can_rx=%llu,saved=%s\\n",
+  Serial.printf("#DEMO,setting=%s,active=%s,can_rx=%llu,saved=%s\n",
                 demoSetting(),demoActive()?"YES":"NO",
                 static_cast<unsigned long long>(monitor_.stats().rx_frames),
                 saved?"YES":"NO");
@@ -86,7 +86,7 @@ void SerialProtocol::begin() {
   }
   delay(80);
   emitTextHello();
-  Serial.printf("#DEMO,setting=%s,active=%s,can_rx=%llu\\n",
+  Serial.printf("#DEMO,setting=%s,active=%s,can_rx=%llu\n",
                 demoSetting(),demoActive()?"YES":"NO",
                 static_cast<unsigned long long>(monitor_.stats().rx_frames));
 }
