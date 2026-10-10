@@ -5,6 +5,7 @@
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
 #include "elm_compat.h"
+#include "demo_drive.h"
 #include "native_protocol.h"
 
 namespace m5can {
@@ -21,12 +22,17 @@ class SerialProtocol {
   void emitStats(bool forced = false);
 
   bool elmMode() const { return elm_mode_; }
+  bool demoActive() const;
+  const char* demoSetting() const;
+  void emitDemoResponse(const ElmVehicleRequest& item);
+
   bool elmOverBle() const {
     return elm_mode_ && elm_link_ == ElmLink::Ble;
   }
 
  private:
   enum class ElmLink : uint8_t { None, Usb, Ble };
+  enum class DemoSetting : uint8_t { Auto, On, Off };
 
   struct LineBuffer {
     char data[129]{};
@@ -77,6 +83,8 @@ class SerialProtocol {
   ElmCompat elm_{};
   ElmLink elm_link_ = ElmLink::None;
   bool elm_mode_ = false;
+  DemoSetting demo_setting_ = DemoSetting::Auto;
+  uint32_t demo_start_ms_ = 0;
   bool elm_query_pending_ = false;
   bool elm_batch_active_ = false;
   uint8_t elm_batch_total_ = 0;
