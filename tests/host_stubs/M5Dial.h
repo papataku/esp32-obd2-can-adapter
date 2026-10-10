@@ -18,8 +18,18 @@ struct DisplayStub{
 struct M5Config{int serial_baudrate=0;bool clear_display=false;bool output_power=false;};
 struct M5Stub{M5Config config(){return {};}};
 extern M5Stub M5;
-struct M5DialStub{
+struct TouchDetailStub {
+  int32_t x=0, y=0;
+  bool pressed=false;
+  bool wasPressed() const {return pressed;}
+};
+struct TouchStub {
+  TouchDetailStub detail{};
+  TouchDetailStub getDetail() const {return detail;}
+};
+struct M5DialStub {
   DisplayStub Display;
+  TouchStub Touch;
   void begin(M5Config,bool=false,bool=false){}
   void update(){}
 };
