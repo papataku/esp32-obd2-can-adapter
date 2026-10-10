@@ -24,7 +24,7 @@ The raw BLE RX byte count is **not** a radio throughput benchmark: it counts del
 ## Findings
 
 1. M5CAN `BleElmTransport::write` has a hard-coded 20-byte notification chunk; the host uses a prompt `>` to start the next request. The firmware formerly sent line text, CR/LF and prompt as separate calls, potentially producing many BLE notifications per small response. The source now aggregates responses until the prompt in a bounded 512-byte buffer to reduce notifications, preserving the ELM wire format. No measured improvement has been established until a new iPad capture.
-2. M5CAN CAN diagnostic TX has a hard `kMinDiagnosticIntervalMs = 50`, giving an *upper bound* of 20 CAN requests/sec even before ECU response time, TWAI mode switches, BLE overhead and safety timeouts.
+2. M5CAN previously had a **global** 50-ms diagnostic spacing. This has been replaced by **50 ms per CAN request arbitration ID**; different approved IDs no longer share the timer. Per-ID request rate remains <=20/s, but transaction serialization, ECU processing and the BLE command/response loop still limit aggregate throughput.
 3. M5CAN transitions TWAI Listen-Only → Normal → Listen-Only **per diagnostic request** and performs 29-bit ISO-TP transaction handling. We have not separately measured time spent in those mode switches.
 4. Host iPad setting 5 req/s means the five-PID baseline loop aims for ~1 Hz per PID. Raising the target may help until serialized command RTT becomes dominant, but 20 req/s/5 PIDs is an *optimistic ceiling* of ~4 Hz per PID, not a guaranteed rate.
 5. A 58ms median for ATM5TX1, an AT command that does not hit CAN, shows significant non-CAN round-trip overhead. It does not isolate radio vs OS scheduling vs parser/notification framing by itself.
@@ -57,6 +57,23 @@ Vehicle gateways may filter relevant proprietary CAN messages from the diagnosti
 ### D. Alternative transport
 
 For sustained high-throughput RAW CAN capture, consider a Wi-Fi AP / UDP or TCP binary streaming mode for iPad, potentially keeping BLE for discovery/configuration. Verify Wi-Fi/BLE radio coexistence. Wi-Fi does not increase the ECU's diagnostic response speed and does not remove safe CAN pacing. USB Native is the controlled benchmark/reference, although inconvenient in the vehicle.
+
+## Per-CAN-ID diagnostic pacing (approved 2026-10-10)
+
+The former global `kMinDiagnosticIntervalMs=50` guard delayed **every** diagnostic request, even after switching to a different request arbitration ID. It has now been replaced by `DiagnosticRequestPacer` in `src/diagnostic_request_pacer.h`, invoked by `CanMonitor::performQuery`.
+
+| Next CAN TX request ID | Control |
+|---|---|
+| Same approved CAN ID as an earlier request | Wait until 50 ms after its last successful request TX |
+| Different approved CAN ID | No *cross-ID* 50 ms guard; each has its own history |
+| 18DB33F1, 18DBEFF1, 18DA01F1 | Only these explicitly allowed IDs are managed |
+| Flow Control frames | No added diagnostic rate guard; ISO-TP integrity gates remain |
+| In-flight transaction | **Always serialized**: the CAN owner continues to finish or time out one query before beginning another |
+| TX rejected, lease expiry, bus-off | Existing fail-closed protections remain |
+
+Important: multiple request CAN IDs can still reach the **same ECU**. Distinct arbitration IDs do not guarantee distinct ECU processors or simultaneous capacity. The application must still limit aggregate ECU request load using measured p95 response time, error rate and fairness. Removing the global 50 ms guard is not permission to run parallel unrelated diagnostic transactions.
+
+Host regression: `tests/test_diagnostic_request_pacer.cpp` asserts same-ID spacing, independent-ID immediate eligibility and unapproved-ID noninterference. Physical vehicle proof remains required before claiming a measurable gain.
 
 ## Acceptance metrics for each stage
 
