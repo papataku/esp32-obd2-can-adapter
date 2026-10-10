@@ -1,4 +1,5 @@
 #include "elm_compat.h"
+#include "app_config.h"
 
 #include <cstdio>
 #include <cstring>
@@ -206,7 +207,12 @@ ElmResult ElmCompat::execute(const char* command) {
   // Explicitly probed by iPad only after M5CAN identity verification.
   // This capability string is deliberately unique to the batch-enabled build.
   if (!std::strcmp(cmd, "ATM5CAP")) {
-    setReply(result, "M5CAN-CAPS V1 BATCH=16 ECU=01,00");
+    // Firmware version and protocol version are intentionally independent.
+    // New firmware can preserve V1 compatibility or advertise V2 explicitly.
+    std::snprintf(result.reply, sizeof(result.reply),
+                  "M5CAN-CAPS PROTO=1.0 FW=%s BATCH=16 "
+                  "OPS=OBD01,UDS22 STREAM=0",
+                  cfg::kFirmwareVersion);
     return result;
   }
   if (startsWith(cmd, "ATM5B")) {
@@ -214,7 +220,7 @@ ElmResult ElmCompat::execute(const char* command) {
     // owner task. ECU 01=physical UDS22; 00=functional supported OBD01.
     // Syntax: ATM5B01:2012,E480 ; ATM5B00:010C,010D,0105,015B,019A
     const size_t len = std::strlen(cmd);
-    if (len < 13 || cmd[7] != ':' ||
+    if (len < 12 || cmd[7] != ':' ||
         !((cmd[5] == '0' && cmd[6] == '1') ||
           (cmd[5] == '0' && cmd[6] == '0'))) {
       setReply(result, "?");
