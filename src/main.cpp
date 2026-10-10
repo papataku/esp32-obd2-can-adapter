@@ -36,6 +36,11 @@ void setup() {
 }
 
 void loop() {
+  // Always service the touchscreen, not only on the 250ms display redraw.
+  // Only the highlighted DEMO soft key generates this one-shot event.
+  if (g_can_ok && g_ui.pollDemoToggle()) {
+    g_serial.toggleDemoAuto();
+  }
   g_serial.pollInput();
   if (!g_can_ok) {
     delay(20);
@@ -48,6 +53,7 @@ void loop() {
   }
 
   g_serial.emitStats(false);
-  g_ui.update(g_can, g_ble_ok, g_ble.connected(), g_serial.elmOverBle(), g_serial.demoActive());
+  g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
+              g_serial.demoAutoEnabled(),g_serial.demoActive());
   delay(1);
 }
