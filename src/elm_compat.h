@@ -24,7 +24,7 @@ struct ElmVehicleRequest {
 struct ElmResult {
   static constexpr uint8_t kBatchMaxIDs = 16;
   ElmAction action = ElmAction::ReplyOnly;
-  char reply[96]{};
+  char reply[160]{};
   ElmVehicleRequest request{};
   uint8_t batch_count = 0;
   ElmVehicleRequest batch[kBatchMaxIDs]{};
