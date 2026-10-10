@@ -3,11 +3,18 @@
 namespace m5can {
 
 bool DiagnosticPolicy::allowedHeader(uint32_t can_id) {
-  return can_id == 0x18DB33F1U || can_id == 0x18DBEFF1U;
+  // Only the physically observed ECU 01 is enabled in this phase.
+  // No arbitrary 18DAxxF1 header or unrestricted diagnostic TX.
+  return can_id == 0x18DB33F1U || can_id == 0x18DBEFF1U ||
+         can_id == 0x18DA01F1U;
 }
 
 bool DiagnosticPolicy::allowedReadRequest(const DiagnosticRequest& request) {
   if (!allowedHeader(request.can_id)) return false;
+  if (request.can_id == 0x18DA01F1U) {
+    // The narrowly-scoped physical address is UDS 0x22 read only.
+    return request.length == 3 && request.data[0] == 0x22;
+  }
   if (request.length == 2 &&
       (request.data[0] == 0x01 || request.data[0] == 0x09)) {
     return true;
@@ -17,6 +24,16 @@ bool DiagnosticPolicy::allowedReadRequest(const DiagnosticRequest& request) {
 
 bool DiagnosticPolicy::allowedResponseId(uint32_t can_id) {
   return (can_id & 0x1FFFFF00U) == 0x18DAF100U;
+}
+
+bool DiagnosticPolicy::responseBelongsToRequest(
+    const DiagnosticRequest& request, uint32_t response_can_id) {
+  if (!allowedResponseId(response_can_id)) return false;
+  if (request.can_id == 0x18DA01F1U) {
+    // Never accept another ECU's response or send it Flow Control.
+    return response_can_id == 0x18DAF101U;
+  }
+  return allowedHeader(request.can_id);
 }
 
 bool DiagnosticPolicy::responseMatches(const DiagnosticRequest& request,
