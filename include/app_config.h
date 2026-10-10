@@ -40,6 +40,6 @@ constexpr size_t kNativeMaxEncodedPacket = 192;
 constexpr uint8_t kNativeProtocolVersion = 1;
 
 constexpr const char* kFirmwareName = "M5CAN-Dial";
-constexpr const char* kFirmwareVersion = "0.4.2-phase3d-demo";
+constexpr const char* kFirmwareVersion = "0.4.3-phase3e-race-demo";
 
 }  // namespace m5can::cfg
