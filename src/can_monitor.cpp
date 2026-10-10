@@ -220,13 +220,12 @@ bool CanMonitor::leaseAllowsBudget(uint32_t budget_ms) const {
   return leaseRemainingMs() >= budget_ms;
 }
 
-bool CanMonitor::waitForRateLimit() {
-  if (!last_tx_us_) return true;
-  const uint64_t earliest =
-      last_tx_us_ +
-      static_cast<uint64_t>(cfg::kMinDiagnosticIntervalMs) * 1000ULL;
-
-  while (static_cast<uint64_t>(esp_timer_get_time()) < earliest) {
+bool CanMonitor::waitForRateLimit(uint32_t request_can_id) {
+  // Different approved CAN IDs have independent 50-ms diagnostic clocks.
+  // The CAN owner still permits only one in-flight ECU transaction.
+  while (diagnostic_pacer_.remainingUs(
+             request_can_id,
+             static_cast<uint64_t>(esp_timer_get_time())) > 0) {
     if (leaseRemainingMs() == 0) return false;
     twai_message_t message{};
     if (twai_receive(&message, pdMS_TO_TICKS(2)) == ESP_OK) {
@@ -319,7 +318,7 @@ DiagnosticResult CanMonitor::performQuery(
     result.status = DiagnosticStatus::LeaseRequired;
     return result;
   }
-  if (!waitForRateLimit() || !leaseAllowsBudget(budget_ms)) {
+  if (!waitForRateLimit(request.can_id) || !leaseAllowsBudget(budget_ms)) {
     result.status = DiagnosticStatus::LeaseRequired;
     return result;
   }
@@ -353,7 +352,7 @@ DiagnosticResult CanMonitor::performQuery(
       terminal = DiagnosticStatus::DriverError;
       terminal_set = true;
     } else {
-      last_tx_us_ = tx_us;
+      diagnostic_pacer_.noteSuccessfulTx(request.can_id, tx_us);
     }
   }
 
