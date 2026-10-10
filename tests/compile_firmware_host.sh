@@ -40,4 +40,10 @@ g++ -std=c++17 -Wall -Wextra -Werror \
   -o /tmp/m5can-demo-drive-test
 /tmp/m5can-demo-drive-test
 
-echo "PASS all Phase 3C firmware translation units + demo drive"
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -I"$ROOT/src" \
+  "$ROOT/tests/test_demo_touch_control.cpp" \
+  -o /tmp/m5can-demo-touch-test
+/tmp/m5can-demo-touch-test
+
+echo "PASS all Phase 3C firmware translation units + demo drive + screen toggle"
