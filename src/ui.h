@@ -8,7 +8,7 @@ class Ui {
  public:
   void begin();
   void update(const CanMonitor& can, bool ble_ready,
-              bool ble_connected, bool ble_elm);
+              bool ble_connected, bool ble_elm, bool demo_active);
   void showFatal(const char* title, const char* detail);
 
  private:
