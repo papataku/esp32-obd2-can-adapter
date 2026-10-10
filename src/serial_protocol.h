@@ -42,6 +42,7 @@ class SerialProtocol {
   void leaveElmMode();
   void handleElmLine(const char* line, ElmLink link);
   void writeElmBytes(const uint8_t* data, size_t length);
+  void flushElmBleReply();
   void writeElmLine(const char* text);
   void writeElmPrompt();
   void writeElmRawFrame(const DiagnosticRawFrame& frame);
@@ -84,6 +85,12 @@ class SerialProtocol {
 
   LineBuffer usb_line_{};
   LineBuffer ble_line_{};
+
+  // Coalesce ELM text, CR/LF and final '>' before sending BLE notifications.
+  // Bounded to protect heap; long ISO-TP replies flush incrementally.
+  static constexpr size_t kElmBleReplyCapacity = 512;
+  uint8_t elm_ble_reply_[kElmBleReplyCapacity]{};
+  size_t elm_ble_reply_len_ = 0;
 
   uint8_t native_input_[cfg::kNativeMaxEncodedPacket]{};
   size_t native_input_len_ = 0;
