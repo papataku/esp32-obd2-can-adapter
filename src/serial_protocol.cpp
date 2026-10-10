@@ -118,6 +118,9 @@ bool SerialProtocol::claimElm(ElmLink link) {
 void SerialProtocol::leaveElmMode() {
   // An ExitElmMode reply was already flushed with the terminal prompt.
   elm_ble_reply_len_ = 0;
+  elm_batch_active_ = false;
+  elm_batch_next_ = 0;
+  elm_batch_total_ = 0;
   monitor_.revokeLease();
   elm_mode_ = false;
   elm_link_ = ElmLink::None;
@@ -213,6 +216,43 @@ void SerialProtocol::writeElmDiagnosticResult(
   }
 }
 
+bool SerialProtocol::queueNextBatchRequest() {
+  if (!elm_batch_active_) return false;
+  while (elm_batch_next_ < elm_batch_total_) {
+    const ElmVehicleRequest& item = elm_batch_items_[elm_batch_next_];
+    // Mark each result with the requested identifier for unambiguous replay.
+    char label[32]{};
+    if (item.length == 3 && item.data[0] == 0x22) {
+      std::snprintf(label, sizeof(label), "M5ITEM:01:%02X%02X",
+                    item.data[1], item.data[2]);
+    } else {
+      std::snprintf(label, sizeof(label), "M5ITEM:00:%02X%02X",
+                    item.data[0], item.data[1]);
+    }
+    writeElmLine(label);
+    DiagnosticRequest request{};
+    request.can_id = item.can_id;
+    request.length = item.length;
+    request.timeout_ms = std::max<uint32_t>(
+        20, std::min<uint32_t>(
+            elm_.timeout4ms() ? elm_.timeout4ms() * 4U : 200U,
+            1000));
+    std::memcpy(request.data, item.data, item.length);
+    if (monitor_.submitQuery(request)) {
+      elm_query_pending_ = true;
+      return true;
+    }
+    writeElmLine("BUSY");
+    ++elm_batch_next_;
+  }
+  writeElmLine("M5DONE");
+  writeElmPrompt();
+  elm_batch_active_ = false;
+  elm_batch_total_ = 0;
+  elm_batch_next_ = 0;
+  return false;
+}
+
 void SerialProtocol::handleElmLine(const char* line, ElmLink link) {
   if (!claimElm(link)) {
     if (link == ElmLink::Ble) writeBleBusy();
@@ -233,6 +273,28 @@ void SerialProtocol::handleElmLine(const char* line, ElmLink link) {
     case ElmAction::ReplyOnly:
       if (result.reply[0]) writeElmLine(result.reply);
       break;
+
+    case ElmAction::BatchRead: {
+      // Never overlap a batch with an existing diagnostic transaction.
+      // An explicit M5CAN TX lease is required even for a batch.
+      if (elm_batch_active_ || elm_query_pending_) {
+        writeElmLine("BUSY");
+        break;
+      }
+      if (!monitor_.leaseRemainingMs() ||
+          !monitor_.acquireLease(cfg::kTxLeaseMaxMs)) {
+        writeElmLine("M5CAN TX LOCKED");
+        break;
+      }
+      elm_batch_total_ = result.batch_count;
+      elm_batch_next_ = 0;
+      for (uint8_t i = 0; i < elm_batch_total_; ++i)
+        elm_batch_items_[i] = result.batch[i];
+      elm_batch_active_ = true;
+      queueNextBatchRequest();
+      prompt_now = false;
+      break;
+    }
 
     case ElmAction::LeaseAcquire:
       writeElmLine(
@@ -299,8 +361,11 @@ void SerialProtocol::writeBleBusy() {
 void SerialProtocol::handleBleDisconnect() {
   if (!ble_ || !ble_->takeDisconnectEvent()) return;
 
-  // Never forward a previous connection's buffered response to the next one.
+  // Never forward a previous connection's batch or response.
   elm_ble_reply_len_ = 0;
+  elm_batch_active_ = false;
+  elm_batch_next_ = 0;
+  elm_batch_total_ = 0;
   // A dropped wireless link must immediately remove authorization.
   monitor_.revokeLease();
   resetLine(ble_line_);
@@ -689,7 +754,17 @@ void SerialProtocol::pollInput() {
       elm_query_pending_ = false;
       if (elm_link_ != ElmLink::None) {
         writeElmDiagnosticResult(result);
-        writeElmPrompt();
+        if (elm_batch_active_) {
+          ++elm_batch_next_;
+          queueNextBatchRequest();
+        } else {
+          writeElmPrompt();
+        }
+      } else {
+        // A disconnected BLE link can never continue the previous batch.
+        elm_batch_active_ = false;
+        elm_batch_next_ = 0;
+        elm_batch_total_ = 0;
       }
     }
     if (elm_query_pending_) return;
