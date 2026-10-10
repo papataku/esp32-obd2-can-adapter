@@ -106,7 +106,7 @@ int main() {
   assert(transaction.onFrame(
       frame(0x18DAF102U,3100,
             {0x10,0x27,0x62,0x20,0x12,0x70,0x00,0x0F}))
-             .event == TransactionEvent::None);
+             .event == TransactionEvent::Ignored);
   assert(transaction.onFrame(
       frame(0x18DAF101U,3200,
             {0x10,0x27,0x62,0x20,0x12,0x70,0x00,0x0F}))
