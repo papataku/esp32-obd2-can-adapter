@@ -220,11 +220,11 @@ bool CanMonitor::leaseAllowsBudget(uint32_t budget_ms) const {
   return leaseRemainingMs() >= budget_ms;
 }
 
-bool CanMonitor::waitForRateLimit(uint32_t request_can_id) {
-  // Different approved CAN IDs have independent 50-ms diagnostic clocks.
-  // The CAN owner still permits only one in-flight ECU transaction.
+bool CanMonitor::waitForRateLimit(const DiagnosticRequest& request) {
+  // Throttle repeated *parameter* reads only, not other PIDs with the same
+  // arbitration ID. Every ECU transaction remains strictly serialized.
   while (diagnostic_pacer_.remainingUs(
-             request_can_id,
+             request,
              static_cast<uint64_t>(esp_timer_get_time())) > 0) {
     if (leaseRemainingMs() == 0) return false;
     twai_message_t message{};
@@ -318,7 +318,7 @@ DiagnosticResult CanMonitor::performQuery(
     result.status = DiagnosticStatus::LeaseRequired;
     return result;
   }
-  if (!waitForRateLimit(request.can_id) || !leaseAllowsBudget(budget_ms)) {
+  if (!waitForRateLimit(request) || !leaseAllowsBudget(budget_ms)) {
     result.status = DiagnosticStatus::LeaseRequired;
     return result;
   }
@@ -352,7 +352,7 @@ DiagnosticResult CanMonitor::performQuery(
       terminal = DiagnosticStatus::DriverError;
       terminal_set = true;
     } else {
-      diagnostic_pacer_.noteSuccessfulTx(request.can_id, tx_us);
+      diagnostic_pacer_.noteSuccessfulTx(request, tx_us);
     }
   }
 
