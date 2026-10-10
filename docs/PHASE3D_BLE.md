@@ -99,3 +99,19 @@ BLE does not bypass any CAN policy:
 - ISO-TP Flow Control still requires an owned matching FF
 - BLE disconnect revokes authorization
 - no public raw CAN TX API is exposed
+
+
+## 2026-10-10 physical ECU01 UDS correction (M5CAN v0.3)
+
+The captured iPad drive session with M5CAN-Dial (`6E400001/002/003` Nordic UART BLE) sent known-positive `22xxxx` requests after setting `ATSHDA01F1` and received `?\r>`. Those were firmware policy rejections, **not ECU NRC 0x31 or BLE timeouts**. Functionally addressed `ATSHDBEFF1` + `222012` did return valid `18DAF101` ISO-TP data in the same session.
+
+The reviewed exception is deliberately narrow:
+- `ATCP18` + `ATSHDA01F1` → exactly `18DA01F1`, *ECU 01 only*;
+- allow only a 3-byte `22xxxx` ReadDataByIdentifier request with the same TX lease / rate-limit / fault gates as before;
+- accept only `18DAF101` as the responder for physical ECU01 requests, including before ISO-TP Flow Control;
+- reject other `18DAxxF1` destination IDs, write/control services and off-target responses;
+- retain existing functional headers `18DB33F1`, `18DBEFF1`.
+
+This change is intended to match the iPad's `physicalRequestHeaderCommand(for: "01")`. Source/tests/CI completion alone do not certify behavior on the car. Reflash only after a controlled bench test; first verify `222012` against a known fixed ECU and confirm no off-target Flow Control is sent.
+
+**Speed baseline:** the captured device is configured for a mandatory **50 ms minimum spacing between CAN diagnostic TX** and each query transitions TWAI Listen-Only → Normal → Listen-Only. Typical iPad BLE command round trips were ~60–80 ms. The iPad's live configuration in the captured session was **5 req/s**, so the app itself intentionally throttled normal live monitoring to ~1 five-PID cycle per second. First increase the iPad target to 10 req/s and compare effective throughput before considering any reduction in the CAN safety rate limit. Keep the 50 ms minimum until controlled hardware/ECU safety results justify a change.
