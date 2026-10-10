@@ -70,7 +70,7 @@ class CanMonitor {
   void setError(const char* message);
 
   bool leaseAllowsBudget(uint32_t budget_ms) const;
-  bool waitForRateLimit(uint32_t request_can_id);
+  bool waitForRateLimit(const DiagnosticRequest& request);
   DiagnosticResult performQuery(const DiagnosticRequest& request);
 
   esp_err_t transmitOwnedFrame(const twai_message_t& message,
