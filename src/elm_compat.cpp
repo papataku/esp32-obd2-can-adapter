@@ -93,11 +93,11 @@ ElmResult ElmCompat::execute(const char* command) {
 
   if (!std::strcmp(cmd, "ATZ")) {
     reset();
-    setReply(result, "M5CAN v0.3 ELM-CAN compatible");
+    setReply(result, "M5CAN v0.4 ELM-CAN compatible");
     return result;
   }
   if (!std::strcmp(cmd, "ATI")) {
-    setReply(result, "M5CAN v0.3 ELM-CAN compatible");
+    setReply(result, "M5CAN v0.4 ELM-CAN compatible");
     return result;
   }
   if (!std::strcmp(cmd, "AT@1")) {
