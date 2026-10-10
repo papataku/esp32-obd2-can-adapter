@@ -24,6 +24,9 @@ class SerialProtocol {
   bool elmMode() const { return elm_mode_; }
   bool demoActive() const;
   const char* demoSetting() const;
+  bool demoAutoEnabled() const { return demo_setting_ == DemoSetting::Auto; }
+  void setDemoAuto(bool enabled);
+  void toggleDemoAuto() { setDemoAuto(!demoAutoEnabled()); }
   void emitDemoResponse(const ElmVehicleRequest& item);
 
   bool elmOverBle() const {
@@ -32,7 +35,7 @@ class SerialProtocol {
 
  private:
   enum class ElmLink : uint8_t { None, Usb, Ble };
-  enum class DemoSetting : uint8_t { Auto, On, Off };
+  enum class DemoSetting : uint8_t { Auto, Off };
 
   struct LineBuffer {
     char data[129]{};
