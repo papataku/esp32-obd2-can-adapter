@@ -56,6 +56,38 @@ int main() {
   expect_reply(elm, "ATST32", "OK");
   assert(elm.timeout4ms() == 0x32);
 
+  {
+    const ElmResult caps = elm.execute("ATM5CAP");
+    assert(caps.action == ElmAction::ReplyOnly);
+    assert(std::strstr(caps.reply, "M5CAN-CAPS PROTO=1.0 ") != nullptr);
+    assert(std::strstr(caps.reply, "FW=0.3.3-phase3d-ble") != nullptr);
+    assert(std::strstr(caps.reply, "BATCH=16 ") != nullptr);
+    assert(std::strstr(caps.reply, "OPS=OBD01,UDS22 ") != nullptr);
+  }
+  {
+    const ElmResult one = elm.execute("ATM5B01:2012");
+    assert(one.action == ElmAction::BatchRead && one.batch_count == 1);
+    assert(one.batch[0].can_id == 0x18DA01F1U);
+    assert(one.batch[0].data[0] == 0x22);
+    assert(one.batch[0].data[1] == 0x20);
+    assert(one.batch[0].data[2] == 0x12);
+    const ElmResult obds = elm.execute("ATM5B00:010C,010D,0105,015B,019A");
+    assert(obds.action == ElmAction::BatchRead && obds.batch_count == 5);
+    assert(obds.batch[0].can_id == 0x18DB33F1U);
+    assert(obds.batch[4].data[0] == 0x01);
+    assert(obds.batch[4].data[1] == 0x9A);
+  }
+  {
+    const ElmResult uds = elm.execute("ATM5B01:2012,E480,E481,E600,E602");
+    assert(uds.action == ElmAction::BatchRead && uds.batch_count == 5);
+    expect_reply(elm, "ATM5B00:010C,010D,", "?");
+    expect_reply(elm, "ATM5B00:010C,2E12", "?");
+    expect_reply(elm, "ATM5B02:2012", "?");
+    expect_reply(elm, "ATM5B01:2012,AB", "?");
+    expect_reply(elm, "ATM5B01:2012;", "?");
+    expect_reply(elm, "ATM5B01:", "?");
+  }
+
   assert(elm.execute("ATM5TX1").action == ElmAction::LeaseAcquire);
   assert(elm.execute("ATM5TX0").action == ElmAction::LeaseRevoke);
   assert(elm.execute("ATM5STAT").action == ElmAction::LeaseStatus);
