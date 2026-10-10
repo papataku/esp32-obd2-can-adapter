@@ -203,6 +203,78 @@ ElmResult ElmCompat::execute(const char* command) {
     return result;
   }
 
+  // Explicitly probed by iPad only after M5CAN identity verification.
+  // This capability string is deliberately unique to the batch-enabled build.
+  if (!std::strcmp(cmd, "ATM5CAP")) {
+    setReply(result, "M5CAN-CAPS V1 BATCH=16 ECU=01,00");
+    return result;
+  }
+  if (startsWith(cmd, "ATM5B")) {
+    // One BLE request schedules 1..16 read-only CAN transactions on the
+    // owner task. ECU 01=physical UDS22; 00=functional supported OBD01.
+    // Syntax: ATM5B01:2012,E480 ; ATM5B00:010C,010D,0105,015B,019A
+    const size_t len = std::strlen(cmd);
+    if (len < 13 || cmd[7] != ':' ||
+        !((cmd[5] == '0' && cmd[6] == '1') ||
+          (cmd[5] == '0' && cmd[6] == '0'))) {
+      setReply(result, "?");
+      return result;
+    }
+    const bool uds = cmd[6] == '1';
+    const uint32_t header = uds ? 0x18DA01F1U : 0x18DB33F1U;
+    const char* cursor = cmd + 8;
+    while (*cursor) {
+      if (result.batch_count >= ElmResult::kBatchMaxIDs) {
+        setReply(result, "?");
+        return result;
+      }
+      char word[5]{};
+      for (int i = 0; i < 4; ++i) {
+        if (!cursor[i] || (cursor[i] == ',' && i < 4)) {
+          setReply(result, "?");
+          return result;
+        }
+        word[i] = cursor[i];
+      }
+      uint8_t bytes[2]{};
+      uint8_t n = 0;
+      if (!parseHexBytes(word, bytes, 2, n) || n != 2) {
+        setReply(result, "?");
+        return result;
+      }
+      ElmVehicleRequest& item = result.batch[result.batch_count++];
+      item.can_id = header;
+      item.length = uds ? 3 : 2;
+      item.data[0] = uds ? 0x22 : bytes[0];
+      item.data[1] = uds ? bytes[0] : bytes[1];
+      if (uds) {
+        item.data[2] = bytes[1];
+      } else if (bytes[0] != 0x01 ||
+                 !(bytes[1] == 0x0C || bytes[1] == 0x0D ||
+                   bytes[1] == 0x05 || bytes[1] == 0x5B ||
+                   bytes[1] == 0x9A)) {
+        setReply(result, "?");
+        return result;
+      }
+      cursor += 4;
+      if (*cursor == ',') ++cursor;
+      else if (*cursor) {
+        setReply(result, "?");
+        return result;
+      }
+      if (!*cursor && cursor[-1] == ',') {
+        setReply(result, "?");
+        return result;
+      }
+    }
+    if (!result.batch_count) {
+      setReply(result, "?");
+      return result;
+    }
+    result.action = ElmAction::BatchRead;
+    return result;
+  }
+
   if (!std::strcmp(cmd, "ATM5TX1")) {
     result.action = ElmAction::LeaseAcquire;
     return result;
