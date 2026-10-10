@@ -20,7 +20,7 @@ constexpr uint32_t kTwaiReceiveWaitMs = 10;
 
 constexpr uint32_t kTxLeaseDefaultMs = 3000;
 constexpr uint32_t kTxLeaseMaxMs = 5000;
-constexpr uint32_t kMinDiagnosticIntervalMs = 50;
+// Same-arbitration-ID rate is defined in DiagnosticRequestPacer.
 constexpr uint64_t kPostResponseQuietUs = 10000;
 constexpr uint64_t kIsoTpCfTimeoutUs = 100000;
 constexpr uint32_t kResponsePendingExtensionMs = 500;
