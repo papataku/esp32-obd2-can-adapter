@@ -51,8 +51,7 @@ int main() {
   assert(pacer.remainingUs(rpm,t+5000)==45000);
   assert(pacer.remainingUs(speed,t+5000)==46000);
   assert(pacer.remainingUs(coolant,t+5000)==48000);
-  assert(pacer.remainingUs(soc,t+5000)==46000 || // see separate timestamp
-         pacer.remainingUs(soc,t+5000)==46000-0);
+  assert(pacer.remainingUs(soc,t+5000)==49000);
   // A request with the same CAN ID but a different service is independent.
   const auto service09=req(functional_obd,0x09,0x0C);
   assert(pacer.remainingUs(service09,t+5000)==0);
