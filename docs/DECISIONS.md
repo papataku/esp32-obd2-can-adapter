@@ -114,3 +114,35 @@ OBD/UDS remains appropriate for values that are not available as validated perio
 Known review lessons are listed in `AGENTS.md`.
 
 **Reason:** This repository is now the durable source of truth.
+
+## D016 - Per-parameter diagnostic pacing under a shared CAN arbitration ID
+
+**Decision:** The 50ms minimum spacing applies only to an identical
+read-only diagnostic request key: (CAN arbitration ID, payload length,
+service, PID/DID). Different Mode01 PIDs such as RPM `010C`, speed
+`010D`, HV voltage/current/power `019A`, coolant `0105`, SOC
+`015B` are independent despite all using the functional request ID
+`0x18DB33F1`. UDS `22xxxx` DIDs are independent as well.
+
+**Reason:** The former arbitration-ID-wide throttle inserted an
+unnecessary 50ms delay between *different* fields in a serialized
+SmartRing-to-M5Dial M5CAN batch. An individual PID's repeat request
+must still be throttled; the whole batch is *not* forced to 20 items/s.
+
+**Safety:** The CAN owner task still runs one ECU transaction at a time
+and matches the request/ISO-TP response, including necessary Flow
+Control. Whitelisted read-only requests, finite TX leases, CAN fault
+handling, response quiet time and physical bus modes are unchanged.
+The pacer uses a fixed 32-entry bounded cache and never evicts an
+unexpired key; if full, it delays for an expired slot rather than
+bypassing a live rate limit.
+
+**Scope:** M5Dial adapter firmware only. SmartRing's per-PID Hz
+configuration and DEMO/LIVE mode selection are unchanged.
+
+**Validation:** Host tests assert same-arbitration-ID different-PID
+no-delay behavior, same-key 50ms spacing, different UDS DIDs, rejected
+CAN IDs, and cache saturation. CI + PlatformIO build followed by
+controlled CAN bench metrics are required before any vehicle
+performance validation. An actual 60Hz per PID is not supported by
+a retained same-PID 50ms limit.
