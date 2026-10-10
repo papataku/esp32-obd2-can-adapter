@@ -1,6 +1,7 @@
 #include "serial_protocol.h"
 
 #include <algorithm>
+#include <Preferences.h>
 #include <cstdio>
 #include <cstring>
 
@@ -45,8 +46,23 @@ bool SerialProtocol::demoActive() const {
   return monitor_.stats().rx_frames == 0;
 }
 const char* SerialProtocol::demoSetting() const {
-  return demo_setting_ == DemoSetting::Auto ? "AUTO" :
-         demo_setting_ == DemoSetting::On ? "ON" : "OFF";
+  return demoAutoEnabled() ? "AUTO" : "OFF";
+}
+
+void SerialProtocol::setDemoAuto(bool enabled) {
+  if (demoAutoEnabled()==enabled) return;
+  demo_setting_=enabled ? DemoSetting::Auto : DemoSetting::Off;
+  if (enabled) demo_start_ms_=millis(); // begin a fresh stress cycle
+  Preferences settings;
+  bool saved=false;
+  if (settings.begin("m5can_demo",false)) {
+    saved=settings.putBool("auto",enabled)!=0;
+    settings.end();
+  }
+  Serial.printf("#DEMO,setting=%s,active=%s,can_rx=%llu,saved=%s\\n",
+                demoSetting(),demoActive()?"YES":"NO",
+                static_cast<unsigned long long>(monitor_.stats().rx_frames),
+                saved?"YES":"NO");
 }
 void SerialProtocol::emitDemoResponse(const ElmVehicleRequest& item) {
   if (item.length != 2 || item.data[0] != 0x01) {
@@ -62,8 +78,17 @@ void SerialProtocol::emitDemoResponse(const ElmVehicleRequest& item) {
 void SerialProtocol::begin() {
   demo_start_ms_ = millis();
   Serial.begin(cfg::kSerialBaud);
+  Preferences settings;
+  if (settings.begin("m5can_demo",true)) {
+    demo_setting_=settings.getBool("auto",true) ?
+        DemoSetting::Auto : DemoSetting::Off;
+    settings.end();
+  }
   delay(80);
   emitTextHello();
+  Serial.printf("#DEMO,setting=%s,active=%s,can_rx=%llu\\n",
+                demoSetting(),demoActive()?"YES":"NO",
+                static_cast<unsigned long long>(monitor_.stats().rx_frames));
 }
 
 const char* SerialProtocol::stateName(twai_state_t state) const {
@@ -469,11 +494,9 @@ void SerialProtocol::handleUsbLine(const char* line) {
   } else if (!std::strcmp(command, "DEMO AUTO") ||
              !std::strcmp(command, "DEMO ON") ||
              !std::strcmp(command, "DEMO OFF")) {
-    demo_setting_ = !std::strcmp(command, "DEMO OFF") ? DemoSetting::Off :
-                    !std::strcmp(command, "DEMO ON") ? DemoSetting::On : DemoSetting::Auto;
-    Serial.printf("#DEMO,setting=%s,active=%s,can_rx=%llu\\n",
-                  demoSetting(),demoActive()?"YES":"NO",
-                  static_cast<unsigned long long>(monitor_.stats().rx_frames));
+    // Existing USB "DEMO ON" becomes an alias for AUTO. Synthetic
+    // replies must never override a detected real CAN frame.
+    setDemoAuto(std::strcmp(command,"DEMO OFF")!=0);
   } else if (!std::strcmp(command, "NATIVE ON")) {
     if (elm_link_ != ElmLink::None) {
       Serial.println("#ERR,ELM_SESSION_ACTIVE");
