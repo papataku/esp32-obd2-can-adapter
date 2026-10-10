@@ -18,6 +18,7 @@ static DiagnosticRequest request(uint32_t id, std::initializer_list<uint8_t> byt
 int main() {
   assert(DiagnosticPolicy::allowedHeader(0x18DB33F1U));
   assert(DiagnosticPolicy::allowedHeader(0x18DBEFF1U));
+  assert(DiagnosticPolicy::allowedHeader(0x18DA01F1U));
   assert(!DiagnosticPolicy::allowedHeader(0x7DFU));
   assert(!DiagnosticPolicy::allowedHeader(0x18DA10F1U));
 
@@ -29,6 +30,20 @@ int main() {
   assert(DiagnosticPolicy::allowedReadRequest(speed));
   assert(DiagnosticPolicy::allowedReadRequest(vin));
   assert(DiagnosticPolicy::allowedReadRequest(did));
+
+  const auto physical = request(0x18DA01F1U, {0x22, 0x20, 0x12});
+  assert(DiagnosticPolicy::allowedReadRequest(physical));
+  // ECU 01 physical addressing is restricted to approved read-only UDS.
+  assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DA01F1U, {0x01,0x0C})));
+  assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DA01F1U, {0x10,0x03})));
+  assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DA01F1U, {0x2E,0x20,0x12})));
+  assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DA02F1U, {0x22,0x20,0x12})));
+  assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DA10F1U, {0x22,0x20,0x12})));
+  assert(DiagnosticPolicy::responseBelongsToRequest(physical, 0x18DAF101U));
+  assert(!DiagnosticPolicy::responseBelongsToRequest(physical, 0x18DAF102U));
+  assert(!DiagnosticPolicy::responseBelongsToRequest(physical, 0x18DAF10EU));
+  assert(DiagnosticPolicy::responseBelongsToRequest(did, 0x18DAF101U));
+  assert(DiagnosticPolicy::responseBelongsToRequest(did, 0x18DAF102U));
 
   assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DBEFF1U, {0x10,0x03})));
   assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DBEFF1U, {0x11,0x01})));
