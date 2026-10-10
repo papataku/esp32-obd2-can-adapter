@@ -162,7 +162,7 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
 
   const char* status = demo_active ? "DEMO DRIVE" :
       statusText(fault, stats.query_active, frames_per_second_);
-  const uint16_t status_color = demo_active ? TFT_YELLOW :
+  const uint16_t status_color = demo_active ? TFT_WHITE :
       statusColor(fault, stats.query_active, frames_per_second_);
   if (std::strncmp(cached_status_, status, sizeof(cached_status_)) != 0 ||
       cached_status_color_ != status_color) {
