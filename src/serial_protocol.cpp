@@ -116,6 +116,8 @@ bool SerialProtocol::claimElm(ElmLink link) {
 }
 
 void SerialProtocol::leaveElmMode() {
+  // An ExitElmMode reply was already flushed with the terminal prompt.
+  elm_ble_reply_len_ = 0;
   monitor_.revokeLease();
   elm_mode_ = false;
   elm_link_ = ElmLink::None;
@@ -123,15 +125,31 @@ void SerialProtocol::leaveElmMode() {
   elm_.reset();
 }
 
+void SerialProtocol::flushElmBleReply() {
+  if (!elm_ble_reply_len_) return;
+  if (ble_ && ble_->connected() && elm_link_ == ElmLink::Ble) {
+    ble_->write(elm_ble_reply_, elm_ble_reply_len_);
+  }
+  elm_ble_reply_len_ = 0;
+}
+
 void SerialProtocol::writeElmBytes(const uint8_t* data, size_t length) {
   if (!data || !length) return;
   if (elm_link_ == ElmLink::Ble) {
-    if (ble_) ble_->write(data, length);
+    // Avoid three separate GATT notify sequences for payload, CR and '>'.
+    // Do not allocate unbounded memory for multi-frame ECU replies.
+    while (length) {
+      if (elm_ble_reply_len_ == kElmBleReplyCapacity) flushElmBleReply();
+      const size_t room = kElmBleReplyCapacity - elm_ble_reply_len_;
+      const size_t chunk = std::min(room, length);
+      std::memcpy(elm_ble_reply_ + elm_ble_reply_len_, data, chunk);
+      elm_ble_reply_len_ += chunk;
+      data += chunk;
+      length -= chunk;
+    }
     return;
   }
-  if (elm_link_ == ElmLink::Usb) {
-    Serial.write(data, length);
-  }
+  if (elm_link_ == ElmLink::Usb) Serial.write(data, length);
 }
 
 void SerialProtocol::writeElmLine(const char* text) {
@@ -148,6 +166,7 @@ void SerialProtocol::writeElmLine(const char* text) {
 void SerialProtocol::writeElmPrompt() {
   static const uint8_t kPrompt[] = {'>'};
   writeElmBytes(kPrompt, sizeof(kPrompt));
+  flushElmBleReply();
 }
 
 void SerialProtocol::writeElmRawFrame(
@@ -280,6 +299,8 @@ void SerialProtocol::writeBleBusy() {
 void SerialProtocol::handleBleDisconnect() {
   if (!ble_ || !ble_->takeDisconnectEvent()) return;
 
+  // Never forward a previous connection's buffered response to the next one.
+  elm_ble_reply_len_ = 0;
   // A dropped wireless link must immediately remove authorization.
   monitor_.revokeLease();
   resetLine(ble_line_);
