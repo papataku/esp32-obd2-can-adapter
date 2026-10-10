@@ -136,8 +136,11 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
 
   snprintf(fps, sizeof(fps), "%lu",
            static_cast<unsigned long>(frames_per_second_));
-  snprintf(rx_total, sizeof(rx_total), "RX %llu",
-           static_cast<unsigned long long>(stats.rx_frames));
+  // Ambient CAN RX can increase even when no diagnostic PID reply
+  // succeeds. Show both counters side-by-side for on-device diagnosis.
+  snprintf(rx_total, sizeof(rx_total), "CAN RX %llu   OBD OK %llu",
+           static_cast<unsigned long long>(stats.rx_frames),
+           static_cast<unsigned long long>(stats.query_ok));
   snprintf(diag_rate, sizeof(diag_rate),
            "DIAG %lu.%lu/s  TX %lu.%lu/s",
            static_cast<unsigned long>(queries_per_second_x10_ / 10),

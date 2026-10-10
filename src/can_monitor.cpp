@@ -144,6 +144,16 @@ void CanMonitor::rxTask() {
     DiagnosticRequest request{};
     if (xQueueReceive(query_queue_, &request, 0) == pdTRUE) {
       const DiagnosticResult result = performQuery(request);
+      portENTER_CRITICAL(&stats_mux_);
+      if (result.status == DiagnosticStatus::Ok && result.response_count) {
+        ++stats_.query_ok;
+        stats_.last_response_can_id = result.responses[0].can_id;
+      } else if (result.status == DiagnosticStatus::NoData) {
+        ++stats_.query_no_data;
+      } else {
+        ++stats_.query_failed;
+      }
+      portEXIT_CRITICAL(&stats_mux_);
       xQueueSend(result_queue_, &result, 0);
       continue;
     }

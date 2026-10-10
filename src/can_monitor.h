@@ -28,6 +28,10 @@ struct CanStats {
   uint64_t tx_success = 0;
   uint64_t query_count = 0;
   uint64_t query_timeout = 0;
+  uint64_t query_ok = 0;        // Positive validated ISO-TP response
+  uint64_t query_no_data = 0;   // No matching response
+  uint64_t query_failed = 0;    // Lease, TX, bus or protocol error
+  uint32_t last_response_can_id = 0; // Actual responder, not ambient CAN RX
   bool query_active = false;
   uint32_t driver_rx_missed = 0;
   uint32_t driver_rx_overrun = 0;

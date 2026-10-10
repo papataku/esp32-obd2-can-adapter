@@ -735,6 +735,11 @@ void SerialProtocol::emitStats(bool forced) {
       static_cast<unsigned long>(monitor_.leaseRemainingMs()),
       ble_ && ble_->connected() ? "LINK" : "WAIT",
       stream_enabled_ ? "ON" : "OFF", demoActive() ? "ON" : "OFF");
+  Serial.printf("#OBD_REPLY,ok=%llu,no_data=%llu,failed=%llu,last_ecu=%08lX\n",
+      static_cast<unsigned long long>(s.query_ok),
+      static_cast<unsigned long long>(s.query_no_data),
+      static_cast<unsigned long long>(s.query_failed),
+      static_cast<unsigned long>(s.last_response_can_id));
 }
 
 void SerialProtocol::enterNativeMode() {
