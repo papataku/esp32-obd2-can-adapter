@@ -61,7 +61,7 @@ class DemoDrive {
       return std::max(minimum,std::min(value,maximum));
     };
     // Subtle engine vibration while running (zero at loop boundaries).
-    if(rpm>400.0f) rpm+=65.0f*std::sin(10.0f*phase);
+    rpm+=65.0f*clampf(rpm/1200.0f,0.0f,1.0f)*std::sin(10.0f*phase);
     // Acceleration draws current, hard braking makes the power negative.
     const float power=clampf(4.8f*speed_slope+8.0f*std::sin(6.0f*phase),
                              -108.0f,108.0f);
