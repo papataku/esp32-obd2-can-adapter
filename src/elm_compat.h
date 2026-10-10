@@ -7,6 +7,7 @@ namespace m5can {
 enum class ElmAction : uint8_t {
   ReplyOnly,
   VehicleRead,
+  BatchRead,
   LeaseAcquire,
   LeaseRevoke,
   LeaseStatus,
@@ -21,9 +22,12 @@ struct ElmVehicleRequest {
 };
 
 struct ElmResult {
+  static constexpr uint8_t kBatchMaxIDs = 16;
   ElmAction action = ElmAction::ReplyOnly;
   char reply[96]{};
   ElmVehicleRequest request{};
+  uint8_t batch_count = 0;
+  ElmVehicleRequest batch[kBatchMaxIDs]{};
 };
 
 class ElmCompat {
