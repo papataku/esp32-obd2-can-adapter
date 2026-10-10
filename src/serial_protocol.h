@@ -41,6 +41,7 @@ class SerialProtocol {
   bool claimElm(ElmLink link);
   void leaveElmMode();
   void handleElmLine(const char* line, ElmLink link);
+  bool queueNextBatchRequest();
   void writeElmBytes(const uint8_t* data, size_t length);
   void flushElmBleReply();
   void writeElmLine(const char* text);
@@ -77,6 +78,10 @@ class SerialProtocol {
   ElmLink elm_link_ = ElmLink::None;
   bool elm_mode_ = false;
   bool elm_query_pending_ = false;
+  bool elm_batch_active_ = false;
+  uint8_t elm_batch_total_ = 0;
+  uint8_t elm_batch_next_ = 0;
+  ElmVehicleRequest elm_batch_items_[ElmResult::kBatchMaxIDs]{};
   bool native_mode_ = false;
   bool stream_enabled_ = true;
   uint16_t native_tx_sequence_ = 0;
