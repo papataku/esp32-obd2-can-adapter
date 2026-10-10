@@ -144,11 +144,31 @@ void CanMonitor::rxTask() {
     DiagnosticRequest request{};
     if (xQueueReceive(query_queue_, &request, 0) == pdTRUE) {
       const DiagnosticResult result = performQuery(request);
+      // A negative ISO-TP response (7F <service> <NRC>) is still a
+      // completed transport transaction, but is NOT a usable meter value.
+      // Count only a matching *positive* PID/DID response as OBD OK.
+      uint32_t positive_ecu=0;
+      for (uint8_t i=0;i<result.response_count;++i) {
+        const DiagnosticMessage &message=result.responses[i];
+        const bool positive_obd=(request.data[0]==0x01 ||
+                                 request.data[0]==0x09) &&
+              message.length>=2 &&
+              message.data[0]==static_cast<uint8_t>(request.data[0]+0x40) &&
+              message.data[1]==request.data[1];
+        const bool positive_uds=request.data[0]==0x22 &&
+              message.length>=3 && message.data[0]==0x62 &&
+              message.data[1]==request.data[1] &&
+              message.data[2]==request.data[2];
+        if (positive_obd || positive_uds) {
+          positive_ecu=message.can_id;
+          break;
+        }
+      }
       portENTER_CRITICAL(&stats_mux_);
-      if (result.status == DiagnosticStatus::Ok && result.response_count) {
+      if (result.status==DiagnosticStatus::Ok && positive_ecu!=0) {
         ++stats_.query_ok;
-        stats_.last_response_can_id = result.responses[0].can_id;
-      } else if (result.status == DiagnosticStatus::NoData) {
+        stats_.last_response_can_id=positive_ecu;
+      } else if (result.status==DiagnosticStatus::NoData) {
         ++stats_.query_no_data;
       } else {
         ++stats_.query_failed;
