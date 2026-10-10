@@ -45,7 +45,7 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
                                 uint64_t timestamp_us) {
   IsoTpEvent event{};
   if (!extended || rtr || !data || dlc == 0 ||
-      !DiagnosticPolicy::allowedResponseId(can_id)) {
+      !DiagnosticPolicy::responseBelongsToRequest(request_, can_id)) {
     return event;
   }
 
