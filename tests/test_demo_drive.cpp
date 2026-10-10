@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cmath>
+#include <initializer_list>
 #include "demo_drive.h"
 int main() {
   using m5can::DemoDrive;
@@ -15,7 +16,7 @@ int main() {
   for (uint32_t t=0;t<100000;t+=137) {
     const auto v=DemoDrive::sample(t);
     assert(v.rpm<=7000 && v.speed_kmh<=160 && v.coolant_c>=-40 &&
-           v.soc_raw<=255 && std::isfinite(v.power_kw));
+           std::isfinite(v.power_kw));
     for(uint8_t pid : {0x0c,0x0d,0x05,0x5b,0x9a}) {
       m5can::DiagnosticRawFrame frames[2]{};
       const auto n=DemoDrive::frames(pid,t,frames);
