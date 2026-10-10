@@ -1,19 +1,29 @@
 #include <Arduino.h>
 
+#include "ble_elm_transport.h"
 #include "can_monitor.h"
 #include "serial_protocol.h"
 #include "ui.h"
 
 namespace {
 m5can::CanMonitor g_can;
-m5can::SerialProtocol g_serial(g_can);
+m5can::BleElmTransport g_ble;
+m5can::SerialProtocol g_serial(g_can, &g_ble);
 m5can::Ui g_ui;
 bool g_can_ok = false;
+bool g_ble_ok = false;
 }
 
 void setup() {
   g_ui.begin();
   g_serial.begin();
+
+  g_ble_ok = g_ble.begin();
+  if (!g_ble_ok) {
+    Serial.printf("#WARN,BLE_INIT,%s\n", g_ble.lastError());
+  } else {
+    Serial.println("#BLE,ADVERTISING,M5CAN-Dial");
+  }
 
   if (!g_can.begin()) {
     Serial.printf("#FATAL,CAN_INIT,%s\n", g_can.lastError());
@@ -22,7 +32,7 @@ void setup() {
   }
 
   g_can_ok = true;
-  Serial.println("#READY,Phase 2 receive-only CAN monitor; TX path absent");
+  Serial.println("#READY,Phase 3D BLE ELM + ISO-TP; TX lease required");
 }
 
 void loop() {
@@ -38,6 +48,6 @@ void loop() {
   }
 
   g_serial.emitStats(false);
-  g_ui.update(g_can);
+  g_ui.update(g_can, g_ble_ok, g_ble.connected(), g_serial.elmOverBle());
   delay(1);
 }
