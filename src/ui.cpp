@@ -85,7 +85,7 @@ void Ui::showFatal(const char* title, const char* detail) {
 }
 
 void Ui::update(const CanMonitor& can, bool ble_ready,
-                bool ble_connected, bool ble_elm) {
+                bool ble_connected, bool ble_elm, bool demo_active) {
   M5Dial.update();
   const uint32_t now = millis();
   if (now - last_refresh_ms_ < cfg::kDisplayRefreshMs) return;
@@ -160,9 +160,9 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
     cached_ble_color_ = ble_color;
   }
 
-  const char* status =
+  const char* status = demo_active ? "DEMO DRIVE" :
       statusText(fault, stats.query_active, frames_per_second_);
-  const uint16_t status_color =
+  const uint16_t status_color = demo_active ? TFT_YELLOW :
       statusColor(fault, stats.query_active, frames_per_second_);
   if (std::strncmp(cached_status_, status, sizeof(cached_status_)) != 0 ||
       cached_status_color_ != status_color) {
