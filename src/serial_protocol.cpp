@@ -238,11 +238,28 @@ bool SerialProtocol::queueNextBatchRequest() {
             elm_.timeout4ms() ? elm_.timeout4ms() * 4U : 200U,
             1000));
     std::memcpy(request.data, item.data, item.length);
-    if (monitor_.submitQuery(request)) {
+    // A short-lived authorization is created *inside* firmware only for a
+    // validated, read-only request. The BLE client sends no lease command.
+    // Refresh per item so a slow 16-DID batch cannot expire halfway.
+    if (!DiagnosticPolicy::allowedReadRequest(request)) {
+      writeElmLine("?");
+    } else if (elm_link_ == ElmLink::None ||
+               (elm_link_ == ElmLink::Ble &&
+                (!ble_ || !ble_->connected()))) {
+      // A BLE disconnect must never re-authorize the next batch item.
+      monitor_.revokeLease();
+      elm_batch_active_ = false;
+      elm_batch_total_ = 0;
+      elm_batch_next_ = 0;
+      return false;
+    } else if (!monitor_.acquireLease(cfg::kTxLeaseMaxMs)) {
+      writeElmLine("M5CAN TX LOCKED");
+    } else if (monitor_.submitQuery(request)) {
       elm_query_pending_ = true;
       return true;
+    } else {
+      writeElmLine("BUSY");
     }
-    writeElmLine("BUSY");
     ++elm_batch_next_;
   }
   writeElmLine("M5DONE");
@@ -275,14 +292,14 @@ void SerialProtocol::handleElmLine(const char* line, ElmLink link) {
       break;
 
     case ElmAction::BatchRead: {
-      // Never overlap a batch with an existing diagnostic transaction.
-      // An explicit M5CAN TX lease is required even for a batch.
+      // No extra ATM5TX1 BLE round-trip. Each eligible read-only request
+      // receives a bounded internal authorization in queueNextBatchRequest.
+      // ECU transactions remain strictly serialized and read-only.
       if (elm_batch_active_ || elm_query_pending_) {
         writeElmLine("BUSY");
         break;
       }
-      if (!monitor_.leaseRemainingMs() ||
-          !monitor_.acquireLease(cfg::kTxLeaseMaxMs)) {
+      if (monitor_.faultLocked()) {
         writeElmLine("M5CAN TX LOCKED");
         break;
       }
@@ -334,7 +351,14 @@ void SerialProtocol::handleElmLine(const char* line, ElmLink link) {
           std::max<uint32_t>(
               20, std::min<uint32_t>(configured_timeout, 1000));
 
-      if (!monitor_.submitQuery(request)) {
+      // Standard ELM reads are now lease-free on the BLE wire too.
+      // Keep authorization internal, bounded and restricted to safe reads.
+      if (!DiagnosticPolicy::allowedReadRequest(request)) {
+        writeElmLine("?");
+      } else if (monitor_.faultLocked() ||
+                 !monitor_.acquireLease(cfg::kTxLeaseDefaultMs)) {
+        writeElmLine("M5CAN TX LOCKED");
+      } else if (!monitor_.submitQuery(request)) {
         writeElmLine("BUSY");
       } else {
         elm_query_pending_ = true;
