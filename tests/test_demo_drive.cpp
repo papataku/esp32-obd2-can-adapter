@@ -23,8 +23,8 @@ int main() {
   assert(before_second_shift.rpm>after_second_shift.rpm+1400);
   assert(after_second_shift.speed_kmh>before_second_shift.speed_kmh);
   assert(DemoDrive::sample(6800).speed_kmh>DemoDrive::sample(9550).speed_kmh+70);
-  assert(DemoDrive::sample(8800).power_kw<-15.0f);
-  assert(DemoDrive::sample(10400).power_kw>0.0f);
+  assert(DemoDrive::sample(8200).power_kw<-15.0f);
+  assert(DemoDrive::sample(10000).power_kw>0.0f);
   // Short radio/renderer sampling intervals should see continuous motion,
   // not discontinuities at each scripted shift or loop boundary.
   for(uint32_t t=10;t<DemoDrive::kCycleMs+10;t+=10) {
