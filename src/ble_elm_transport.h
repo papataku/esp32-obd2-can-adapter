@@ -5,6 +5,7 @@
 #include <cstdint>
 
 class BLEAdvertising;
+class BLEServer;
 class BLECharacteristic;
 
 namespace m5can {
