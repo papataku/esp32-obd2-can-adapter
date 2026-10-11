@@ -37,6 +37,8 @@ class Ui {
   uint32_t last_peer_rate_ms_ = 0;
   uint32_t peer_rx_bytes_per_sec_[2]{};
   uint32_t peer_tx_bytes_per_sec_[2]{};
+  bool show_ble_peer_page_ = true;
+  char cached_lower_label_[32]{};
 #endif
 
   char cached_ble_[24]{};
