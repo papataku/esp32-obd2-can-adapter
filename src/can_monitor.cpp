@@ -542,32 +542,35 @@ DiagnosticResult CanMonitor::performQuery(
 }
 
 bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
-  // CAN owner is on CPU0; BLE worker and USB can both submit from CPU1.
-  // Queue operations here are all nonblocking. Never wait under this spinlock.
+  if (!query_queue_ || !result_queue_) return false;
+  // Reserve the single in-flight slot atomically across USB and BLE callers.
+  // IMPORTANT: never call FreeRTOS queues while holding an ESP spinlock.
   portENTER_CRITICAL(&query_mux_);
-  if (!query_queue_ || !result_queue_ ||
-      fault_locked_ || query_in_flight_) {
-    portEXIT_CRITICAL(&query_mux_);
-    return false;
-  }
+  const bool accepted = !fault_locked_ && !query_in_flight_;
+  if (accepted) query_in_flight_ = true;
+  portEXIT_CRITICAL(&query_mux_);
+  if (!accepted) return false;
+
   DiagnosticResult stale{};
   while (xQueueReceive(result_queue_, &stale, 0) == pdTRUE) {}
-  const bool submitted = xQueueSend(query_queue_, &request, 0) == pdTRUE;
-  if (submitted) query_in_flight_ = true;
+  if (xQueueSend(query_queue_, &request, 0) == pdTRUE) return true;
+
+  portENTER_CRITICAL(&query_mux_);
+  query_in_flight_ = false;
   portEXIT_CRITICAL(&query_mux_);
-  return submitted;
+  return false;
 }
 
 bool CanMonitor::pollQueryResult(DiagnosticResult& result) {
+  if (!query_in_flight_ || !result_queue_) return false;
+  // A query is owned by the caller that successfully submitted it. The two
+  // DualBleElm sessions dispatch through one owner and the USB path submits
+  // only when that owner is idle. Do not block under the query spinlock.
+  if (xQueueReceive(result_queue_, &result, 0) != pdTRUE) return false;
   portENTER_CRITICAL(&query_mux_);
-  if (!query_in_flight_ || !result_queue_) {
-    portEXIT_CRITICAL(&query_mux_);
-    return false;
-  }
-  const bool ready = xQueueReceive(result_queue_, &result, 0) == pdTRUE;
-  if (ready) query_in_flight_ = false;
+  query_in_flight_ = false;
   portEXIT_CRITICAL(&query_mux_);
-  return ready;
+  return true;
 }
 
 bool CanMonitor::query(const DiagnosticRequest& request,
