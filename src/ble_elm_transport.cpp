@@ -8,6 +8,9 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#include <esp_gatts_api.h>
+#endif
 
 #include "app_config.h"
 
@@ -18,12 +21,26 @@ class M5CanBleServerCallbacks final : public BLEServerCallbacks {
   explicit M5CanBleServerCallbacks(BleElmTransport& owner) : owner_(owner) {}
 
   void onConnect(BLEServer*) override {
+#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
     owner_.onConnect();
+#endif
   }
-
   void onDisconnect(BLEServer*) override {
+#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
     owner_.onDisconnect();
+#endif
   }
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  void onConnect(BLEServer*, esp_ble_gatts_cb_param_t* e) override {
+    if (e) owner_.onPeerConnect(e->connect.conn_id);
+  }
+  void onDisconnect(BLEServer*, esp_ble_gatts_cb_param_t* e) override {
+    if (e) owner_.onPeerDisconnect(e->disconnect.conn_id);
+  }
+  void onMtuChanged(BLEServer*, esp_ble_gatts_cb_param_t* e) override {
+    if (e) owner_.onPeerMtu(e->mtu.conn_id, e->mtu.mtu);
+  }
+#endif
 
  private:
   BleElmTransport& owner_;
@@ -34,12 +51,21 @@ class M5CanBleRxCallbacks final : public BLECharacteristicCallbacks {
   explicit M5CanBleRxCallbacks(BleElmTransport& owner) : owner_(owner) {}
 
   void onWrite(BLECharacteristic* characteristic) override {
+#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
     const std::string value = characteristic->getValue();
     if (!value.empty()) {
       owner_.onWrite(
           reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
+#else
+    (void)characteristic;
+#endif
   }
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  void onWrite(BLECharacteristic*, esp_ble_gatts_cb_param_t* e) override {
+    if (e) owner_.onPeerWrite(e->write.conn_id, e->write.value, e->write.len);
+  }
+#endif
 
  private:
   BleElmTransport& owner_;
@@ -53,6 +79,10 @@ void BleElmTransport::setError(const char* message) {
 
 bool BleElmTransport::begin() {
   BLEDevice::init(cfg::kBleDeviceName);
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  // This is a local preference; the negotiated MTU is stored per peer.
+  BLEDevice::setMTU(247);
+#endif
 
   BLEServer* server = BLEDevice::createServer();
   if (!server) {
@@ -60,6 +90,9 @@ bool BleElmTransport::begin() {
     return false;
   }
   server->setCallbacks(new M5CanBleServerCallbacks(*this));
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  server_ = server;
+#endif
 
   BLEService* service = server->createService(cfg::kBleServiceUuid);
   if (!service) {
@@ -160,6 +193,13 @@ int BleElmTransport::read() {
 }
 
 size_t BleElmTransport::write(const uint8_t* data, size_t length) {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  // The legacy notify() broadcasts to every connected client. Never allow
+  // it in two-client mode; all responses must use writeTo(conn_id,...).
+  (void)data;
+  (void)length;
+  return 0;
+#else
   if (!data || !length || !connected_ || !tx_characteristic_) return 0;
 
   // 20 bytes is valid before any larger ATT MTU negotiation.
@@ -178,6 +218,7 @@ size_t BleElmTransport::write(const uint8_t* data, size_t length) {
   stats_.tx_bytes += sent;
   portEXIT_CRITICAL(&mux_);
   return sent;
+#endif
 }
 
 bool BleElmTransport::takeDisconnectEvent() {
@@ -196,3 +237,151 @@ BleStats BleElmTransport::stats() const {
 }
 
 }  // namespace m5can
+
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+void BleElmTransport::pushEvent(BleClientEvent::Type type,
+                               uint16_t id, uint32_t generation,
+                               uint8_t byte) {
+  const size_t next = (event_head_ + 1) % kEventBufferSize;
+  if (next == event_tail_) {
+    ++stats_.rx_overflow;
+    return;
+  }
+  BleClientEvent& e = events_[event_head_];
+  e.type = type;
+  e.connection_id = id;
+  e.generation = generation;
+  e.byte = byte;
+  event_head_ = next;
+}
+
+void BleElmTransport::onPeerConnect(uint16_t id) {
+  bool accepted = false;
+  portENTER_CRITICAL(&mux_);
+  for (auto& peer : clients_) {
+    if (!peer.active) {
+      peer.connection_id = id;
+      peer.generation = ++next_generation_;
+      peer.mtu = 23;
+      peer.active = true;
+      connected_ = true;
+      pushEvent(BleClientEvent::Type::Connect,id,peer.generation,0);
+      accepted = true;
+      break;
+    }
+  }
+  if (!accepted) ++stats_.session_rejections;
+  portEXIT_CRITICAL(&mux_);
+  if (!accepted && server_) {
+    server_->disconnect(id);
+  } else if (accepted && connectedClientCount() < kMaxClients) {
+    // Arduino-ESP32 stops advertising when a peer connects. Continue
+    // advertising while there is room for the second authorized peer.
+    restartAdvertising();
+  }
+}
+
+void BleElmTransport::onPeerDisconnect(uint16_t id) {
+  portENTER_CRITICAL(&mux_);
+  for (auto& peer : clients_) {
+    if (peer.active && peer.connection_id == id) {
+      pushEvent(BleClientEvent::Type::Disconnect,id,peer.generation,0);
+      peer.active = false;
+    }
+  }
+  connected_ = false;
+  for (const auto& peer : clients_) if (peer.active) connected_ = true;
+  portEXIT_CRITICAL(&mux_);
+  restartAdvertising();
+}
+
+void BleElmTransport::onPeerMtu(uint16_t id, uint16_t mtu) {
+  portENTER_CRITICAL(&mux_);
+  for (auto& peer : clients_) if (peer.active && peer.connection_id == id)
+    peer.mtu = mtu < 23 ? 23 : mtu;
+  portEXIT_CRITICAL(&mux_);
+}
+
+void BleElmTransport::onPeerWrite(uint16_t id,
+                                  const uint8_t* data, size_t length) {
+  if (!data || !length) return;
+  portENTER_CRITICAL(&mux_);
+  for (const auto& peer : clients_) {
+    if (peer.active && peer.connection_id == id) {
+      for (size_t i = 0; i < length; ++i) {
+        pushEvent(BleClientEvent::Type::Byte,id,peer.generation,data[i]);
+        ++stats_.rx_bytes;
+      }
+      break;
+    }
+  }
+  portEXIT_CRITICAL(&mux_);
+}
+
+bool BleElmTransport::pollClientEvent(BleClientEvent& event) {
+  portENTER_CRITICAL(&mux_);
+  if (event_head_ == event_tail_) {
+    portEXIT_CRITICAL(&mux_);
+    return false;
+  }
+  event = events_[event_tail_];
+  event_tail_ = (event_tail_ + 1) % kEventBufferSize;
+  portEXIT_CRITICAL(&mux_);
+  return true;
+}
+
+bool BleElmTransport::isClientConnected(uint16_t id, uint32_t gen) const {
+  portENTER_CRITICAL(&mux_);
+  bool found = false;
+  for (const auto& peer : clients_)
+    if (peer.active && peer.connection_id == id && peer.generation == gen)
+      found = true;
+  portEXIT_CRITICAL(&mux_);
+  return found;
+}
+
+uint8_t BleElmTransport::connectedClientCount() const {
+  portENTER_CRITICAL(&mux_);
+  uint8_t count = 0;
+  for (const auto& peer : clients_) if (peer.active) ++count;
+  portEXIT_CRITICAL(&mux_);
+  return count;
+}
+
+size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
+                                const uint8_t* data, size_t length) {
+  if (!server_ || !tx_characteristic_ || !data || !length) return 0;
+  uint16_t mtu = 23;
+  bool active = false;
+  portENTER_CRITICAL(&mux_);
+  for (const auto& peer : clients_) {
+    if (peer.active && peer.connection_id == id && peer.generation == gen) {
+      active = true;
+      mtu = peer.mtu;
+      break;
+    }
+  }
+  portEXIT_CRITICAL(&mux_);
+  if (!active) return 0;
+  const size_t max_payload = std::min<size_t>(244, mtu - 3);
+  size_t sent = 0;
+  uint32_t chunks = 0;
+  while (sent < length && isClientConnected(id, gen)) {
+    const uint16_t chunk = static_cast<uint16_t>(
+        std::min(max_payload,length - sent));
+    // This API targets precisely one GATT connection; normal
+    // BLECharacteristic::notify() broadcasts and must never be used here.
+    if (esp_ble_gatts_send_indicate(
+            server_->getGattsIf(),id,tx_characteristic_->getHandle(),
+            chunk,const_cast<uint8_t*>(data + sent),false) != ESP_OK) break;
+    sent += chunk;
+    ++chunks;
+    if (sent < length) delay(1);
+  }
+  portENTER_CRITICAL(&mux_);
+  stats_.tx_bytes += sent;
+  stats_.targeted_notifications += chunks;
+  portEXIT_CRITICAL(&mux_);
+  return sent;
+}
+#endif
