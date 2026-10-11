@@ -69,9 +69,7 @@ void Ui::begin() {
   // Static label is drawn once. Dynamic fields below are updated only
   // when their rendered text actually changes.
   M5Dial.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-  M5Dial.Display.drawString("BLE PEERS  RX / TX", 120, 121, &fonts::Font2);
-#else
+#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   M5Dial.Display.drawString("CAN frame/s", 120, 121, &fonts::Font2);
 #endif
 }
@@ -92,6 +90,13 @@ bool Ui::pollDemoToggle() {
   M5Dial.update();
   const auto touch=M5Dial.Touch.getDetail();
   if (!touch.wasPressed()) return false;
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  // Only the lower half changes the status page. It cannot toggle DEMO.
+  if (touch.y>=130 && touch.y<=226 && touch.x>=22 && touch.x<=218) {
+    show_ble_peer_page_=!show_ble_peer_page_;
+    return false;
+  }
+#endif
   return demo_touch_.onPress(touch.x,touch.y,millis());
 }
 
@@ -223,7 +228,10 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
   updateLine(cached_fps_, sizeof(cached_fps_),
              fps, 72, 36, TFT_WHITE, &fonts::Font4);
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-  if (peers) {
+  updateLine(cached_lower_label_,sizeof(cached_lower_label_),
+             show_ble_peer_page_ ? "BLE PEERS (TAP CAN)" : "CAN STATS (TAP BLE)",
+             109,23,TFT_LIGHTGREY,&fonts::Font2);
+  if (peers && show_ble_peer_page_) {
     if (last_peer_rate_ms_ == 0) {
       last_peer_rate_ms_ = now;
       last_peers_ = *peers;
@@ -266,8 +274,8 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
     updateLine(cached_diag_,sizeof(cached_diag_),p0_tx,156,22,TFT_LIGHTGREY,&fonts::Font2);
     updateLine(cached_tx_,sizeof(cached_tx_),p1_rx,179,22,TFT_WHITE,&fonts::Font2);
     updateLine(cached_errors_,sizeof(cached_errors_),p1_tx,202,24,TFT_LIGHTGREY,&fonts::Font2);
-  }
-#else
+  } else {
+#endif
   updateLine(cached_rx_, sizeof(cached_rx_),
              rx_total, 133, 23, TFT_WHITE, &fonts::Font2);
   updateLine(cached_diag_, sizeof(cached_diag_),
@@ -294,6 +302,8 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
     updateLine(cached_errors_, sizeof(cached_errors_),
                errors, 202, 24, error_color, &fonts::Font2);
     cached_error_color_ = error_color;
+  }
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   }
 #endif
 }
