@@ -56,3 +56,14 @@ its center. Font2's old CPU annotation string measured 161 px, so the
 header is shortened to `BLE n/2` (52 px for two peers). Detailed measured
 CPU placement remains in USB diagnostics. Physical viewing is still a
 separate acceptance item.
+
+## Reproduced DEMO OFF failure
+
+At 08:38:36 JST on a4b0b5d, changing DEMO to OFF while a meter was
+connected triggered the CAN-owner stack canary during TWAI mode switching;
+a second reset occurred after reconnect. This run is aborted, not accepted.
+The large result and transaction are moved to fixed CAN-owner-only storage;
+compiler frames shrink from 3392+3040 to 144+336 bytes. The optional dry
+mode profile compiles out every physical TX call, exercises that driver
+transition path, and must precede the fresh normal 20-byte 65-minute run.
+Its expected error replies are not positive vehicle-data acceptance.

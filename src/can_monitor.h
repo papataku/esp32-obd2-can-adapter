@@ -6,6 +6,7 @@
 #include "diagnostic_policy.h"
 #include "diagnostic_request_pacer.h"
 #include "diagnostic_result_cache.h"
+#include "diagnostic_transaction.h"
 
 namespace m5can {
 
@@ -80,7 +81,7 @@ class CanMonitor {
 
   bool leaseAllowsBudget(uint32_t budget_ms) const;
   bool waitForRateLimit(const DiagnosticRequest& request);
-  DiagnosticResult performQuery(const DiagnosticRequest& request);
+  void performQuery(const DiagnosticRequest& request, DiagnosticResult& result);
 
   esp_err_t transmitOwnedFrame(const twai_message_t& message,
                                uint32_t wait_ms);
@@ -105,6 +106,10 @@ class CanMonitor {
   uint64_t last_status_poll_us_ = 0;
   DiagnosticRequestPacer diagnostic_pacer_{};
   DiagnosticResultCache result_cache_{};
+  // Only rxTask accesses these. Queues/cache copy the completed result before
+  // reuse; avoid multi-kilobyte result/transaction frames around TWAI IPC calls.
+  DiagnosticResult owner_result_{};
+  DiagnosticTransaction owner_transaction_{};
   uint64_t lease_deadline_ms_ = 0;
   char last_error_[96] = "not started";
 };

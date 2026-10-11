@@ -71,6 +71,21 @@ int main() {
   assert(step.event == TransactionEvent::ProtocolError);
   assert(transaction.result().status == DiagnosticStatus::IsoTpError);
 
+  // The CAN owner now reuses its bounded transaction scratch across requests.
+  transaction.begin(req(0x18DB33F1U,{0x01,0x0D}),3000);
+  assert(transaction.result().response_count==0);
+  assert(transaction.result().raw_frame_count==0);
+  assert(transaction.result().tx_to_first_response_us==0);
+  assert(transaction.result().status==DiagnosticStatus::NoData);
+  assert(!transaction.hasActiveIsoTp());
+  assert(transaction.onFrame(frame(0x18DAF101U,3100,
+      {0x22,4,5,6,7,8,9,10})).event==TransactionEvent::Ignored);
+  assert(transaction.result().response_count==0);
+  assert(transaction.onFrame(frame(0x18DAF101U,3200,
+      {0x03,0x41,0x0D,0x55})).event==TransactionEvent::Completed);
+  assert(transaction.result().response_count==1);
+  assert(transaction.result().responses[0].data[1]==0x0D);
+
   std::cout << "PASS diagnostic transaction tests\n";
   return 0;
 }

@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 
 BUDGETS = {
+    'm5can::CanMonitor::rxTask(': 512,
+    'm5can::CanMonitor::performQuery(': 512,
     '::bleAppTask(': 128,
     'm5can::DualBleElm::poll(': 128,
     'm5can::DualBleElm::event(': 1536,
@@ -30,8 +32,9 @@ for env in sys.argv[1:]:
         assert set(frames) == set(BUDGETS), f'{env}: missing functions {set(BUDGETS)-set(frames)}'
         # Conservative selected frames, including mutually exclusive paths.
         # Retain 2048 bytes for nested library calls; HWM is the runtime gate.
-        estimate = sum(frames.values()) + 2048
+        estimate = sum(v for k,v in frames.items() if 'CanMonitor' not in k) + 2048
         assert estimate <= 8192, f'{env}: selected frame sum plus reserve {estimate}>8192'
         print(f'PASS {env}: frames {frames}; selected sum+reserve={estimate}/8192')
     else:
-        print(f'PASS {env}: {len(files)} compiler frame files present (no dual worker)')
+        assert all(k in frames for k in BUDGETS if 'CanMonitor' in k), f'{env}: CAN frame files missing'
+        print(f'PASS {env}: CAN frames {frames} (no dual worker)')
