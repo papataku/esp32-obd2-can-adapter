@@ -50,6 +50,12 @@ int main() {
   assert(transport.writeTo(19,eb.generation,data,21)==21);
   assert(test_notifications.size()==(21+limit-1)/limit);
   for(const auto& n:test_notifications) {assert(n.conn==19);assert(n.length<=limit);}
+  // Even the matched profile must honor a peer that negotiates MTU23.
+  NimBLEServer::callbacks->onMTUChange(23,&b);
+  test_notifications.clear();
+  assert(transport.writeTo(19,eb.generation,data,sizeof(data))==sizeof(data));
+  assert(test_notifications.size()==11);
+  for(const auto& n:test_notifications) {assert(n.conn==19);assert(n.length<=20);}
   NimBLEServer::callbacks->onConnect(server,&a);
   assert(transport.writeTo(7,ea.generation,data,1)==0);
 }
