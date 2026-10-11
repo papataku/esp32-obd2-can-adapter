@@ -3,7 +3,10 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-struct ble_gap_conn_desc { uint16_t conn_handle = 0; };
+struct ble_gap_conn_desc {
+  uint16_t conn_handle = 0;
+  struct { uint8_t val[6]{}; } peer_ota_addr{};
+};
 struct os_mbuf { size_t length=0; std::vector<uint8_t> data; };
 struct TestNotify {uint16_t conn; size_t length;std::vector<uint8_t> data;};
 inline std::vector<TestNotify> test_notifications;
