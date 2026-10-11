@@ -23,8 +23,12 @@ may vary, and no in-vehicle support has been demonstrated for the Honda RP8.
   **disable this grouping profile for the rest of the boot** and immediately
   fetch the requested items using the existing serialized per-PID mechanism.
   The next batches go directly to the old path (no probe loop).
-- Driver, lease and bus faults: disable grouping and report errors without
-  generating extra fallback CAN TX. Existing TX fault lockout wins.
+- Driver, lease and bus faults: disable grouping, abort the remaining
+  pending BLE batch and report the error without generating additional CAN TX.
+  Existing TX fault lockout wins. Fail closed when the probing BLE peer drops.
+- The known RPM+speed response is exactly six diagnostic bytes. Reject any
+  claimed ISO-TP First Frame for this profile without sending Flow Control,
+  even if its prefix resembles a matching PID (other testers may be active).
 - The two BLE clients share one capability decision and one serial CAN owner.
 - Retain the 50ms minimum **for each PID** across group and individual TX.
 - Do not cache a partly successful group; validated single-item positive
