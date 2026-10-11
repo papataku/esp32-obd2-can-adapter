@@ -353,7 +353,10 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
   }
   portEXIT_CRITICAL(&mux_);
   if (!active) return 0;
-  const size_t max_payload = std::min<size_t>(244, mtu - 3);
+  // The established meter bench accepts 20-byte notifications. A larger
+  // negotiated MTU does not imply that its application RX queue accepts
+  // larger chunks; keep the dual stability baseline compatible.
+  const size_t max_payload = std::min<size_t>(20, mtu - 3);
   size_t sent = 0;
   uint32_t chunks = 0;
   while (sent < length && isClientConnected(id, gen)) {

@@ -2,13 +2,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 struct ble_gap_conn_desc { uint16_t conn_handle = 0; };
-struct os_mbuf {};
-inline os_mbuf* ble_hs_mbuf_from_flat(const void*,size_t) {
+struct os_mbuf { size_t length=0; };
+struct TestNotify {uint16_t conn; size_t length;};
+inline std::vector<TestNotify> test_notifications;
+inline os_mbuf* ble_hs_mbuf_from_flat(const void*,size_t length) {
   static os_mbuf buffer;
+  buffer.length=length;
   return &buffer;
 }
-inline int ble_gattc_notify_custom(uint16_t,uint16_t,os_mbuf*) { return 0; }
+inline int ble_gattc_notify_custom(uint16_t conn,uint16_t,os_mbuf* packet) { test_notifications.push_back({conn,packet->length}); return 0; }
 namespace NIMBLE_PROPERTY {
   static constexpr uint32_t WRITE = 1;
   static constexpr uint32_t WRITE_NR = 2;
@@ -50,7 +54,8 @@ class NimBLEAdvertising {
 };
 class NimBLEServer {
  public:
-  void setCallbacks(NimBLEServerCallbacks*) {}
+  inline static NimBLEServerCallbacks* callbacks=nullptr;
+  void setCallbacks(NimBLEServerCallbacks* c) {callbacks=c;}
   NimBLEService* createService(const char*) {
     static NimBLEService s;
     return &s;

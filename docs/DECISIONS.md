@@ -146,3 +146,20 @@ CAN IDs, and cache saturation. CI + PlatformIO build followed by
 controlled CAN bench metrics are required before any vehicle
 performance validation. An actual 60Hz per PID is not supported by
 a retained same-PID 50ms limit.
+
+## D017 - Dual-meter stability baseline retains 20-byte notifications
+
+SmartRing and JC3636W518C M5CAN bench clients have a bounded 20-byte
+notification receiver unless the MTU experiment is explicitly enabled.
+Negotiating ATT MTU247 does not enlarge this application receiver. The
+dual adapter must therefore cap its targeted notification chunks at 20
+bytes for the current stability baseline. Larger chunks reproduced RX
+queue rejection, batch timeout and repeated reconnection with SmartRing
+alone. This cap applies only to the experimental dual environment;
+production transport and CAN safety policy are unchanged. Throughput
+experiments must coordinate sender and both receiver profiles.
+
+The regression test uses two distinct connection handles and large MTUs,
+checks a 203-byte reply arrives as individually targeted chunks <=20 bytes,
+and verifies disconnect/reconnect generation isolation. Physical USB-only
+dual-client runtime evidence is recorded separately.
