@@ -6,7 +6,7 @@ Normal `m5dial` remains unchanged. This branch stacks on dual-compatible PR #13.
 ## Work allocation
 
 - **CPU0:** Existing CAN/TWAI owner task (`m5can-owner`), with the only physical CAN TX path, ISO-TP reassembly, rate limiter, read-only validation and <=100ms positive-result cache.
-- **CPU1:** NimBLE host (`MYNEWT_VAL_NIMBLE_PINNED_TO_CORE=1`) and new `m5can-ble-elm` protocol worker, FreeRTOS priority 4, 8192-byte stack. USB input, status print and LCD remain in the lower-priority Arduino task. No competing calls to `DualBleElm::poll()`.
+- **CPU1:** NimBLE host (`CONFIG_BT_NIMBLE_PINNED_TO_CORE=1`) and new `m5can-ble-elm` protocol worker, FreeRTOS priority 4, 8192-byte stack. USB input, status print and LCD remain in the lower-priority Arduino task. No competing calls to `DualBleElm::poll()`.
 - **Cross-core:** Existing fixed FreeRTOS request/result queues; nonblocking submit/read protected against USB vs BLE simultaneous callers. No CAN API calls in BLE callback context. BLE host callback only queues bytes; session parser and targeted notify run in the worker. The CAN owner still serializes *all* ECU queries.
 
 The controller/host task core assignment and CPU load must be checked on hardware: compiled affinity is not evidence of latency improvement. ESP32 system tasks and interrupts may still run on either core; `CPU0 CAN/CPU1 BLE` refers to the primary application owners.
@@ -28,3 +28,25 @@ This is **application payload throughput**, excluding GATT/ATT/link overhead; do
 
 ## Limitation
 The host CI tests code paths and per-peer counters, not actual NimBLE task scheduling, LCD geometry or throughput performance. This PR does not promise zero latency. An observed sustained lag requires correlating per-peer application timestamps and radio connection events before further optimization.
+
+## Review correction before hardware QA
+
+NimBLE-Arduino 1.4.3 creates `nimble_host` with `NIMBLE_CORE` derived from
+`CONFIG_BT_NIMBLE_PINNED_TO_CORE`. The previously supplied MYNEWT_VAL flag
+is unused in this library and silently leaves core0 as default. The corrected
+build sets the actual CONFIG macro and a compile-time assertion rejects a
+host/worker core mismatch. A connect callback logs actual core, task name,
+priority and stack watermark, supplementing the application task startup
+logs. Controller/ISR affinity is still outside this assertion.
+
+On the bundled ESP-IDF FreeRTOS port, `uxTaskGetStackHighWaterMark` returns
+**bytes**, not vanilla FreeRTOS words. USB now labels `stack_free_bytes`
+and also reports internal heap/minimum/largest block and UI-loop peak gap.
+These are measured diagnostics, not a guarantee of LCD/touch acceptance.
+
+Address suffix extraction uses NimBLE's little-endian `val[1:0]`; the
+previous `val[5:4]` represented the vendor prefix, not the final four hex
+digits. Regression cases use distinct prefixes and suffixes to catch this.
+Compiler `.su` frame budgets are checked in CI; these selected frame/chain
+checks complement runtime stack watermarks and are not a complete proof of
+all library call paths or vehicle-CAN stack use.

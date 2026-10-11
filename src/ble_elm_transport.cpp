@@ -20,9 +20,13 @@ class M5CanBleServerCallbacks final : public NimBLEServerCallbacks {
  public:
   explicit M5CanBleServerCallbacks(BleElmTransport& owner) : owner_(owner) {}
   void onConnect(NimBLEServer*, ble_gap_conn_desc* d) override {
+    Serial.printf("#CORE,task=nimble-host-callback,core=%d,name=%s,priority=%u,stack_free_bytes=%u\n",
+        xPortGetCoreID(),pcTaskGetName(nullptr),
+        static_cast<unsigned>(uxTaskPriorityGet(nullptr)),
+        static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     if (d) owner_.onPeerConnect(d->conn_handle,
-        static_cast<uint16_t>((static_cast<uint16_t>(d->peer_ota_addr.val[5]) << 8) |
-                               d->peer_ota_addr.val[4]));
+        static_cast<uint16_t>((static_cast<uint16_t>(d->peer_ota_addr.val[1]) << 8) |
+                               d->peer_ota_addr.val[0]));
   }
   void onDisconnect(NimBLEServer*, ble_gap_conn_desc* d) override {
     if (d) owner_.onPeerDisconnect(d->conn_handle);
@@ -78,6 +82,12 @@ void BleElmTransport::setError(const char* message) {
 
 bool BleElmTransport::begin() {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#if defined(ARDUINO_ARCH_ESP32)
+  // NimBLE-Arduino 1.4 uses CONFIG_BT_NIMBLE_PINNED_TO_CORE, not the
+  // MYNEWT_VAL name used by other NimBLE ports. Reject silent core0 fallback.
+  static_assert(CONFIG_BT_NIMBLE_PINNED_TO_CORE == M5CAN_DUAL_BLE_APP_CORE,
+                "NimBLE host and BLE worker must share the configured core");
+#endif
   NimBLEDevice::init(cfg::kBleDeviceName);
   NimBLEDevice::setMTU(247);
   NimBLEServer* server=NimBLEDevice::createServer();

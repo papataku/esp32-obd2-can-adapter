@@ -56,6 +56,9 @@ class CanMonitor {
   void revokeLease();
   uint32_t leaseRemainingMs() const;
 
+  uint32_t ownerStackFreeBytes() const {
+    return rx_task_ ? static_cast<uint32_t>(uxTaskGetStackHighWaterMark(rx_task_)) : 0;
+  }
   bool submitQuery(const DiagnosticRequest& request);
   bool pollQueryResult(DiagnosticResult& result);
   bool queryPending() const { return query_in_flight_; }

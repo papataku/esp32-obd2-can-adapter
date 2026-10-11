@@ -10,6 +10,10 @@ int main() {
   assert(transport.begin());
   auto* server=NimBLEDevice::createServer();
   ble_gap_conn_desc a{7}, b{19};
+  // NimBLE stores addresses little-endian: displayed 10:51:DB:8E:DD:40.
+  const uint8_t aa[6]={0x40,0xdd,0x8e,0xdb,0x51,0x10};
+  const uint8_t bb[6]={0x18,0xfb,0xe9,0xae,0x3d,0x98};
+  for(size_t i=0;i<6;++i){a.peer_ota_addr.val[i]=aa[i];b.peer_ota_addr.val[i]=bb[i];}
   NimBLEServer::callbacks->onConnect(server,&a);
   NimBLEServer::callbacks->onConnect(server,&b);
   NimBLEServer::callbacks->onMTUChange(247,&a);
@@ -22,6 +26,8 @@ int main() {
   assert(transport.peerTraffic().peers[1].connected);
   assert(transport.peerTraffic().peers[0].connection_id==7);
   assert(transport.peerTraffic().peers[1].connection_id==19);
+  assert(transport.peerTraffic().peers[0].address_suffix==0xdd40);
+  assert(transport.peerTraffic().peers[1].address_suffix==0xfb18);
   NimBLECharacteristic characteristic;
   NimBLECharacteristic::next_write_value="ATM5B00:010C\r";
   NimBLECharacteristic::callbacks->onWrite(&characteristic,&a);

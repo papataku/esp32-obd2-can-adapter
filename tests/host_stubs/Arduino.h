@@ -28,6 +28,7 @@ inline int xQueueReceive(QueueHandle_t,void*,TickType_t){return 0;}
 inline int xTaskCreatePinnedToCore(void(*)(void*),const char*,uint32_t,void*,int,TaskHandle_t* h,int){*h=reinterpret_cast<void*>(1);return pdPASS;}
 inline void vTaskDelete(TaskHandle_t){}
 inline int xPortGetCoreID(){return 1;}
+inline const char* pcTaskGetName(TaskHandle_t){return "host-test";}
 inline unsigned uxTaskPriorityGet(TaskHandle_t){return 4;}
 inline unsigned uxTaskGetStackHighWaterMark(TaskHandle_t){return 4096;}
 struct SerialStub {

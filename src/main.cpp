@@ -1,5 +1,8 @@
 #include <Arduino.h>
 #include <atomic>
+#if defined(ARDUINO_ARCH_ESP32)
+#include <esp_heap_caps.h>
+#endif
 
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
@@ -74,6 +77,13 @@ void setup() {
 }
 
 void loop() {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  static uint32_t last_loop_us=0,loop_peak_us=0;
+  const uint32_t loop_now=micros();
+  if (last_loop_us && loop_now-last_loop_us>loop_peak_us)
+    loop_peak_us=loop_now-last_loop_us;
+  last_loop_us=loop_now;
+#endif
   // Always service the touchscreen, not only on the 250ms display redraw.
   // Only the highlighted DEMO soft key generates this one-shot event.
   if (g_can_ok && g_ui.pollDemoToggle()) {
@@ -90,10 +100,19 @@ void loop() {
         g_ble.connectedClientCount(),static_cast<unsigned long>(stats.rx_overflow),
         static_cast<unsigned long>(stats.targeted_notifications),
         static_cast<unsigned long>(stats.notify_retries),static_cast<unsigned long>(stats.notify_failures));
-    Serial.printf("#BLE_TASK,core=%d,poll_peak_us=%lu,stack_free_words=%u\n",
+    Serial.printf("#BLE_TASK,core=%d,poll_peak_us=%lu,stack_free_bytes=%u,ui_loop_peak_us=%lu\n",
         M5CAN_DUAL_BLE_APP_CORE,
         static_cast<unsigned long>(g_ble_poll_peak_us.exchange(0)),
-        static_cast<unsigned>(uxTaskGetStackHighWaterMark(g_ble_app_task)));
+        static_cast<unsigned>(uxTaskGetStackHighWaterMark(g_ble_app_task)),
+        static_cast<unsigned long>(loop_peak_us));
+    loop_peak_us=0;
+#if defined(ARDUINO_ARCH_ESP32)
+    Serial.printf("#MEMORY,internal_free=%u,internal_min=%u,largest=%u,can_stack_free_bytes=%lu\n",
+        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+        static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)),
+        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
+        static_cast<unsigned long>(g_can.ownerStackFreeBytes()));
+#endif
     const auto peers=g_ble.peerTraffic();
     for (unsigned i=0;i<2;++i) {
       const auto& p=peers.peers[i];

@@ -27,7 +27,7 @@ struct BleStats {
 };
 
 
-// Data from GATT callbacks is consumed by the Arduino loop, never parsed on
+// Data from GATT callbacks is consumed by the BLE application worker, never parsed on
 // the BLE host callback task. A reconnect receives a new local generation.
 // Counters reflect bytes accepted from GATT writes and successfully queued
 // unicast notify bytes, NOT BLE air-time or acknowledged radio delivery.
