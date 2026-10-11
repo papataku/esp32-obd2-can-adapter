@@ -359,6 +359,8 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
   const size_t max_payload = std::min<size_t>(20, mtu - 3);
   size_t sent = 0;
   uint32_t chunks = 0;
+  uint32_t retries = 0;
+  const uint32_t started=millis();
   while (sent < length && isClientConnected(id, gen)) {
     const uint16_t chunk = static_cast<uint16_t>(
         std::min(max_payload,length - sent));
@@ -368,8 +370,19 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
     // ultimately transmits the notification. The first argument is the
     // destination connection handle, never a broadcast list.
     os_mbuf* packet = ble_hs_mbuf_from_flat(data + sent, chunk);
-    if (!packet || ble_gattc_notify_custom(
-            id,tx_characteristic_->getHandle(),packet) != 0) break;
+    const int result=packet ? ble_gattc_notify_custom(
+        id,tx_characteristic_->getHandle(),packet) : BLE_HS_ENOMEM;
+    if (result!=0) {
+      // Two peers share NimBLE's bounded packet pool. Brief exhaustion is
+      // backpressure, not permission to silently discard the ELM prompt.
+      if ((result==BLE_HS_ENOMEM || result==BLE_HS_EAGAIN || result==BLE_HS_EBUSY) &&
+          static_cast<uint32_t>(millis()-started)<100) {
+        ++retries;
+        delay(1);
+        continue;
+      }
+      break;
+    }
     sent += chunk;
     ++chunks;
     if (sent < length) delay(1);
@@ -377,7 +390,10 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
   portENTER_CRITICAL(&mux_);
   stats_.tx_bytes += sent;
   stats_.targeted_notifications += chunks;
+  stats_.notify_retries += retries;
+  if (sent<length) ++stats_.notify_failures;
   portEXIT_CRITICAL(&mux_);
+  if (sent<length && isClientConnected(id,gen)) server_->disconnect(id);
   return sent;
 }
 #endif

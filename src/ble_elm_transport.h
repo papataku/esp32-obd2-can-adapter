@@ -22,6 +22,8 @@ struct BleStats {
   uint32_t rx_overflow = 0;
   uint32_t targeted_notifications = 0;
   uint32_t session_rejections = 0;
+  uint32_t notify_retries = 0;
+  uint32_t notify_failures = 0;
 };
 
 

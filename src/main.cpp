@@ -52,6 +52,15 @@ void loop() {
   g_serial.pollInput();
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   g_dual.poll();
+  static uint32_t last_dual_stats=0;
+  if (millis()-last_dual_stats>=5000) {
+    last_dual_stats=millis();
+    const auto stats=g_ble.stats();
+    Serial.printf("#BLE_DUAL,clients=%u,rx_overflow=%lu,notify=%lu,retries=%lu,failed=%lu\n",
+        g_ble.connectedClientCount(),static_cast<unsigned long>(stats.rx_overflow),
+        static_cast<unsigned long>(stats.targeted_notifications),
+        static_cast<unsigned long>(stats.notify_retries),static_cast<unsigned long>(stats.notify_failures));
+  }
 #endif
   if (!g_can_ok) {
     delay(20);

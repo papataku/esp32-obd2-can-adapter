@@ -17,6 +17,12 @@ int main() {
   uint8_t data[203]{};
   assert(transport.writeTo(7,ea.generation,data,sizeof(data))==sizeof(data));
   assert(test_notifications.size()==11);
+  test_notifications.clear();
+  test_notify_busy=3;
+  assert(transport.writeTo(7,ea.generation,data,21)==21);
+  assert(test_notifications.size()==2);
+  assert(transport.stats().notify_retries==3);
+  assert(transport.stats().notify_failures==0);
   for(const auto& n:test_notifications) {assert(n.conn==7); assert(n.length<=20);}
   test_notifications.clear();
   NimBLEServer::callbacks->onDisconnect(server,&a);
