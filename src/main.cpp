@@ -7,6 +7,9 @@
 #include "ui.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "dual_ble_elm.h"
+#ifndef M5CAN_DUAL_BLE_APP_CORE
+#define M5CAN_DUAL_BLE_APP_CORE 1
+#endif
 #endif
 
 namespace {
