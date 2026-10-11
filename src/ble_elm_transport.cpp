@@ -1,75 +1,72 @@
 #include "ble_elm_transport.h"
-
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#include <NimBLEDevice.h>
+// NimBLE exposes connection-aware GATT callbacks and allows sending one
+// notification to exactly one connection via ble_gattc_notify_custom.
+#else
 #include <BLE2902.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
-
+#endif
 #include <algorithm>
 #include <cstring>
 #include <string>
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-#include <esp_gatts_api.h>
-#endif
-
 #include "app_config.h"
 
 namespace m5can {
-
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+class M5CanBleServerCallbacks final : public NimBLEServerCallbacks {
+ public:
+  explicit M5CanBleServerCallbacks(BleElmTransport& owner) : owner_(owner) {}
+  void onConnect(NimBLEServer*, ble_gap_conn_desc* d) override {
+    if (d) owner_.onPeerConnect(d->conn_handle);
+  }
+  void onDisconnect(NimBLEServer*, ble_gap_conn_desc* d) override {
+    if (d) owner_.onPeerDisconnect(d->conn_handle);
+  }
+  void onMTUChange(uint16_t mtu, ble_gap_conn_desc* d) override {
+    if (d) owner_.onPeerMtu(d->conn_handle, mtu);
+  }
+ private:
+  BleElmTransport& owner_;
+};
+class M5CanBleRxCallbacks final : public NimBLECharacteristicCallbacks {
+ public:
+  explicit M5CanBleRxCallbacks(BleElmTransport& owner) : owner_(owner) {}
+  void onWrite(NimBLECharacteristic* characteristic,
+               ble_gap_conn_desc* desc) override {
+    if (!desc || !characteristic) return;
+    const std::string value = characteristic->getValue();
+    if (!value.empty())
+      owner_.onPeerWrite(desc->conn_handle,
+           reinterpret_cast<const uint8_t*>(value.data()),value.size());
+  }
+ private:
+  BleElmTransport& owner_;
+};
+#else
 class M5CanBleServerCallbacks final : public BLEServerCallbacks {
  public:
   explicit M5CanBleServerCallbacks(BleElmTransport& owner) : owner_(owner) {}
-
-  void onConnect(BLEServer*) override {
-#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-    owner_.onConnect();
-#endif
-  }
-  void onDisconnect(BLEServer*) override {
-#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-    owner_.onDisconnect();
-#endif
-  }
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-  void onConnect(BLEServer*, esp_ble_gatts_cb_param_t* e) override {
-    if (e) owner_.onPeerConnect(e->connect.conn_id);
-  }
-  void onDisconnect(BLEServer*, esp_ble_gatts_cb_param_t* e) override {
-    if (e) owner_.onPeerDisconnect(e->disconnect.conn_id);
-  }
-  void onMtuChanged(BLEServer*, esp_ble_gatts_cb_param_t* e) override {
-    if (e) owner_.onPeerMtu(e->mtu.conn_id, e->mtu.mtu);
-  }
-#endif
-
+  void onConnect(BLEServer*) override { owner_.onConnect(); }
+  void onDisconnect(BLEServer*) override { owner_.onDisconnect(); }
  private:
   BleElmTransport& owner_;
 };
-
 class M5CanBleRxCallbacks final : public BLECharacteristicCallbacks {
  public:
   explicit M5CanBleRxCallbacks(BleElmTransport& owner) : owner_(owner) {}
-
   void onWrite(BLECharacteristic* characteristic) override {
-#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
     const std::string value = characteristic->getValue();
-    if (!value.empty()) {
-      owner_.onWrite(
-          reinterpret_cast<const uint8_t*>(value.data()), value.size());
-    }
-#else
-    (void)characteristic;
-#endif
+    if (!value.empty())
+      owner_.onWrite(reinterpret_cast<const uint8_t*>(value.data()),
+                     value.size());
   }
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-  void onWrite(BLECharacteristic*, esp_ble_gatts_cb_param_t* e) override {
-    if (e) owner_.onPeerWrite(e->write.conn_id, e->write.value, e->write.len);
-  }
-#endif
-
  private:
   BleElmTransport& owner_;
 };
+#endif
 
 void BleElmTransport::setError(const char* message) {
   std::strncpy(last_error_, message ? message : "unknown",
@@ -78,54 +75,49 @@ void BleElmTransport::setError(const char* message) {
 }
 
 bool BleElmTransport::begin() {
-  BLEDevice::init(cfg::kBleDeviceName);
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-  // This is a local preference; the negotiated MTU is stored per peer.
-  BLEDevice::setMTU(247);
-#endif
-
-  BLEServer* server = BLEDevice::createServer();
-  if (!server) {
-    setError("BLE server create failed");
-    return false;
-  }
+  NimBLEDevice::init(cfg::kBleDeviceName);
+  NimBLEDevice::setMTU(247);
+  NimBLEServer* server=NimBLEDevice::createServer();
+  if (!server) { setError("NimBLE server failed"); return false; }
+  server_=server;
   server->setCallbacks(new M5CanBleServerCallbacks(*this));
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-  server_ = server;
-#endif
-
-  BLEService* service = server->createService(cfg::kBleServiceUuid);
-  if (!service) {
-    setError("BLE service create failed");
-    return false;
-  }
-
-  BLECharacteristic* rx = service->createCharacteristic(
-      cfg::kBleRxUuid,
-      BLECharacteristic::PROPERTY_WRITE |
-          BLECharacteristic::PROPERTY_WRITE_NR);
-  tx_characteristic_ = service->createCharacteristic(
-      cfg::kBleTxUuid,
-      BLECharacteristic::PROPERTY_NOTIFY);
+  NimBLEService* service=server->createService(cfg::kBleServiceUuid);
+  if (!service) { setError("NimBLE service failed"); return false; }
+  NimBLECharacteristic* rx=service->createCharacteristic(
+      cfg::kBleRxUuid,NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+  tx_characteristic_=service->createCharacteristic(
+      cfg::kBleTxUuid,NIMBLE_PROPERTY::NOTIFY);
   if (!rx || !tx_characteristic_) {
-    setError("BLE characteristic create failed");
-    return false;
+    setError("NimBLE characteristic failed"); return false;
   }
-
+  rx->setCallbacks(new M5CanBleRxCallbacks(*this));
+  service->start();
+  advertising_=NimBLEDevice::getAdvertising();
+#else
+  BLEDevice::init(cfg::kBleDeviceName);
+  BLEServer* server=BLEDevice::createServer();
+  if (!server) { setError("BLE server failed"); return false; }
+  server->setCallbacks(new M5CanBleServerCallbacks(*this));
+  BLEService* service=server->createService(cfg::kBleServiceUuid);
+  if (!service) { setError("BLE service failed"); return false; }
+  BLECharacteristic* rx=service->createCharacteristic(
+      cfg::kBleRxUuid,BLECharacteristic::PROPERTY_WRITE |
+                      BLECharacteristic::PROPERTY_WRITE_NR);
+  tx_characteristic_=service->createCharacteristic(
+      cfg::kBleTxUuid,BLECharacteristic::PROPERTY_NOTIFY);
+  if (!rx || !tx_characteristic_) {
+    setError("BLE characteristic failed"); return false;
+  }
   rx->setCallbacks(new M5CanBleRxCallbacks(*this));
   tx_characteristic_->addDescriptor(new BLE2902());
-
   service->start();
-
-  advertising_ = BLEDevice::getAdvertising();
-  if (!advertising_) {
-    setError("BLE advertising unavailable");
-    return false;
-  }
+  advertising_=BLEDevice::getAdvertising();
+#endif
+  if (!advertising_) { setError("BLE advertising unavailable"); return false; }
   advertising_->addServiceUUID(cfg::kBleServiceUuid);
   advertising_->setScanResponse(true);
   advertising_->start();
-
   setError("OK");
   return true;
 }
@@ -369,9 +361,12 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
         std::min(max_payload,length - sent));
     // This API targets precisely one GATT connection; normal
     // BLECharacteristic::notify() broadcasts and must never be used here.
-    if (esp_ble_gatts_send_indicate(
-            server_->getGattsIf(),id,tx_characteristic_->getHandle(),
-            chunk,const_cast<uint8_t*>(data + sent),false) != ESP_OK) break;
+    // os_mbuf ownership transfers to NimBLE whether or not the controller
+    // ultimately transmits the notification. The first argument is the
+    // destination connection handle, never a broadcast list.
+    os_mbuf* packet = os_mbuf_from_flat(data + sent, chunk);
+    if (!packet || ble_gattc_notify_custom(
+            id,tx_characteristic_->getHandle(),packet) != 0) break;
     sent += chunk;
     ++chunks;
     if (sent < length) delay(1);
