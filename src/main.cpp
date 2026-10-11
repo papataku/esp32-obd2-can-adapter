@@ -53,6 +53,22 @@ void loop() {
   }
 
   g_serial.emitStats(false);
+#if defined(M5CAN_BLE_MTU_EXPERIMENTAL)
+  // Bench-only USB telemetry: counters are queued notifications, not peer ACKs.
+  static uint32_t last_ble_diag_ms = 0;
+  const uint32_t now = millis();
+  if (now - last_ble_diag_ms >= 5000) {
+    last_ble_diag_ms = now;
+    const m5can::BleStats b = g_ble.stats();
+    Serial.printf(
+        "#BLE_MTU_BENCH,mtu=%u,max_chunk=%u,notifications=%lu,tx_bytes=%llu,rx_overflow=%lu\\n",
+        static_cast<unsigned>(b.peer_mtu),
+        static_cast<unsigned>(b.max_notify_chunk),
+        static_cast<unsigned long>(b.tx_notifications),
+        static_cast<unsigned long long>(b.tx_bytes),
+        static_cast<unsigned long>(b.rx_overflow));
+  }
+#endif
   g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
               g_serial.demoAutoEnabled(),g_serial.demoActive());
   delay(1);
