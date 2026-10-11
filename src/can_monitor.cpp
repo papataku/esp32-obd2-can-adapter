@@ -1,4 +1,5 @@
 #include "can_monitor.h"
+#include "adaptive_multi_pid.h"
 
 #include <algorithm>
 #include <cstring>
@@ -173,7 +174,14 @@ void CanMonitor::rxTask() {
       // completed transport transaction, but is NOT a usable meter value.
       // Count only a matching *positive* PID/DID response as OBD OK.
       uint32_t positive_ecu=0;
-      for (uint8_t i=0;i<result.response_count;++i) {
+      if (request.can_id==0x18DB33F1U && request.length==3 &&
+          request.data[0]==0x01 && request.data[1]==0x0C &&
+          request.data[2]==0x0D) {
+        AdaptiveMultiPid validator;
+        DiagnosticRawFrame virtual_frames[2]{};
+        // A partial grouped reply must NOT inflate successful PID metrics.
+        validator.decode(result,virtual_frames,positive_ecu);
+      } else for (uint8_t i=0;i<result.response_count;++i) {
         const DiagnosticMessage &message=result.responses[i];
         const bool positive_obd=(request.data[0]==0x01 ||
                                  request.data[0]==0x09) &&
