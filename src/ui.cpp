@@ -250,7 +250,7 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
       const auto& p=peers->peers[i];
       if (!p.connected) {
         snprintf(incoming,in_size,"P%u -- WAIT",static_cast<unsigned>(i+1));
-        snprintf(outgoing,out_size,"");
+        if (out_size) outgoing[0]='\0';
         return;
       }
       snprintf(incoming,in_size,"P%u %04X IN %lu B/s",
