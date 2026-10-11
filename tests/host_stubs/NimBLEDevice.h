@@ -4,7 +4,7 @@
 #include <string>
 struct ble_gap_conn_desc { uint16_t conn_handle = 0; };
 struct os_mbuf {};
-inline os_mbuf* os_mbuf_from_flat(const void*,size_t) {
+inline os_mbuf* ble_hs_mbuf_from_flat(const void*,size_t) {
   static os_mbuf buffer;
   return &buffer;
 }
