@@ -140,6 +140,11 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
 }
 
 void CanMonitor::rxTask() {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  // Actual runtime affinity, rather than assuming the requested pin worked.
+  Serial.printf("#CORE,task=can-owner,core=%d,priority=%u\n",
+                xPortGetCoreID(),static_cast<unsigned>(uxTaskPriorityGet(nullptr)));
+#endif
   while (running_) {
     DiagnosticRequest request{};
     if (xQueueReceive(query_queue_, &request, 0) == pdTRUE) {
