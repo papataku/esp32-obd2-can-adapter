@@ -3,6 +3,9 @@
 #include <Arduino.h>
 #include "can_monitor.h"
 #include "demo_touch_control.h"
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#include "ble_elm_transport.h"
+#endif
 
 namespace m5can {
 class Ui {
@@ -25,6 +28,12 @@ class Ui {
   uint32_t frames_per_second_ = 0;
   uint32_t queries_per_second_x10_ = 0;
   uint32_t tx_per_second_x10_ = 0;
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  BlePeersSnapshot last_peers_{};
+  uint32_t last_peer_rate_ms_ = 0;
+  uint32_t peer_rx_bytes_per_sec_[2]{};
+  uint32_t peer_tx_bytes_per_sec_[2]{};
+#endif
 
   char cached_ble_[24]{};
   char cached_status_[24]{};
