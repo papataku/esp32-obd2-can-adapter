@@ -26,6 +26,8 @@ inline int xQueueSend(QueueHandle_t,const void*,TickType_t){return pdTRUE;}
 inline int xQueueReceive(QueueHandle_t,void*,TickType_t){return 0;}
 inline int xTaskCreatePinnedToCore(void(*)(void*),const char*,uint32_t,void*,int,TaskHandle_t* h,int){*h=reinterpret_cast<void*>(1);return pdPASS;}
 inline void vTaskDelete(TaskHandle_t){}
+inline int xPortGetCoreID(){return 1;}
+inline unsigned uxTaskPriorityGet(TaskHandle_t){return 4;}
 struct SerialStub {
   void begin(uint32_t){}
   int printf(const char*,...){return 0;}
