@@ -236,8 +236,6 @@ BleStats BleElmTransport::stats() const {
   return copy;
 }
 
-}  // namespace m5can
-
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 void BleElmTransport::pushEvent(BleClientEvent::Type type,
                                uint16_t id, uint32_t generation,
@@ -385,3 +383,5 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
   return sent;
 }
 #endif
+
+}  // namespace m5can
