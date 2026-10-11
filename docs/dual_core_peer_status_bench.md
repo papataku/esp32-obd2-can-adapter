@@ -13,7 +13,7 @@ The controller/host task core assignment and CPU load must be checked on hardwar
 
 ## On-device telemetry
 
-The lower 4 rows of the **dual-connection bench** show per-peer `P1/P2`, BLE address last 4 hex digits, and **IN/OUT bytes per second**. IN = accepted BLE characteristic writes **from** that meter to the adapter. OUT = payload bytes enqueued as targeted notifications **to** that meter. `N` is cumulative queued notification count for this connection; *not* confirmed over-the-air deliveries.
+The lower status area of the **dual-connection bench** defaults to per-peer traffic. Tap inside the lower status rows to switch between **BLE peer detail** and the original **CAN diagnostics**; the central DEMO soft key is unchanged. The peer view shows per-peer `P1/P2`, BLE address last 4 hex digits, and **IN/OUT bytes per second**. IN = accepted BLE characteristic writes **from** that meter to the adapter. OUT = payload bytes enqueued as targeted notifications **to** that meter. `N` is cumulative queued notification count for this connection; *not* confirmed over-the-air deliveries.
 
 The peer suffix identifies a BLE address; it does **not** reliably encode SmartRing vs JC3636. The operator should connect each device separately and record the suffix; random/private addresses can change. P1/P2 is a *connection slot*, not a permanent identity, and rate windows are reset on generation changes. Existing DEMO button and CAN frame/s remain active. Every 5s, USB emits `#BLE_PEER` with slot, address suffix, conn id, generation, MTU, cumulative RX/TX bytes, write counts, notifications, retries and failures. `#BLE_DUAL` still reports aggregate queue overflow.
 
