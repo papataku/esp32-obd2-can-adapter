@@ -12,6 +12,7 @@ namespace m5can {
 class AdaptiveMultiPid {
  public:
   enum class Support : uint8_t { Unknown, Supported, Disabled };
+  enum class Decision : uint8_t { UseGrouped, RetryLegacy, Stop };
 
   Support support() const { return support_; }
   void markSupported(uint32_t responder) {
@@ -19,6 +20,26 @@ class AdaptiveMultiPid {
     responder_can_id_ = responder;
   }
   void disable() { support_ = Support::Disabled; }
+
+  // One classification path for BOTH BLE clients. Transport/bus/lease
+  // errors must not start extra diagnostic TX. Supported groups must
+  // decode ALL values from one responder before being exposed to meters.
+  Decision evaluate(const DiagnosticResult& result,
+                    DiagnosticRawFrame frames[2], uint32_t& responder) {
+    if (decode(result, frames, responder)) {
+      markSupported(responder);
+      return Decision::UseGrouped;
+    }
+    disable();
+    switch (result.status) {
+      case DiagnosticStatus::Ok:      // negative or incomplete ECU reply
+      case DiagnosticStatus::NoData:  // timeout / unsupported
+      case DiagnosticStatus::IsoTpError:
+        return Decision::RetryLegacy;
+      default:                       // lease, bus, driver, policy, busy
+        return Decision::Stop;
+    }
+  }
 
   static bool isPair(const DiagnosticRequest& rpm,
                      const DiagnosticRequest& speed) {
