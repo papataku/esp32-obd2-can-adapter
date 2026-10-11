@@ -46,6 +46,14 @@ g++ -std=c++17 -Wall -Wextra -Werror \
   -o /tmp/m5can-demo-touch-test
 /tmp/m5can-demo-touch-test
 
+for source in "$ROOT"/src/*.cpp; do
+  echo "dual BLE syntax: $source"
+  g++ -std=c++17 -Wall -Wextra -Werror \
+    -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+    -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+    -fsyntax-only "$source"
+done
+
 g++ -std=c++17 -Wall -Wextra -Werror \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/src" \
   "$ROOT/tests/test_diagnostic_result_cache.cpp" \
