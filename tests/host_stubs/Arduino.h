@@ -15,6 +15,7 @@ struct portMUX_TYPE{};
 #define configMAX_PRIORITIES 25
 extern uint32_t g_test_millis;
 inline uint32_t millis(){return g_test_millis;}
+inline uint32_t micros(){return g_test_millis*1000U;}
 inline void delay(uint32_t ms){g_test_millis+=ms;}
 inline void taskYIELD(){}
 inline void vTaskDelay(uint32_t ms){g_test_millis+=ms;}
@@ -28,6 +29,7 @@ inline int xTaskCreatePinnedToCore(void(*)(void*),const char*,uint32_t,void*,int
 inline void vTaskDelete(TaskHandle_t){}
 inline int xPortGetCoreID(){return 1;}
 inline unsigned uxTaskPriorityGet(TaskHandle_t){return 4;}
+inline unsigned uxTaskGetStackHighWaterMark(TaskHandle_t){return 4096;}
 struct SerialStub {
   void begin(uint32_t){}
   int printf(const char*,...){return 0;}
