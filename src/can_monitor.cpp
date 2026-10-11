@@ -537,24 +537,32 @@ DiagnosticResult CanMonitor::performQuery(
 }
 
 bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
+  // CAN owner is on CPU0; BLE worker and USB can both submit from CPU1.
+  // Queue operations here are all nonblocking. Never wait under this spinlock.
+  portENTER_CRITICAL(&query_mux_);
   if (!query_queue_ || !result_queue_ ||
       fault_locked_ || query_in_flight_) {
+    portEXIT_CRITICAL(&query_mux_);
     return false;
   }
-
   DiagnosticResult stale{};
   while (xQueueReceive(result_queue_, &stale, 0) == pdTRUE) {}
-
-  if (xQueueSend(query_queue_, &request, 0) != pdTRUE) return false;
-  query_in_flight_ = true;
-  return true;
+  const bool submitted = xQueueSend(query_queue_, &request, 0) == pdTRUE;
+  if (submitted) query_in_flight_ = true;
+  portEXIT_CRITICAL(&query_mux_);
+  return submitted;
 }
 
 bool CanMonitor::pollQueryResult(DiagnosticResult& result) {
-  if (!query_in_flight_ || !result_queue_) return false;
-  if (xQueueReceive(result_queue_, &result, 0) != pdTRUE) return false;
-  query_in_flight_ = false;
-  return true;
+  portENTER_CRITICAL(&query_mux_);
+  if (!query_in_flight_ || !result_queue_) {
+    portEXIT_CRITICAL(&query_mux_);
+    return false;
+  }
+  const bool ready = xQueueReceive(result_queue_, &result, 0) == pdTRUE;
+  if (ready) query_in_flight_ = false;
+  portEXIT_CRITICAL(&query_mux_);
+  return ready;
 }
 
 bool CanMonitor::query(const DiagnosticRequest& request,
@@ -564,7 +572,9 @@ bool CanMonitor::query(const DiagnosticRequest& request,
   if (xQueueReceive(result_queue_, &result, wait_ticks) != pdTRUE) {
     return false;
   }
+  portENTER_CRITICAL(&query_mux_);
   query_in_flight_ = false;
+  portEXIT_CRITICAL(&query_mux_);
   return true;
 }
 
