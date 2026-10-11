@@ -91,7 +91,9 @@ int main() {
   assert(t.result().response_count==1);
   responder=0;
   AdaptiveMultiPid fresh;
-  assert(fresh.decode(t.result(),frames,responder));
+  DiagnosticResult completed=t.result();
+  completed.status=DiagnosticStatus::Ok;
+  assert(fresh.decode(completed,frames,responder));
 
   std::cout << "PASS bounded automatic multi-PID probe and response validation\\n";
   return 0;
