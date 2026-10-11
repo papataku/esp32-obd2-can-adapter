@@ -315,6 +315,12 @@ void DualBleElm::onResult() {
         emitLine(s,"M5ITEM:00:010D");
         appendResult(s,result);
         s.batch_next=static_cast<uint8_t>(s.batch_next+2);
+        // The preceding CAN/lease/policy failure may have changed our
+        // transmit authorization. Do not proceed to the other batch items.
+        s.batch=false;
+        emitLine(s,"M5DONE");
+        prompt(s);
+        return;
       }
     }
     advanceBatch(s);
@@ -349,11 +355,16 @@ void DualBleElm::dispatch() {
       s.pending=false;
       if (s.multi_pid_pair) {
         s.multi_pid_pair=false;
+        adaptive_multi_pid_.disable();
         emitLine(s,"M5ITEM:00:010C");
         emitLine(s,"M5CAN TX LOCKED");
         emitLine(s,"M5ITEM:00:010D");
         emitLine(s,"M5CAN TX LOCKED");
         s.batch_next=static_cast<uint8_t>(s.batch_next+2);
+        // No TX permission: stop the entire remaining batch, not just
+        // the grouped pair, and never automatically re-probe.
+        s.batch=false;
+        emitLine(s,"M5DONE");
       } else {
         emitLine(s,"M5CAN TX LOCKED");
         if (s.batch) ++s.batch_next;
