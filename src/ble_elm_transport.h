@@ -14,6 +14,9 @@ struct BleStats {
   uint64_t rx_bytes = 0;
   uint64_t tx_bytes = 0;
   uint32_t rx_overflow = 0;
+  uint32_t tx_notifications = 0;
+  uint16_t peer_mtu = 23;
+  uint16_t max_notify_chunk = 0;
 };
 
 class BleElmTransport {
@@ -34,6 +37,7 @@ class BleElmTransport {
 
   void onConnect();
   void onDisconnect();
+  void onMtuChanged(uint16_t mtu);
   void onWrite(const uint8_t* data, size_t length);
   void restartAdvertising();
   void setError(const char* message);
@@ -47,6 +51,7 @@ class BleElmTransport {
   volatile bool connected_ = false;
   volatile bool disconnect_event_ = false;
   BleStats stats_{};
+  uint16_t peer_mtu_ = 23;
 
   BLECharacteristic* tx_characteristic_ = nullptr;
   BLEAdvertising* advertising_ = nullptr;
