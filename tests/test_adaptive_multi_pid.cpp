@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstdint>
 #include <iostream>
+#include <initializer_list>
 
 #include "adaptive_multi_pid.h"
 #include "diagnostic_transaction.h"
@@ -95,6 +96,6 @@ int main() {
   completed.status=DiagnosticStatus::Ok;
   assert(fresh.decode(completed,frames,responder));
 
-  std::cout << "PASS bounded automatic multi-PID probe and response validation\\n";
+  std::cout << "PASS bounded automatic multi-PID probe and response validation\n";
   return 0;
 }
