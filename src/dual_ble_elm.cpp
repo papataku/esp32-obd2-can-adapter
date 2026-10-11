@@ -336,6 +336,16 @@ void DualBleElm::dispatch() {
     Session& s=sessions_[i];
     if (!s.active || !s.pending ||
         !ble_.isClientConnected(s.conn_id,s.generation)) continue;
+    // A second BLE client may already have staged the same probe when the
+    // first client's ECU response disables grouping. Re-evaluate right at
+    // dispatch; never send a second unsupported grouped CAN request.
+    if (s.multi_pid_pair &&
+        adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Disabled) {
+      s.multi_pid_pair=false;
+      s.pending=false;
+      advanceBatch(s); // unchanged batch index => legacy individual reads
+      if (!s.pending) continue;
+    }
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
       s.pending=false;
       if (s.multi_pid_pair) {
