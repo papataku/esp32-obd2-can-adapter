@@ -14,6 +14,15 @@ m5can::BleElmTransport g_ble;
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 m5can::SerialProtocol g_serial(g_can, nullptr); // USB only, separate ELM state
 m5can::DualBleElm g_dual(g_can,g_ble,g_serial);
+TaskHandle_t g_ble_app_task=nullptr;
+void bleAppTask(void*) {
+  Serial.printf("#CORE,task=ble-elm,core=%d,priority=%u\n",
+                xPortGetCoreID(),static_cast<unsigned>(uxTaskPriorityGet(nullptr)));
+  for (;;) {
+    g_dual.poll();
+    vTaskDelay(pdMS_TO_TICKS(1)>0?pdMS_TO_TICKS(1):1);
+  }
+}
 #else
 m5can::SerialProtocol g_serial(g_can, &g_ble);
 #endif
@@ -40,6 +49,17 @@ void setup() {
   }
 
   g_can_ok = true;
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  if (xTaskCreatePinnedToCore(bleAppTask,"m5can-ble-elm",8192,
+          nullptr,4,&g_ble_app_task,M5CAN_DUAL_BLE_APP_CORE)!=pdPASS) {
+    Serial.println("#FATAL,BLE_TASK_CREATE");
+    g_ui.showFatal("BLE TASK FAIL","core1 unavailable");
+    g_can_ok=false;
+    return;
+  }
+  Serial.printf("#CORE,task=arduino-ui,core=%d,can-owner-core=0,ble-app-core=1\n",
+                xPortGetCoreID());
+#endif
   Serial.println("#READY,Phase 3D BLE ELM + ISO-TP; TX lease required");
 }
 
@@ -51,7 +71,7 @@ void loop() {
   }
   g_serial.pollInput();
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-  g_dual.poll();
+  // BLE worker owns DualBleElm; do not poll sessions from the LCD loop.
   static uint32_t last_dual_stats=0;
   if (millis()-last_dual_stats>=5000) {
     last_dual_stats=millis();
@@ -60,6 +80,19 @@ void loop() {
         g_ble.connectedClientCount(),static_cast<unsigned long>(stats.rx_overflow),
         static_cast<unsigned long>(stats.targeted_notifications),
         static_cast<unsigned long>(stats.notify_retries),static_cast<unsigned long>(stats.notify_failures));
+    const auto peers=g_ble.peerTraffic();
+    for (unsigned i=0;i<2;++i) {
+      const auto& p=peers.peers[i];
+      Serial.printf("#BLE_PEER,slot=%u,up=%u,id=%u,gen=%lu,addr=%04X,mtu=%u,rx_bytes=%llu,tx_bytes=%llu,rx_writes=%lu,notify=%lu,retries=%lu,failed=%lu\n",
+          i+1,p.connected?1U:0U,static_cast<unsigned>(p.connection_id),
+          static_cast<unsigned long>(p.generation),static_cast<unsigned>(p.address_suffix),
+          static_cast<unsigned>(p.mtu),static_cast<unsigned long long>(p.rx_bytes),
+          static_cast<unsigned long long>(p.tx_bytes),
+          static_cast<unsigned long>(p.rx_writes),
+          static_cast<unsigned long>(p.notifications),
+          static_cast<unsigned long>(p.notify_retries),
+          static_cast<unsigned long>(p.notify_failures));
+    }
   }
 #endif
   if (!g_can_ok) {
@@ -79,7 +112,13 @@ void loop() {
   }
 
   g_serial.emitStats(false);
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  const auto peers=g_ble.peerTraffic();
+  g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
+              g_serial.demoAutoEnabled(),g_serial.demoActive(),&peers);
+#else
   g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
               g_serial.demoAutoEnabled(),g_serial.demoActive());
+#endif
   delay(1);
 }
