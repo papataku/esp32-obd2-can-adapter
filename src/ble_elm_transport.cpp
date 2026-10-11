@@ -304,7 +304,7 @@ void BleElmTransport::onPeerWrite(uint16_t id,
                                   const uint8_t* data, size_t length) {
   if (!data || !length) return;
   portENTER_CRITICAL(&mux_);
-  for (const auto& peer : clients_) {
+  for (auto& peer : clients_) {
     if (peer.active && peer.connection_id == id) {
       ++peer.traffic.rx_writes;
       for (size_t i = 0; i < length; ++i) {
