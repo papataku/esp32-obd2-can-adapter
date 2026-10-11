@@ -69,7 +69,11 @@ void Ui::begin() {
   // Static label is drawn once. Dynamic fields below are updated only
   // when their rendered text actually changes.
   M5Dial.Display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  M5Dial.Display.drawString("BLE PEERS  RX / TX", 120, 121, &fonts::Font2);
+#else
   M5Dial.Display.drawString("CAN frame/s", 120, 121, &fonts::Font2);
+#endif
 }
 
 void Ui::showFatal(const char* title, const char* detail) {
@@ -93,7 +97,11 @@ bool Ui::pollDemoToggle() {
 
 void Ui::update(const CanMonitor& can, bool ble_ready,
                 bool ble_connected, bool ble_elm, bool demo_auto,
-                bool demo_active) {
+                bool demo_active
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+                , const BlePeersSnapshot* peers
+#endif
+                ) {
   const uint32_t now = millis();
   if (now - last_refresh_ms_ < cfg::kDisplayRefreshMs) return;
   last_refresh_ms_ = now;
@@ -160,7 +168,16 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
            static_cast<unsigned long>(stats.driver_rx_overrun),
            static_cast<unsigned long>(stats.driver_bus_error));
 
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  char dual_ble_text[28]{};
+  unsigned connected_peers=0;
+  if (peers) for (const auto& p : peers->peers)
+    connected_peers += p.connected ? 1U : 0U;
+  snprintf(dual_ble_text,sizeof(dual_ble_text),"BLE %u/2  C0 CAN C1 BLE",connected_peers);
+  const char* ble = ble_ready ? dual_ble_text : "BLE ERROR";
+#else
   const char* ble = bleText(ble_ready, ble_connected, ble_elm);
+#endif
   const uint16_t ble_color = bleColor(ble_ready, ble_connected, ble_elm);
   if (std::strncmp(cached_ble_, ble, sizeof(cached_ble_)) != 0 ||
       cached_ble_color_ != ble_color) {
@@ -205,6 +222,52 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
 
   updateLine(cached_fps_, sizeof(cached_fps_),
              fps, 72, 36, TFT_WHITE, &fonts::Font4);
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  if (peers) {
+    if (last_peer_rate_ms_ == 0) {
+      last_peer_rate_ms_ = now;
+      last_peers_ = *peers;
+    }
+    const uint32_t peer_elapsed=now-last_peer_rate_ms_;
+    if (peer_elapsed >= 1000) {
+      for (size_t i=0;i<2;++i) {
+        const auto& p=peers->peers[i];
+        const auto& prev=last_peers_.peers[i];
+        const bool same_session=p.connected && prev.connected &&
+            p.generation==prev.generation &&
+            p.connection_id==prev.connection_id;
+        peer_rx_bytes_per_sec_[i]=same_session && p.rx_bytes>=prev.rx_bytes
+            ? static_cast<uint32_t>((p.rx_bytes-prev.rx_bytes)*1000ULL/peer_elapsed) : 0;
+        peer_tx_bytes_per_sec_[i]=same_session && p.tx_bytes>=prev.tx_bytes
+            ? static_cast<uint32_t>((p.tx_bytes-prev.tx_bytes)*1000ULL/peer_elapsed) : 0;
+      }
+      last_peers_=*peers;
+      last_peer_rate_ms_=now;
+    }
+    char p0_rx[40]{},p0_tx[40]{},p1_rx[40]{},p1_tx[40]{};
+    const auto render=[&](size_t i,char* incoming,size_t in_size,
+                          char* outgoing,size_t out_size) {
+      const auto& p=peers->peers[i];
+      if (!p.connected) {
+        snprintf(incoming,in_size,"P%u -- WAIT",static_cast<unsigned>(i+1));
+        snprintf(outgoing,out_size,"");
+        return;
+      }
+      snprintf(incoming,in_size,"P%u %04X IN %lu B/s",
+               static_cast<unsigned>(i+1),static_cast<unsigned>(p.address_suffix),
+               static_cast<unsigned long>(peer_rx_bytes_per_sec_[i]));
+      snprintf(outgoing,out_size,"OUT %lu B/s  N%lu",
+               static_cast<unsigned long>(peer_tx_bytes_per_sec_[i]),
+               static_cast<unsigned long>(p.notifications));
+    };
+    render(0,p0_rx,sizeof(p0_rx),p0_tx,sizeof(p0_tx));
+    render(1,p1_rx,sizeof(p1_rx),p1_tx,sizeof(p1_tx));
+    updateLine(cached_rx_,sizeof(cached_rx_),p0_rx,133,23,TFT_WHITE,&fonts::Font2);
+    updateLine(cached_diag_,sizeof(cached_diag_),p0_tx,156,22,TFT_LIGHTGREY,&fonts::Font2);
+    updateLine(cached_tx_,sizeof(cached_tx_),p1_rx,179,22,TFT_WHITE,&fonts::Font2);
+    updateLine(cached_errors_,sizeof(cached_errors_),p1_tx,202,24,TFT_LIGHTGREY,&fonts::Font2);
+  }
+#else
   updateLine(cached_rx_, sizeof(cached_rx_),
              rx_total, 133, 23, TFT_WHITE, &fonts::Font2);
   updateLine(cached_diag_, sizeof(cached_diag_),
@@ -232,6 +295,7 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
                errors, 202, 24, error_color, &fonts::Font2);
     cached_error_color_ = error_color;
   }
+#endif
 }
 
 }  // namespace m5can
