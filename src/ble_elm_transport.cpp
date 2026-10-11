@@ -356,7 +356,14 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
   // The established meter bench accepts 20-byte notifications. A larger
   // negotiated MTU does not imply that its application RX queue accepts
   // larger chunks; keep the dual stability baseline compatible.
-  const size_t max_payload = std::min<size_t>(20, mtu - 3);
+#ifndef M5CAN_DUAL_NOTIFY_CHUNK_BYTES
+#define M5CAN_DUAL_NOTIFY_CHUNK_BYTES 20
+#endif
+  static_assert(M5CAN_DUAL_NOTIFY_CHUNK_BYTES >= 20 &&
+                M5CAN_DUAL_NOTIFY_CHUNK_BYTES <= 244,
+                "dual notification chunk must fit ATT MTU 247");
+  const size_t max_payload = std::min<size_t>(
+      M5CAN_DUAL_NOTIFY_CHUNK_BYTES, mtu - 3);
   size_t sent = 0;
   uint32_t chunks = 0;
   uint32_t retries = 0;

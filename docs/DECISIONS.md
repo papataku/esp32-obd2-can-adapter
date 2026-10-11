@@ -163,3 +163,14 @@ The regression test uses two distinct connection handles and large MTUs,
 checks a 203-byte reply arrives as individually targeted chunks <=20 bytes,
 and verifies disconnect/reconnect generation isolation. Physical USB-only
 dual-client runtime evidence is recorded separately.
+
+### Matched MTU247 throughput bench
+
+`m5dial_dual_ble_mtu_bench` explicitly raises the notification cap to 244
+bytes. Use it only with both meter receivers built with
+`VEHICLE_M5CAN_MTU247_EXPERIMENTAL`; it is not compatible with the old
+20-byte receiver. The default dual bench retains its 20-byte cap. Peer
+MTU still bounds each send, and unicast, generation checks and bounded
+backpressure behavior are shared. Host tests run both caps and compare
+payload bytes, including retries. A short performance comparison does
+not replace the one-hour stability acceptance for either profile.

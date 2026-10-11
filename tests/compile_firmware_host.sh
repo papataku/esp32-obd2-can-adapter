@@ -69,3 +69,11 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-transport-test
 /tmp/m5can-dual-transport-test
 echo "PASS dual BLE targeted chunks and disconnect isolation"
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+  -DM5CAN_DUAL_NOTIFY_CHUNK_BYTES=244 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_dual_ble_transport.cpp" "$ROOT/src/ble_elm_transport.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-mtu-transport-test
+/tmp/m5can-dual-mtu-transport-test
+echo "PASS opt-in 244-byte unicast and exact retry payload ordering"
