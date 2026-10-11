@@ -6,6 +6,9 @@
 
 class BLEAdvertising;
 class BLEServer;
+class NimBLEServer;
+class NimBLECharacteristic;
+class NimBLEAdvertising;
 class BLECharacteristic;
 
 namespace m5can {
@@ -79,7 +82,7 @@ class BleElmTransport {
   size_t event_head_ = 0;
   size_t event_tail_ = 0;
   uint32_t next_generation_ = 0;
-  BLEServer* server_ = nullptr;
+  NimBLEServer* server_ = nullptr;
 #endif
   void setError(const char* message);
 
@@ -93,8 +96,13 @@ class BleElmTransport {
   volatile bool disconnect_event_ = false;
   BleStats stats_{};
 
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  NimBLECharacteristic* tx_characteristic_ = nullptr;
+  NimBLEAdvertising* advertising_ = nullptr;
+#else
   BLECharacteristic* tx_characteristic_ = nullptr;
   BLEAdvertising* advertising_ = nullptr;
+#endif
   char last_error_[96] = "not started";
 };
 
