@@ -178,7 +178,7 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
   unsigned connected_peers=0;
   if (peers) for (const auto& p : peers->peers)
     connected_peers += p.connected ? 1U : 0U;
-  snprintf(dual_ble_text,sizeof(dual_ble_text),"BLE %u/2  C0 CAN C1 BLE",connected_peers);
+  snprintf(dual_ble_text,sizeof(dual_ble_text),"BLE %u/2",connected_peers);
   const char* ble = ble_ready ? dual_ble_text : "BLE ERROR";
 #else
   const char* ble = bleText(ble_ready, ble_connected, ble_elm);

@@ -50,3 +50,9 @@ digits. Regression cases use distinct prefixes and suffixes to catch this.
 Compiler `.su` frame budgets are checked in CI; these selected frame/chain
 checks complement runtime stack watermarks and are not a complete proof of
 all library call paths or vehicle-CAN stack use.
+
+The circular screen's top status row has approximately 109 px of width at
+its center. Font2's old CPU annotation string measured 161 px, so the
+header is shortened to `BLE n/2` (52 px for two peers). Detailed measured
+CPU placement remains in USB diagnostics. Physical viewing is still a
+separate acceptance item.
