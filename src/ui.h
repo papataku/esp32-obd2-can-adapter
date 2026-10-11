@@ -15,7 +15,11 @@ class Ui {
   bool pollDemoToggle();
   void update(const CanMonitor& can, bool ble_ready,
               bool ble_connected, bool ble_elm, bool demo_auto,
-              bool demo_active);
+              bool demo_active
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+              , const BlePeersSnapshot* peers = nullptr
+#endif
+              );
   void showFatal(const char* title, const char* detail);
 
  private:
