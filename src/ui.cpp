@@ -253,10 +253,10 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
         if (out_size) outgoing[0]='\0';
         return;
       }
-      snprintf(incoming,in_size,"P%u %04X IN %lu B/s",
+      snprintf(incoming,in_size,"P%u %04X RX%lu/s",
                static_cast<unsigned>(i+1),static_cast<unsigned>(p.address_suffix),
                static_cast<unsigned long>(peer_rx_bytes_per_sec_[i]));
-      snprintf(outgoing,out_size,"OUT %lu B/s  N%lu",
+      snprintf(outgoing,out_size,"TX%lu/s N%lu",
                static_cast<unsigned long>(peer_tx_bytes_per_sec_[i]),
                static_cast<unsigned long>(p.notifications));
     };
