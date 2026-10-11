@@ -66,6 +66,17 @@ int main() {
   assert(transaction.onFrame(sf(0x18DAF102U,sent_us+500,
                                sizeof(other),other)).event==
          TransactionEvent::Ignored);
+  // A two-PID reply has six bytes total. An FF with a matching prefix
+  // is NOT valid and must not trigger Flow Control on the vehicle bus.
+  TransactionFrame unrelated_ff{};
+  unrelated_ff.can_id=0x18DAF101U;
+  unrelated_ff.extended=true;
+  unrelated_ff.timestamp_us=sent_us+600;
+  unrelated_ff.dlc=8;
+  const uint8_t oversized[]={0x10,0x08,0x41,0x0C,0x13,0x88,0x0D,0x50};
+  for(unsigned i=0;i<8;++i) unrelated_ff.data[i]=oversized[i];
+  assert(transaction.onFrame(unrelated_ff).event==TransactionEvent::Ignored);
+  assert(!transaction.hasActiveIsoTp());
   const uint8_t full[]={0x41,0x0C,0x13,0x88,0x0D,0x50};
   assert(transaction.onFrame(sf(0x18DAF101U,sent_us+800,
                                sizeof(full),full)).event==
