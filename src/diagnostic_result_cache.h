@@ -82,7 +82,8 @@ class DiagnosticResultCache {
         !result.raw_frame_count) return false;
     for (uint8_t i = 0; i < result.response_count; ++i) {
       const auto& m = result.responses[i];
-      if (DiagnosticPolicy::responseBelongsToRequest(request, m.can_id) &&
+      if (m.length && m.data[0] != 0x7f &&
+          DiagnosticPolicy::responseBelongsToRequest(request, m.can_id) &&
           DiagnosticPolicy::responseMatches(request, m.data, m.length))
         return true;
     }
