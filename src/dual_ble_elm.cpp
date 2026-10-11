@@ -45,6 +45,10 @@ void DualBleElm::event(const BleClientEvent& event) {
   Session* s = find(event.connection_id,event.generation);
   if (!s) return;
   if (event.type == BleClientEvent::Type::Disconnect) {
+    // If the probing owner vanishes mid-query, its result cannot be
+    // classified safely. Avoid a second speculative probe this boot.
+    if (s->multi_pid_pair) adaptive_multi_pid_.disable();
+    s->multi_pid_pair = false;
     s->active = false;
     s->pending = false;
     s->batch = false;
