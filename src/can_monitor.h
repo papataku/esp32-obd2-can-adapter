@@ -92,6 +92,7 @@ class CanMonitor {
   QueueHandle_t result_queue_ = nullptr;
   TaskHandle_t rx_task_ = nullptr;
 
+  mutable portMUX_TYPE query_mux_ = portMUX_INITIALIZER_UNLOCKED;
   mutable portMUX_TYPE stats_mux_ = portMUX_INITIALIZER_UNLOCKED;
   mutable portMUX_TYPE lease_mux_ = portMUX_INITIALIZER_UNLOCKED;
   CanStats stats_{};
