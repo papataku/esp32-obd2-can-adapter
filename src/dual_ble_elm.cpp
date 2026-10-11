@@ -142,6 +142,25 @@ DiagnosticRequest DualBleElm::requestOf(const ElmVehicleRequest& item,
 void DualBleElm::advanceBatch(Session& s) {
   while (s.active && s.batch && s.batch_next < s.batch_count) {
     const ElmVehicleRequest& item=s.items[s.batch_next];
+    // Probe ONLY in the opt-in dual-client CAN build (never in DEMO).
+    // A failed probe disables this exact functional PID pair until reboot.
+    // Two BLE clients share one decision and still share one CAN owner.
+    if (!demo_source_.demoActive() &&
+        s.batch_next + 1 < s.batch_count) {
+      const DiagnosticRequest first=requestOf(item,s.elm);
+      const DiagnosticRequest second=
+          requestOf(s.items[s.batch_next + 1],s.elm);
+      if (adaptive_multi_pid_.eligible(first,second)) {
+        const DiagnosticRequest grouped=
+            AdaptiveMultiPid::group(first,second);
+        if (DiagnosticPolicy::allowedReadRequest(grouped)) {
+          s.request=grouped;
+          s.multi_pid_pair=true;
+          s.pending=true;
+          return;
+        }
+      }
+    }
     char label[32]{};
     if (item.length==3 && item.data[0]==0x22)
       std::snprintf(label,sizeof(label),"M5ITEM:01:%02X%02X",
@@ -258,6 +277,43 @@ void DualBleElm::onResult() {
   active_query_owner_=-1;
   Session& s=sessions_[index];
   if (!s.active || s.generation!=active_query_generation_) return;
+  if (s.multi_pid_pair) {
+    s.multi_pid_pair=false;
+    s.pending=false;
+    DiagnosticRawFrame virtual_frames[2]{};
+    uint32_t responder=0;
+    if (adaptive_multi_pid_.decode(result,virtual_frames,responder)) {
+      adaptive_multi_pid_.markSupported(responder);
+      // Preserve the existing ATM5B item-by-item wire contract.
+      // These are decoded virtual ELM frames, NOT physical RAW captures.
+      emitLine(s,"M5ITEM:00:010C");
+      appendFrame(s,virtual_frames[0]);
+      emitLine(s,"M5ITEM:00:010D");
+      appendFrame(s,virtual_frames[1]);
+      s.batch_next=static_cast<uint8_t>(s.batch_next+2);
+      Serial.printf("#MULTIPID,enabled,ecu=%08lX\\n",
+                    static_cast<unsigned long>(responder));
+    } else {
+      adaptive_multi_pid_.disable();
+      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\\n",
+                    static_cast<unsigned>(result.status),
+                    static_cast<unsigned long>(responder));
+      // Only a valid-but-incomplete reply, negative response, protocol
+      // failure or ordinary timeout may trigger per-item CAN retries.
+      // On bus/lease/driver failures never initiate more CAN transmissions.
+      if (result.status!=DiagnosticStatus::Ok &&
+          result.status!=DiagnosticStatus::NoData &&
+          result.status!=DiagnosticStatus::IsoTpError) {
+        emitLine(s,"M5ITEM:00:010C");
+        appendResult(s,result);
+        emitLine(s,"M5ITEM:00:010D");
+        appendResult(s,result);
+        s.batch_next=static_cast<uint8_t>(s.batch_next+2);
+      }
+    }
+    advanceBatch(s);
+    return;
+  }
   appendResult(s,result);
   s.pending=false;
   if (s.batch) {
@@ -274,12 +330,20 @@ void DualBleElm::dispatch() {
     if (!s.active || !s.pending ||
         !ble_.isClientConnected(s.conn_id,s.generation)) continue;
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
-      emitLine(s,"M5CAN TX LOCKED");
       s.pending=false;
-      if (s.batch) {
-        ++s.batch_next;
-        advanceBatch(s);
-      } else prompt(s);
+      if (s.multi_pid_pair) {
+        s.multi_pid_pair=false;
+        emitLine(s,"M5ITEM:00:010C");
+        emitLine(s,"M5CAN TX LOCKED");
+        emitLine(s,"M5ITEM:00:010D");
+        emitLine(s,"M5CAN TX LOCKED");
+        s.batch_next=static_cast<uint8_t>(s.batch_next+2);
+      } else {
+        emitLine(s,"M5CAN TX LOCKED");
+        if (s.batch) ++s.batch_next;
+      }
+      if (s.batch) advanceBatch(s);
+      else prompt(s);
       continue;
     }
     if (can_.submitQuery(s.request)) {
