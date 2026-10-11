@@ -2,16 +2,21 @@
 
 #include <Arduino.h>
 #include "can_monitor.h"
+#include "demo_touch_control.h"
 
 namespace m5can {
 class Ui {
  public:
   void begin();
+  // Updates the M5Dial touch hardware every loop. Call before update().
+  bool pollDemoToggle();
   void update(const CanMonitor& can, bool ble_ready,
-              bool ble_connected, bool ble_elm);
+              bool ble_connected, bool ble_elm, bool demo_auto,
+              bool demo_active);
   void showFatal(const char* title, const char* detail);
 
  private:
+  DemoTouchControl demo_touch_{};
   uint32_t last_refresh_ms_ = 0;
   uint64_t last_rx_frames_ = 0;
   uint64_t last_query_count_ = 0;
@@ -23,6 +28,7 @@ class Ui {
 
   char cached_ble_[24]{};
   char cached_status_[24]{};
+  char cached_demo_mode_[24]{};
   char cached_fps_[20]{};
   char cached_rx_[32]{};
   char cached_diag_[48]{};
@@ -31,6 +37,7 @@ class Ui {
 
   uint16_t cached_ble_color_ = 0xFFFF;
   uint16_t cached_status_color_ = 0xFFFF;
+  uint16_t cached_demo_mode_color_ = 0xFFFF;
   uint16_t cached_tx_color_ = 0xFFFF;
   uint16_t cached_error_color_ = 0xFFFF;
 };

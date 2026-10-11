@@ -28,6 +28,10 @@ struct CanStats {
   uint64_t tx_success = 0;
   uint64_t query_count = 0;
   uint64_t query_timeout = 0;
+  uint64_t query_ok = 0;        // Positive validated ISO-TP response
+  uint64_t query_no_data = 0;   // No matching response
+  uint64_t query_failed = 0;    // Lease, TX, bus or protocol error
+  uint32_t last_response_can_id = 0; // Actual responder, not ambient CAN RX
   bool query_active = false;
   uint32_t driver_rx_missed = 0;
   uint32_t driver_rx_overrun = 0;
@@ -70,7 +74,7 @@ class CanMonitor {
   void setError(const char* message);
 
   bool leaseAllowsBudget(uint32_t budget_ms) const;
-  bool waitForRateLimit(uint32_t request_can_id);
+  bool waitForRateLimit(const DiagnosticRequest& request);
   DiagnosticResult performQuery(const DiagnosticRequest& request);
 
   esp_err_t transmitOwnedFrame(const twai_message_t& message,

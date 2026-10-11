@@ -144,6 +144,36 @@ void CanMonitor::rxTask() {
     DiagnosticRequest request{};
     if (xQueueReceive(query_queue_, &request, 0) == pdTRUE) {
       const DiagnosticResult result = performQuery(request);
+      // A negative ISO-TP response (7F <service> <NRC>) is still a
+      // completed transport transaction, but is NOT a usable meter value.
+      // Count only a matching *positive* PID/DID response as OBD OK.
+      uint32_t positive_ecu=0;
+      for (uint8_t i=0;i<result.response_count;++i) {
+        const DiagnosticMessage &message=result.responses[i];
+        const bool positive_obd=(request.data[0]==0x01 ||
+                                 request.data[0]==0x09) &&
+              message.length>=2 &&
+              message.data[0]==static_cast<uint8_t>(request.data[0]+0x40) &&
+              message.data[1]==request.data[1];
+        const bool positive_uds=request.data[0]==0x22 &&
+              message.length>=3 && message.data[0]==0x62 &&
+              message.data[1]==request.data[1] &&
+              message.data[2]==request.data[2];
+        if (positive_obd || positive_uds) {
+          positive_ecu=message.can_id;
+          break;
+        }
+      }
+      portENTER_CRITICAL(&stats_mux_);
+      if (result.status==DiagnosticStatus::Ok && positive_ecu!=0) {
+        ++stats_.query_ok;
+        stats_.last_response_can_id=positive_ecu;
+      } else if (result.status==DiagnosticStatus::NoData) {
+        ++stats_.query_no_data;
+      } else {
+        ++stats_.query_failed;
+      }
+      portEXIT_CRITICAL(&stats_mux_);
       xQueueSend(result_queue_, &result, 0);
       continue;
     }
@@ -220,11 +250,11 @@ bool CanMonitor::leaseAllowsBudget(uint32_t budget_ms) const {
   return leaseRemainingMs() >= budget_ms;
 }
 
-bool CanMonitor::waitForRateLimit(uint32_t request_can_id) {
-  // Different approved CAN IDs have independent 50-ms diagnostic clocks.
-  // The CAN owner still permits only one in-flight ECU transaction.
+bool CanMonitor::waitForRateLimit(const DiagnosticRequest& request) {
+  // Throttle repeated *parameter* reads only, not other PIDs with the same
+  // arbitration ID. Every ECU transaction remains strictly serialized.
   while (diagnostic_pacer_.remainingUs(
-             request_can_id,
+             request,
              static_cast<uint64_t>(esp_timer_get_time())) > 0) {
     if (leaseRemainingMs() == 0) return false;
     twai_message_t message{};
@@ -318,7 +348,7 @@ DiagnosticResult CanMonitor::performQuery(
     result.status = DiagnosticStatus::LeaseRequired;
     return result;
   }
-  if (!waitForRateLimit(request.can_id) || !leaseAllowsBudget(budget_ms)) {
+  if (!waitForRateLimit(request) || !leaseAllowsBudget(budget_ms)) {
     result.status = DiagnosticStatus::LeaseRequired;
     return result;
   }
@@ -352,7 +382,7 @@ DiagnosticResult CanMonitor::performQuery(
       terminal = DiagnosticStatus::DriverError;
       terminal_set = true;
     } else {
-      diagnostic_pacer_.noteSuccessfulTx(request.can_id, tx_us);
+      diagnostic_pacer_.noteSuccessfulTx(request, tx_us);
     }
   }
 
