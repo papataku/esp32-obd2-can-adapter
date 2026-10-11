@@ -62,8 +62,10 @@ void loop() {
     const m5can::BleStats b = g_ble.stats();
     Serial.printf(
         "#BLE_MTU_BENCH,mode=%s,mtu=%u,max_chunk=%u,notifications=%lu,tx_bytes=%llu,rx_overflow=%lu\n",
-#if defined(M5CAN_BLE_MTU_EXPERIMENTAL)\n        "MTU247",
-#else\n        "MTU23",
+#if defined(M5CAN_BLE_MTU_EXPERIMENTAL)
+        "MTU247",
+#else
+        "MTU23",
 #endif
         static_cast<unsigned>(b.peer_mtu),
         static_cast<unsigned>(b.max_notify_chunk),
