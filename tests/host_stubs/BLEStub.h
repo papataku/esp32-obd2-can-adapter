@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+struct esp_ble_gatts_cb_param_t { struct { uint16_t mtu = 23; } mtu; };
+
 class BLEServer;
 class BLECharacteristic;
 
@@ -12,6 +14,7 @@ class BLEServerCallbacks {
   virtual ~BLEServerCallbacks() = default;
   virtual void onConnect(BLEServer*) {}
   virtual void onDisconnect(BLEServer*) {}
+  virtual void onMtuChanged(BLEServer*, esp_ble_gatts_cb_param_t*) {}
 };
 
 class BLECharacteristicCallbacks {
@@ -68,6 +71,7 @@ class BLEServer {
 class BLEDevice {
  public:
   static void init(const char*) {}
+  static int setMTU(uint16_t) { return 0; }
   static BLEServer* createServer() {
     static BLEServer server;
     return &server;
