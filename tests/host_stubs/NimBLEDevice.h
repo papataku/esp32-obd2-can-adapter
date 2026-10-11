@@ -41,9 +41,11 @@ class NimBLECharacteristicCallbacks {
 };
 class NimBLECharacteristic {
  public:
-  void setCallbacks(NimBLECharacteristicCallbacks*) {}
+  inline static NimBLECharacteristicCallbacks* callbacks=nullptr;
+  inline static std::string next_write_value;
+  void setCallbacks(NimBLECharacteristicCallbacks* c) {callbacks=c;}
   uint16_t getHandle() const {return 1;}
-  std::string getValue() const {return "";}
+  std::string getValue() const {return next_write_value;}
 };
 class NimBLEService {
  public:
