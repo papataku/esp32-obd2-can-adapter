@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <atomic>
 
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
@@ -15,11 +16,17 @@ m5can::BleElmTransport g_ble;
 m5can::SerialProtocol g_serial(g_can, nullptr); // USB only, separate ELM state
 m5can::DualBleElm g_dual(g_can,g_ble,g_serial);
 TaskHandle_t g_ble_app_task=nullptr;
+std::atomic<uint32_t> g_ble_poll_peak_us{0};
 void bleAppTask(void*) {
   Serial.printf("#CORE,task=ble-elm,core=%d,priority=%u\n",
                 xPortGetCoreID(),static_cast<unsigned>(uxTaskPriorityGet(nullptr)));
   for (;;) {
+    const uint32_t start_us=micros();
     g_dual.poll();
+    const uint32_t elapsed_us=micros()-start_us;
+    uint32_t current=g_ble_poll_peak_us.load(std::memory_order_relaxed);
+    if (elapsed_us>current)
+      g_ble_poll_peak_us.store(elapsed_us,std::memory_order_relaxed);
     vTaskDelay(pdMS_TO_TICKS(1)>0?pdMS_TO_TICKS(1):1);
   }
 }
@@ -80,6 +87,10 @@ void loop() {
         g_ble.connectedClientCount(),static_cast<unsigned long>(stats.rx_overflow),
         static_cast<unsigned long>(stats.targeted_notifications),
         static_cast<unsigned long>(stats.notify_retries),static_cast<unsigned long>(stats.notify_failures));
+    Serial.printf("#BLE_TASK,core=%d,poll_peak_us=%lu,stack_free_words=%u\n",
+        M5CAN_DUAL_BLE_APP_CORE,
+        static_cast<unsigned long>(g_ble_poll_peak_us.exchange(0)),
+        static_cast<unsigned>(uxTaskGetStackHighWaterMark(g_ble_app_task)));
     const auto peers=g_ble.peerTraffic();
     for (unsigned i=0;i<2;++i) {
       const auto& p=peers.peers[i];
