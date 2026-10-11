@@ -96,6 +96,63 @@ int main() {
   completed.status=DiagnosticStatus::Ok;
   assert(fresh.decode(completed,frames,responder));
 
+  // Decision policy: unsupported/incomplete read returns to the legacy
+  // per-PID path and does not allow another auto-probe in the same boot.
+  {
+    AdaptiveMultiPid probe;
+    const auto decision=probe.evaluate(good,frames,responder);
+    assert(decision==AdaptiveMultiPid::Decision::UseGrouped);
+    assert(probe.support()==AdaptiveMultiPid::Support::Supported);
+    const auto missing=reply(0x18DAF101U,{0x41,0x0C,1,2});
+    assert(probe.evaluate(missing,frames,responder)==
+           AdaptiveMultiPid::Decision::RetryLegacy);
+    assert(probe.support()==AdaptiveMultiPid::Support::Disabled);
+    assert(!probe.eligible(rpm,speed));
+  }
+  {
+    AdaptiveMultiPid rejected;
+    const auto nrc=reply(0x18DAF101U,{0x7F,0x01,0x12});
+    assert(rejected.evaluate(nrc,frames,responder)==
+           AdaptiveMultiPid::Decision::RetryLegacy);
+    assert(!rejected.eligible(rpm,speed));
+  }
+  for (const DiagnosticStatus status :
+       {DiagnosticStatus::NoData,DiagnosticStatus::IsoTpError}) {
+    AdaptiveMultiPid probe;
+    auto failed=good;
+    failed.status=status;
+    assert(probe.evaluate(failed,frames,responder)==
+           AdaptiveMultiPid::Decision::RetryLegacy);
+    assert(!probe.eligible(rpm,speed));
+  }
+  // Fault/lease/policy errors must not initiate extra CAN transactions.
+  for (const DiagnosticStatus status :
+       {DiagnosticStatus::LeaseRequired,DiagnosticStatus::BusOff,
+        DiagnosticStatus::ModeError,DiagnosticStatus::DriverError,
+        DiagnosticStatus::InvalidRequest,DiagnosticStatus::Busy,
+        DiagnosticStatus::RateLimited}) {
+    AdaptiveMultiPid probe;
+    auto failed=good;
+    failed.status=status;
+    assert(probe.evaluate(failed,frames,responder)==
+           AdaptiveMultiPid::Decision::Stop);
+    assert(!probe.eligible(rpm,speed));
+  }
+  // A functional request can receive responses from several ECUs. Do not
+  // combine disjoint RPM and speed data from different responder IDs.
+  {
+    AdaptiveMultiPid probe;
+    auto two_ecus=reply(0x18DAF101U,{0x41,0x0C,0x12,0x34});
+    two_ecus.responses[1]=reply(
+        0x18DAF102U,{0x41,0x0D,0x55}).responses[0];
+    two_ecus.response_count=2;
+    assert(probe.evaluate(two_ecus,frames,responder)==
+           AdaptiveMultiPid::Decision::RetryLegacy);
+  }
+  // Reject a response with an unexpected extra PID, not only truncation.
+  assert(!fresh.decode(reply(0x18DAF101U,
+      {0x41,0x0C,0x12,0x34,0x0D,0x60,0x05,0x44}),frames,responder));
+
   std::cout << "PASS bounded automatic multi-PID probe and response validation\n";
   return 0;
 }
