@@ -286,10 +286,11 @@ void DualBleElm::onResult() {
     s.pending=false;
     DiagnosticRawFrame virtual_frames[2]{};
     uint32_t responder=0;
-    if (adaptive_multi_pid_.decode(result,virtual_frames,responder)) {
-      const bool first_success=
-          adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
-      adaptive_multi_pid_.markSupported(responder);
+    const bool first_success=
+        adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
+    const auto decision=
+        adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
+    if (decision==AdaptiveMultiPid::Decision::UseGrouped) {
       // Preserve the existing ATM5B item-by-item wire contract.
       // These are decoded virtual ELM frames, NOT physical RAW captures.
       emitLine(s,"M5ITEM:00:010C");
@@ -308,9 +309,7 @@ void DualBleElm::onResult() {
       // Only a valid-but-incomplete reply, negative response, protocol
       // failure or ordinary timeout may trigger per-item CAN retries.
       // On bus/lease/driver failures never initiate more CAN transmissions.
-      if (result.status!=DiagnosticStatus::Ok &&
-          result.status!=DiagnosticStatus::NoData &&
-          result.status!=DiagnosticStatus::IsoTpError) {
+      if (decision==AdaptiveMultiPid::Decision::Stop) {
         emitLine(s,"M5ITEM:00:010C");
         appendResult(s,result);
         emitLine(s,"M5ITEM:00:010D");
