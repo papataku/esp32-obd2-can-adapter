@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include "esp_gatts_api.h"
 
 class BLEServer;
 class BLECharacteristic;
@@ -11,13 +12,17 @@ class BLEServerCallbacks {
  public:
   virtual ~BLEServerCallbacks() = default;
   virtual void onConnect(BLEServer*) {}
+  virtual void onConnect(BLEServer*, esp_ble_gatts_cb_param_t*) {}
   virtual void onDisconnect(BLEServer*) {}
+  virtual void onDisconnect(BLEServer*, esp_ble_gatts_cb_param_t*) {}
+  virtual void onMtuChanged(BLEServer*, esp_ble_gatts_cb_param_t*) {}
 };
 
 class BLECharacteristicCallbacks {
  public:
   virtual ~BLECharacteristicCallbacks() = default;
   virtual void onWrite(BLECharacteristic*) {}
+  virtual void onWrite(BLECharacteristic*, esp_ble_gatts_cb_param_t*) {}
 };
 
 class BLEDescriptor {
@@ -38,6 +43,7 @@ class BLECharacteristic {
   std::string getValue() const { return {}; }
   void setValue(uint8_t*, size_t) {}
   void notify() {}
+  uint16_t getHandle() const { return 42; }
 };
 
 class BLEService {
@@ -58,6 +64,8 @@ class BLEAdvertising {
 
 class BLEServer {
  public:
+  void disconnect(uint16_t) {}
+  uint8_t getGattsIf() const { return 0; }
   void setCallbacks(BLEServerCallbacks*) {}
   BLEService* createService(const char*) {
     static BLEService service;
@@ -68,6 +76,7 @@ class BLEServer {
 class BLEDevice {
  public:
   static void init(const char*) {}
+  static int setMTU(uint16_t) { return 0; }
   static BLEServer* createServer() {
     static BLEServer server;
     return &server;
