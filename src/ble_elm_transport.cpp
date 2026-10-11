@@ -364,7 +364,7 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
     // os_mbuf ownership transfers to NimBLE whether or not the controller
     // ultimately transmits the notification. The first argument is the
     // destination connection handle, never a broadcast list.
-    os_mbuf* packet = os_mbuf_from_flat(data + sent, chunk);
+    os_mbuf* packet = ble_hs_mbuf_from_flat(data + sent, chunk);
     if (!packet || ble_gattc_notify_custom(
             id,tx_characteristic_->getHandle(),packet) != 0) break;
     sent += chunk;
