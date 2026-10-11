@@ -71,6 +71,15 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
 
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_adaptive_multipid_pipeline.cpp" \
+  "$ROOT/src/elm_compat.cpp" "$ROOT/src/elm_response_formatter.cpp" \
+  "$ROOT/src/diagnostic_transaction.cpp" "$ROOT/src/isotp_reassembler.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-adaptive-multipid-pipeline-test
+/tmp/m5can-adaptive-multipid-pipeline-test
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
   "$ROOT/tests/test_diagnostic_policy.cpp" \
   "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
   -o /tmp/m5can-dual-policy-test
