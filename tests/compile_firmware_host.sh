@@ -46,4 +46,10 @@ g++ -std=c++17 -Wall -Wextra -Werror \
   -o /tmp/m5can-demo-touch-test
 /tmp/m5can-demo-touch-test
 
-echo "PASS all Phase 3C firmware translation units + demo drive + screen toggle"
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -I"$ROOT/include" \
+  "$ROOT/tests/test_ble_notify_chunk.cpp" \
+  -o /tmp/m5can-ble-notify-chunk-test
+/tmp/m5can-ble-notify-chunk-test
+
+echo "PASS all Phase 3C firmware translation units + demo drive + screen toggle + BLE notify chunk"
