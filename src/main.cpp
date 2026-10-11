@@ -61,7 +61,7 @@ void loop() {
     last_ble_diag_ms = now;
     const m5can::BleStats b = g_ble.stats();
     Serial.printf(
-        "#BLE_MTU_BENCH,mtu=%u,max_chunk=%u,notifications=%lu,tx_bytes=%llu,rx_overflow=%lu\\n",
+        "#BLE_MTU_BENCH,mtu=%u,max_chunk=%u,notifications=%lu,tx_bytes=%llu,rx_overflow=%lu\n",
         static_cast<unsigned>(b.peer_mtu),
         static_cast<unsigned>(b.max_notify_chunk),
         static_cast<unsigned long>(b.tx_notifications),
