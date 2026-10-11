@@ -60,7 +60,13 @@ void loop() {
 
   m5can::CapturedFrame frame{};
   for (size_t i = 0; i < 64 && g_can.pop(frame, 0); ++i) {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    // Avoid flooding blocking USB serial with CAN frames while two BLE
+    // clients are polling. CAN capture and safety accounting remain active.
+    if (!g_ble.connected()) g_serial.emitFrame(frame);
+#else
     g_serial.emitFrame(frame);
+#endif
   }
 
   g_serial.emitStats(false);
