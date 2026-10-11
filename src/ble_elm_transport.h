@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include <cstdint>
+
 class BLEAdvertising;
 class BLECharacteristic;
 
@@ -14,6 +16,19 @@ struct BleStats {
   uint64_t rx_bytes = 0;
   uint64_t tx_bytes = 0;
   uint32_t rx_overflow = 0;
+  uint32_t targeted_notifications = 0;
+  uint32_t session_rejections = 0;
+};
+
+
+// Data from GATT callbacks is consumed by the Arduino loop, never parsed on
+// the BLE host callback task. A reconnect receives a new local generation.
+struct BleClientEvent {
+  enum class Type : uint8_t { Connect, Disconnect, Byte };
+  Type type = Type::Byte;
+  uint16_t connection_id = 0;
+  uint32_t generation = 0;
+  uint8_t byte = 0;
 };
 
 class BleElmTransport {
@@ -25,6 +40,13 @@ class BleElmTransport {
 
   bool connected() const { return connected_; }
   bool takeDisconnectEvent();
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  bool pollClientEvent(BleClientEvent& event);
+  bool isClientConnected(uint16_t connection_id, uint32_t generation) const;
+  size_t writeTo(uint16_t connection_id, uint32_t generation,
+                 const uint8_t* data, size_t length);
+  uint8_t connectedClientCount() const;
+#endif
   BleStats stats() const;
   const char* lastError() const { return last_error_; }
 
@@ -36,6 +58,28 @@ class BleElmTransport {
   void onDisconnect();
   void onWrite(const uint8_t* data, size_t length);
   void restartAdvertising();
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  void onPeerConnect(uint16_t connection_id);
+  void onPeerDisconnect(uint16_t connection_id);
+  void onPeerWrite(uint16_t connection_id, const uint8_t* data, size_t length);
+  void onPeerMtu(uint16_t connection_id, uint16_t mtu);
+  void pushEvent(BleClientEvent::Type type, uint16_t connection_id,
+                 uint32_t generation, uint8_t byte);
+  struct Client {
+    uint16_t connection_id = 0;
+    uint16_t mtu = 23;
+    uint32_t generation = 0;
+    bool active = false;
+  };
+  static constexpr size_t kMaxClients = 2;
+  static constexpr size_t kEventBufferSize = 2048;
+  Client clients_[kMaxClients]{};
+  BleClientEvent events_[kEventBufferSize]{};
+  size_t event_head_ = 0;
+  size_t event_tail_ = 0;
+  uint32_t next_generation_ = 0;
+  BLEServer* server_ = nullptr;
+#endif
   void setError(const char* message);
 
   static constexpr size_t kRxBufferSize = 512;
