@@ -298,7 +298,7 @@ void DualBleElm::onResult() {
                       static_cast<unsigned long>(responder));
     } else {
       adaptive_multi_pid_.disable();
-      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\\n",
+      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\n",
                     static_cast<unsigned>(result.status),
                     static_cast<unsigned long>(responder));
       // Only a valid-but-incomplete reply, negative response, protocol
