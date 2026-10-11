@@ -23,7 +23,7 @@ const char* statusText(bool fault, bool query_active, uint32_t fps) {
   return "CAN IDLE";
 }
 
-const char* bleText(bool ready, bool connected, bool elm) {
+[[maybe_unused]] const char* bleText(bool ready, bool connected, bool elm) {
   if (!ready) return "BLE ERROR";
   if (elm) return "BLE ELM";
   if (connected) return "BLE LINK";
