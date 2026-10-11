@@ -1,4 +1,5 @@
 #include "dual_ble_elm.h"
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -298,3 +299,5 @@ void DualBleElm::poll() {
   dispatch();
 }
 } // namespace m5can
+
+#endif // M5CAN_DUAL_BLE_EXPERIMENTAL
