@@ -283,6 +283,8 @@ void DualBleElm::onResult() {
     DiagnosticRawFrame virtual_frames[2]{};
     uint32_t responder=0;
     if (adaptive_multi_pid_.decode(result,virtual_frames,responder)) {
+      const bool first_success=
+          adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
       adaptive_multi_pid_.markSupported(responder);
       // Preserve the existing ATM5B item-by-item wire contract.
       // These are decoded virtual ELM frames, NOT physical RAW captures.
@@ -291,8 +293,9 @@ void DualBleElm::onResult() {
       emitLine(s,"M5ITEM:00:010D");
       appendFrame(s,virtual_frames[1]);
       s.batch_next=static_cast<uint8_t>(s.batch_next+2);
-      Serial.printf("#MULTIPID,enabled,ecu=%08lX\\n",
-                    static_cast<unsigned long>(responder));
+      if (first_success)
+        Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
+                      static_cast<unsigned long>(responder));
     } else {
       adaptive_multi_pid_.disable();
       Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\\n",
