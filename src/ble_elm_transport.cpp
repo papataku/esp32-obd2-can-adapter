@@ -185,7 +185,8 @@ size_t BleElmTransport::write(const uint8_t* data, size_t length) {
 
   // A/B only. Production remains at 20-byte notifications. Do not use the
   // local MTU preference as the effective peer MTU.
-  size_t notification_chunk = 20;
+  constexpr size_t kNotificationChunk = 20;
+  size_t notification_chunk = kNotificationChunk;
 #if defined(M5CAN_BLE_MTU_EXPERIMENTAL)
   portENTER_CRITICAL(&mux_);
   notification_chunk = ble_notify_chunk_size(peer_mtu_);
