@@ -68,7 +68,7 @@ class M5CanBleServerCallbacks final : public BLEServerCallbacks {
   void onConnect(BLEServer*) override { owner_.onConnect(); }
   void onDisconnect(BLEServer*) override { owner_.onDisconnect(); }
   void onMtuChanged(BLEServer*,esp_ble_gatts_cb_param_t* p) override {
-    if(p)owner_.onMtuChanged(p->mtu.mtu);
+    if(p)owner_.onLegacyMtu(p->mtu.mtu);
   }
 #if defined(ESP_PLATFORM)
   // The Arduino-ESP32 Bluedroid callbacks expose the controller's true
@@ -208,7 +208,7 @@ void BleElmTransport::onDisconnectDetails(uint16_t conn_id, uint16_t reason) {
   portEXIT_CRITICAL(&mux_);
 }
 
-void BleElmTransport::onMtuChanged(uint16_t mtu) {
+void BleElmTransport::onLegacyMtu(uint16_t mtu) {
   portENTER_CRITICAL(&mux_);
   peer_mtu_=stats_.peer_mtu=mtu>=23?mtu:23;
   portEXIT_CRITICAL(&mux_);
@@ -264,13 +264,14 @@ size_t BleElmTransport::write(const uint8_t* data, size_t length) {
   if (!data || !length || !connected_ || !tx_characteristic_) return 0;
 
   // 20 bytes is valid before any larger ATT MTU negotiation.
-  size_t kNotificationChunk=20;
+  constexpr size_t kNotificationChunk = 20;
+  size_t notification_chunk=kNotificationChunk;
 #if defined(M5CAN_BLE_MTU_EXPERIMENTAL)
-  portENTER_CRITICAL(&mux_);kNotificationChunk=ble_notify_chunk_size(peer_mtu_);portEXIT_CRITICAL(&mux_);
+  portENTER_CRITICAL(&mux_);notification_chunk=ble_notify_chunk_size(peer_mtu_);portEXIT_CRITICAL(&mux_);
 #endif
   size_t sent = 0;
   while (sent < length && connected_) {
-    const size_t chunk = std::min(kNotificationChunk, length - sent);
+    const size_t chunk = std::min(notification_chunk, length - sent);
     tx_characteristic_->setValue(
         const_cast<uint8_t*>(data + sent), chunk);
     tx_characteristic_->notify();
@@ -424,7 +425,7 @@ void BleElmTransport::recordGapDisconnect(uint16_t id, int reason,
     uint16_t interval, uint16_t latency, uint16_t supervision) {
   portENTER_CRITICAL(&mux_);
   stats_.last_disconnect_conn_id=id;
-  stats_.last_disconnect_reason=static_cast<uint16_t>(reason);
+  stats_.last_disconnect_reason=reason;
   stats_.last_disconnect_reason_known=true;
   for(auto& peer:clients_)
     if(peer.active && peer.connection_id==id)

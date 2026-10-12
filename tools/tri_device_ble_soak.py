@@ -21,7 +21,7 @@ def capture(args):
     mappings={'adapter':args.adapter,'ring':args.ring}
     if args.jc:mappings['jc']=args.jc;expected['jc']='98:3D:AE:E9:FB:18'
     if len(set(mappings.values()))!=len(mappings):raise RuntimeError('ports must be distinct')
-    manifest={'start_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'scenario':args.scenario,'duration_s':args.seconds,'devices':{},'clock':'host UTC+monotonic; device uptime separately, initial resets excluded','fw_sha':args.fw_sha,'app_sha':args.app_sha}
+    manifest={'start_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'scenario':args.scenario,'duration_s':args.seconds,'devices':{},'clock':'host UTC+monotonic; device uptime separately, initial resets excluded','fw_sha':args.fw_sha,'app_sha':args.app_sha,'meter_sha':args.meter_sha}
     for name,port in mappings.items():
         p=ports.get(port)
         if not p or p.serial_number!=expected[name] or (p.vid,p.pid)!=(0x303a,0x1001):raise RuntimeError('USB identity mismatch: '+name)
@@ -159,20 +159,22 @@ def capture(args):
 
 
 def analyze(rows):
-    result={'serial_rows':len(rows),'disconnects':[],'reboots':[],'last_peers':{},'last_signals':{},'notify_failures':0}
+    result={'serial_rows':len(rows),'disconnects':[],'reboots':[],'last_peers':{},'last_signals':{},'notify_failures':0,'dual_snapshots':[]}
     for row in rows:
         line=row['line'];d=fields(line)
         if '#BLE_EVENT,' in line and d.get('kind')=='DISCONNECT':result['disconnects'].append({'host_utc':row['utc'],**d})
         if 'ESP-ROM:' in line:result['reboots'].append({'device':row['device'],'host_utc':row['utc']})
         if '#BLE_PEER,' in line:result['last_peers'][d.get('slot','unknown')]=d
         if 'M5CAN SIGNAL ' in line:result['last_signals'][row['device']+':'+d.get('id','unknown')]=d
-        if '#BLE_DUAL,' in line:result['notify_failures']=int(d.get('failed',0))
+        if '#BLE_DUAL,' in line:
+            result['notify_failures']=int(d.get('failed',0));result['dual_snapshots'].append({'utc':row['utc'],**d})
     return result
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ['adapter','ring','output']:p.add_argument('--'+name,required=True)
+    p.add_argument('--meter-sha',default='unknown')
     p.add_argument('--require-two-meters',action='store_true');p.add_argument('--export-evidence',action='store_true')
     p.add_argument('--ipad-delay-ms',type=float,default=200);p.add_argument('--ipad-positive-repeats',type=int,default=1)
     p.add_argument('--ipad-device');p.add_argument('--ipad-scenario',choices=['idle','single','batch','no-data','faults'],default='batch');p.add_argument('--ipad-seconds',type=float,default=1800)

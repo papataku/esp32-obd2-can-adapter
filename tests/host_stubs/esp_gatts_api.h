@@ -4,7 +4,7 @@ using esp_err_t = int;
 static constexpr esp_err_t ESP_OK = 0;
 struct esp_ble_gatts_cb_param_t {
   struct { uint16_t conn_id = 0; } connect;
-  struct { uint16_t conn_id = 0; } disconnect;
+  struct { uint16_t conn_id = 0; uint8_t reason=0; } disconnect;
   struct {
     uint16_t conn_id = 0;
     uint16_t len = 0;

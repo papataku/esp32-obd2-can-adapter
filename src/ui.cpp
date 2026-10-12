@@ -143,7 +143,7 @@ void Ui::update(const CanMonitor& can, const BleStats& ble_stats, bool ble_ready
 
   char fps[20]{};
   char rx_total[28]{};
-  char diag_rate[36]{};
+  char diag_rate[48]{};
   char tx_state[32]{};
   char errors[40]{};
 
@@ -179,7 +179,7 @@ void Ui::update(const CanMonitor& can, const BleStats& ble_stats, bool ble_ready
   if (peers) for (const auto& p : peers->peers)
     connected_peers += p.connected ? 1U : 0U;
   if(ble_stats.last_disconnect_reason_known)
-    snprintf(dual_ble_text,sizeof(dual_ble_text),"BLE %u/2 R%X",connected_peers,ble_stats.last_disconnect_reason);
+    snprintf(dual_ble_text,sizeof(dual_ble_text),"BLE %u/2 R%X",connected_peers,static_cast<unsigned>(ble_stats.last_disconnect_reason));
   else snprintf(dual_ble_text,sizeof(dual_ble_text),"BLE %u/2 R--",connected_peers);
   const char* ble = ble_ready ? dual_ble_text : "BLE ERROR";
 #else

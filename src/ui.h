@@ -4,9 +4,6 @@
 #include "can_monitor.h"
 #include "ble_elm_transport.h"
 #include "demo_touch_control.h"
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-#include "ble_elm_transport.h"
-#endif
 
 namespace m5can {
 class Ui {

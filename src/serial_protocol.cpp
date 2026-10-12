@@ -777,7 +777,7 @@ void SerialProtocol::emitStats(bool forced) {
       "#STATS,rx=%llu,std=%llu,ext=%llu,rtr=%llu,"
       "drop=%llu,tx=%llu/%llu,q=%llu,to=%llu,"
       "missed=%lu,overrun=%lu,buserr=%lu,arb_lost=%lu,"
-      "driver_q=%lu,state=%s,lease_ms=%lu,ble=%s,stream=%s\n",
+      "driver_q=%lu,state=%s,lease_ms=%lu,ble=%s,stream=%s,demo=%s\n",
       static_cast<unsigned long long>(s.rx_frames),
       static_cast<unsigned long long>(s.std_frames),
       static_cast<unsigned long long>(s.ext_frames),

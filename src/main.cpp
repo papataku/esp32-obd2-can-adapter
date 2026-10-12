@@ -194,8 +194,9 @@ void loop() {
     // Counter snapshots catch CAN owner and GATT failures even when an
     // individual event ring overflows; compare monotonic counters.
     m5can::bleEvidenceJournal().observeHealth(g_can.stats(),stats);
-    Serial.printf("#BLE_DUAL,clients=%u,rx_overflow=%lu,notify=%lu,retries=%lu,failed=%lu\n",
-        g_ble.connectedClientCount(),static_cast<unsigned long>(stats.rx_overflow),
+    Serial.printf("#BLE_DUAL,clients=%u,connects=%lu,disconnects=%lu,rx_overflow=%lu,notify=%lu,retries=%lu,failed=%lu\n",
+        g_ble.connectedClientCount(),static_cast<unsigned long>(stats.connect_count),
+        static_cast<unsigned long>(stats.disconnect_count),static_cast<unsigned long>(stats.rx_overflow),
         static_cast<unsigned long>(stats.targeted_notifications),
         static_cast<unsigned long>(stats.notify_retries),static_cast<unsigned long>(stats.notify_failures));
     Serial.printf("#BLE_TASK,core=%d,poll_peak_us=%lu,stack_free_bytes=%u,ui_loop_peak_us=%lu\n",
