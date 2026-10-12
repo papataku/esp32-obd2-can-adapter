@@ -12,7 +12,7 @@ enum class DiagnosticError : uint16_t {
   BleNoClientSlot=101, BleRxQueueOverflow=102,
   BleNotifyBackpressure=103, BleNotifySendFailed=104,
   BlePeerGenerationStale=105, BleDiagnosticRingOverflow=106,
-  BleInitFailure=107,
+  BleInitFailure=107, BleDisconnected=108,
   CanNoData=201, CanBusy=202, CanLeaseRequired=203,
   CanInvalidRequest=204, CanRateLimited=205, CanDriverError=206,
   CanBusOff=207, CanModeError=208, CanIsoTpError=209,
@@ -56,6 +56,7 @@ inline const char* diagnosticErrorName(uint16_t raw) {
     case DiagnosticError::BlePeerGenerationStale:return "BLE_STALE_GENERATION";
     case DiagnosticError::BleDiagnosticRingOverflow:return "BLE_DIAG_OVERFLOW";
     case DiagnosticError::BleInitFailure:return "BLE_INIT_FAILURE";
+    case DiagnosticError::BleDisconnected:return "BLE_DISCONNECT";
     case DiagnosticError::CanNoData:return "CAN_NO_DATA";
     case DiagnosticError::CanBusy:return "CAN_BUSY";
     case DiagnosticError::CanLeaseRequired:return "CAN_LEASE_DENIED";
