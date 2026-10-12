@@ -12,6 +12,8 @@ class SoakParser(unittest.TestCase):
   self.assertFalse(module.bench_applied('M5CAN BENCH RATE REQUEST rpm=20 speed=20 power=20 coolant=1 soc=1 queued=1','high'))
   self.assertFalse(module.bench_applied('M5CAN BENCH RATE APPLIED rpm=20 speed=5 power=20 coolant=1 soc=1','high'))
   self.assertFalse(module.bench_applied('M5CAN BENCH RATE APPLIED rpm=20 speed=20 power=20 coolant=2 soc=1','high'))
+  self.assertTrue(module.bench_applied('M5CAN DISPLAY_POLL mask=1 auto=0 background=2 foreground=20/20/20/1/1','high'))
+  self.assertFalse(module.bench_applied('M5CAN DISPLAY_POLL mask=1 auto=1 background=2 foreground=20/20/20/1/1','high'))
  def test_disconnect_keeps_reason_epoch_and_unknown(self):
   rows=[{'utc':'2026-10-12T00:00:00Z','device':'adapter','line':'#BLE_EVENT,kind=DISCONNECT,seq=2,ms=1900,id=7,gen=3,addr=ABCD,reason_known=1,reason=520,drops=0'}, {'utc':'2026-10-12T00:00:01Z','device':'ring','line':'M5CAN SIGNAL id=0 value_x100=1200 updates=15 age_ms=42'}]
   out=module.analyze(rows)

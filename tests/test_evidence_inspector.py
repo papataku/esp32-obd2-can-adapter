@@ -30,11 +30,14 @@ class InspectorTest(unittest.TestCase):
 int main() {
  using J=m5can::BleEvidenceJournal; J::Record r;
  std::memset(&r,0,sizeof(r));r.magic=J::kMagic;r.version=J::kVersion;r.bytes=sizeof(r);
- r.boot=46;r.total=1;r.count=1;std::memset(r.build,'a',40);
+ r.boot=46;r.total=2;r.count=2;std::memset(r.build,'a',40);
  auto &e=r.events[0];e.seq=1;e.ms=1234;e.gen=2;e.conn=2;e.peer_suffix=0xdd41;
- e.mtu=247;e.interval=12;e.supervision=60;e.reason=534;e.kind=1;e.reason_known=1;
- e.retries=100;e.failed=1;e.code=106;e.detail=6;e.rx_bytes=1000;e.tx_bytes=2000;
- r.faults[0].code=106;r.faults[0].count=1;r.faults[0].first_detail=6;
+ e.mtu=247;e.reason=0;e.kind=3;e.reason_known=0;
+ e.retries=100;e.failed=1;e.code=104;e.detail=6;e.rx_bytes=1000;e.tx_bytes=2000;
+ r.events[1]=e;r.events[1].seq=2;r.events[1].ms=1300;r.events[1].kind=1;
+ r.events[1].reason=534;r.events[1].reason_known=1;r.events[1].interval=12;
+ r.events[1].supervision=60;r.events[1].code=0;r.events[1].detail=0;
+ r.faults[0].code=104;r.faults[0].count=1;r.faults[0].first_detail=6;
  r.disconnect_peers[0].address_suffix=0xdd41;r.disconnect_peers[0].count=1;
  r.disconnect_peers[0].first_reason=534;
  uint32_t h=2166136261U;const auto *p=reinterpret_cast<const uint8_t*>(&r);
@@ -46,7 +49,7 @@ int main() {
             payload = subprocess.check_output([str(binary)])
             result = inspector.inspect(self.partition(payload))
             ble = result['records'][0]['ble']
-            self.assertEqual(ble['events'][0]['reason_raw'], 534)
+            self.assertEqual(ble['events'][1]['reason_raw'], 534)
             self.assertEqual(ble['events'][0]['rx_bytes'], 1000)
             self.assertEqual(ble['faults'][0]['first_detail'], 6)
             self.assertEqual(ble['disconnect_peers'][0]['first_reason'], 534)

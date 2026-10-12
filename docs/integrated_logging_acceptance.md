@@ -72,7 +72,7 @@ logger code with the physical CAN TX API compiled out, without fixture replies.
 It does not qualify real-CAN acquisition or electrical behavior.
 
 Physical full-RAW synthetic save/readback/warm reset and dual-meter smoke
-passed at544268b. The2h sustained traffic/heap/fps/error check is running.
+passed at544268b. The2h sustained test completed and FAILED stability with2 real cuts.
 Physical cold power loss and human LCD/touch are still unobserved; keep these
 limits explicit in residual issues. Existing vehicle issues stay open.
 
@@ -130,3 +130,59 @@ load or the original three-client iPad exploration.
 
 Private evidence root: Developer/TacoTacoMeter-artifacts/20261012-integration.
 Full flash backups and firmware binaries are not uploaded as public artifacts.
+
+
+## Physical two-meter result (2026-10-13)
+
+Measured7200.007s,00:44:00–02:44:00 JST, adapter544268b and meter72f7ad9.
+Later integration commits change only tools/docs/CI; runtime C++/flags match.
+JC connected first(FB19/gen1); SmartRing followed(DD41/gen2). Two unexpected
+SmartRing cuts occurred; no MCU resets. Normal5s snapshots always showed two
+clients, but connects2→4/disconnects0→2 expose short reconnects. Intentional
+x commands and two cleanup cuts are outside the measured window.
+
+Both failures are code104/detail6(BLE_HS_ENOMEM). First failure4254023ms
+preceded local GAP termination534(0x200+0x16) at4254074ms; second5634504ms
+preceded5634906ms. Both had MTU247, interval40(50ms),latency0,supervision200
+(2s). The existing writeTo loop retries transient errors for100ms, then
+disconnects an active peer after incomplete delivery. Thus the immediate
+firmware failure/cut path is identified; WHY shared buffers exhausted, the
+effect of logging/radio/connection scheduling, and equivalence with the old
+iPad incident remain unproven. Do not merge on the basis of green CI alone.
+
+Retries5400, send failures2; queue drops/sequence gaps/unclassified/storage
+errors/corrupt/uncommitted were0. Heap/stack remained bounded; slow PID
+updates and5s stale age still matter. JC RPM averaged9.460Hz but fell to
+~6.4Hz in late5-minute windows; Ring averaged9.899Hz with max signal age
+5034ms across cuts. Live interleaved rows are excluded and counted.
+
+Journal saved42 times.138 events/12 details/126 evictions means first failure
+and first cut details were no longer in the ordinary final BLELOG. Their
+reason/count/first time stayed in summary buckets. A read-only1.5MiB backup
+yielded82 CRC-valid committed revisions and both ownership headers; every
+BLE inner FNV also validated. Historical revision46 recovered first full
+cut details; revision80 recovered second. Old revisions are NOT promised
+retention and may be overwritten on rotation. Pin first critical entries
+within the existing12-slot budget (Issue30); add PID missed/latency retention
+(meter Issue98). Also keep raw USB command compatibility in meter Issue97.
+
+The reversed Ring-first normal5-minute case completed without cuts/send
+failures. This short case cannot rule out an hour-scale order effect. The
+verified600.176s high-load case completed after20/20/20/1/1 andauto=0
+confirmation: no measured cuts/send failures,6518 retries, actual high-priority
+rates~9.96–9.98Hz versus20Hz target, each peer~74 notifications/s and1.45KB/s. An earlier setup attempt lacked applied-state
+evidence and was aborted before measurement; it is retained as INVALID.
+
+PR29 andPR96 remain Draft; merge acceptance is NOT met. Detailed data is in
+integrated_physical_evidence_20261013.json. Primary cut analysis staysIssue21;
+physical CAN/ECU isIssue23/24, logger residualsIssue30, meter rate/optical and
+remote quota Issues92/93/94, old iPad3-device investigationIssue95.
+
+
+Meter CRC/ACK collection recovered8 NVS boots plus currentRAM each, with
+collector errors0 and save_failed0. Ring boot23 retained2 ElmFailure events
+with detail0, but sampled state missed the short2 automatic disconnects;
+explicit cleanup andwarm recovery were retained. Queue lifecycle callbacks
+independently of sampled state (meterIssue98). Old core ELF prefixes differ
+from current firmware; never count these as crashes in this test. New RAM
+rates returned to10/2/2/2/2 after volatile high-load control andwarm reset.

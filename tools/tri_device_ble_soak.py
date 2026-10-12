@@ -15,7 +15,9 @@ def fields(line):
 def bench_applied(line, preset):
     expected = {'moderate': ('10', '5', '5'), 'high': ('20', '20', '20')}[preset]
     d = fields(line)
-    return line.startswith('M5CAN BENCH RATE APPLIED ') and tuple(d.get(k) for k in ['rpm', 'speed', 'power']) == expected and d.get('coolant') == d.get('soc') == '1'
+    if line.startswith('M5CAN BENCH RATE APPLIED '):
+        return tuple(d.get(k) for k in ['rpm', 'speed', 'power']) == expected and d.get('coolant') == d.get('soc') == '1'
+    return bool(re.fullmatch(r'M5CAN DISPLAY_POLL mask=\d+ auto=0 background=\d+ foreground='+ '/'.join(expected)+r'/1/1',line))
 
 
 def capture(args):
@@ -58,6 +60,7 @@ def capture(args):
                         if text.startswith('#BLE_DUAL,'):latest['dual']=fields(text)
                         if text.startswith('#BLELOG,END'):latest['blelog_complete']=True
                         if text.startswith('M5CAN BENCH RATE APPLIED '):latest[name+'_bench']=text
+                        if text.startswith('M5CAN DISPLAY_POLL '):latest[name+'_bench_status']=text
         except Exception as exc:
             with lock:errors.append(name+': '+repr(exc))
         finally:raw.close()
@@ -109,9 +112,15 @@ def capture(args):
                 raise RuntimeError('bench preset requires both active meters')
             command = '#' if args.meter_bench_preset == 'high' else '!'
             send('ring', command);send('jc', command)
-            deadline=time.monotonic()+10
+            deadline=time.monotonic()+20;next_verify=0
             while time.monotonic()<deadline:
-                if all(bench_applied(latest.get(name+'_bench',''),args.meter_bench_preset) for name in ['ring','jc']):break
+                ready=lambda name:any(bench_applied(latest.get(name+suffix,''),args.meter_bench_preset) for suffix in ['_bench','_bench_status'])
+                if all(ready(name) for name in ['ring','jc']):break
+                if time.monotonic()>=next_verify:
+                    for name in ['ring','jc']:
+                        send(name,'i')
+                        if not ready(name):send(name,command)
+                    next_verify=time.monotonic()+2
                 time.sleep(.1)
             else:raise RuntimeError('volatile bench rates not applied on both meters')
             manifest['meter_bench_preset']=args.meter_bench_preset
