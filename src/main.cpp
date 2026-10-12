@@ -205,6 +205,11 @@ void loop() {
         static_cast<unsigned long>(stats.disconnect_count),static_cast<unsigned long>(stats.rx_overflow),
         static_cast<unsigned long>(stats.targeted_notifications),
         static_cast<unsigned long>(stats.notify_retries),static_cast<unsigned long>(stats.notify_failures));
+    Serial.printf("#BLE_MEMORY,alloc_failed=%lu,api_failed=%lu,min_free=%u,last_ms=%lu,last_conn=%u,last_rc=%ld\n",
+        static_cast<unsigned long>(stats.mbuf_alloc_failures),
+        static_cast<unsigned long>(stats.notify_api_failures),stats.msys_min_free,
+        static_cast<unsigned long>(stats.memory_error_ms),stats.memory_error_conn,
+        static_cast<long>(stats.memory_error_code));
     Serial.printf("#BLE_TASK,core=%d,poll_peak_us=%lu,stack_free_bytes=%u,ui_loop_peak_us=%lu\n",
         M5CAN_DUAL_BLE_APP_CORE,
         static_cast<unsigned long>(g_ble_poll_peak_us.exchange(0)),

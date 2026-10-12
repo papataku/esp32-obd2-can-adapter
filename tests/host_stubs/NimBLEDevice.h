@@ -17,6 +17,7 @@ struct os_mbuf { size_t length=0; std::vector<uint8_t> data; };
 struct TestNotify {uint16_t conn; size_t length;std::vector<uint8_t> data;};
 inline std::vector<TestNotify> test_notifications;
 inline int test_notify_busy=0;
+inline int os_msys_num_free(){return 12;}
 inline std::vector<uint16_t> test_disconnect_requests;
 inline constexpr int BLE_HS_ENOMEM=6, BLE_HS_EAGAIN=1, BLE_HS_EBUSY=15;
 inline os_mbuf* ble_hs_mbuf_from_flat(const void* data,size_t length) {

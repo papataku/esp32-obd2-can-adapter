@@ -30,6 +30,10 @@ struct BleStats {
   uint32_t session_rejections = 0;
   uint32_t notify_retries = 0;
   uint32_t notify_failures = 0;
+  uint32_t mbuf_alloc_failures=0,notify_api_failures=0;
+  uint32_t memory_error_ms=0;
+  uint16_t memory_error_conn=0,msys_min_free=UINT16_MAX;
+  int32_t memory_error_code=0;
 };
 
 

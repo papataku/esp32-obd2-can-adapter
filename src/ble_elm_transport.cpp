@@ -581,9 +581,21 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
     // os_mbuf ownership transfers to NimBLE whether or not the controller
     // ultimately transmits the notification. The first argument is the
     // destination connection handle, never a broadcast list.
+    const int pool_free=os_msys_num_free();
     os_mbuf* packet = ble_hs_mbuf_from_flat(data + sent, chunk);
     const int result=packet ? ble_gattc_notify_custom(
         id,tx_characteristic_->getHandle(),packet) : BLE_HS_ENOMEM;
+    portENTER_CRITICAL(&mux_);
+    stats_.msys_min_free=std::min<uint16_t>(stats_.msys_min_free,
+        static_cast<uint16_t>(std::max(0,pool_free)));
+    if(result!=0) {
+      if(!packet) ++stats_.mbuf_alloc_failures;
+      else ++stats_.notify_api_failures;
+      stats_.memory_error_ms=millis();
+      stats_.memory_error_conn=id;
+      stats_.memory_error_code=result;
+    }
+    portEXIT_CRITICAL(&mux_);
     if (result!=0) {
       last_notify_error=result;
       // Two peers share NimBLE's bounded packet pool. Brief exhaustion is
