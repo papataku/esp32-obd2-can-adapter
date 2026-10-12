@@ -179,6 +179,17 @@ int main() {
     assert(frames[0].can_id==responder && frames[1].can_id==responder);
     assert(frames[0].data[3]==0 && frames[1].data[3]==0);
     assert(probe.lastRejectReason()==AdaptiveMultiPid::RejectReason::None);
+    // Reverse the arrival order and prove deterministic ECU selection.
+    AdaptiveMultiPid reverse_probe;
+    auto reversed=many;
+    for(unsigned i=0;i<2;++i) {
+      const auto tmp=reversed.responses[i];
+      reversed.responses[i]=reversed.responses[4-i];
+      reversed.responses[4-i]=tmp;
+    }
+    assert(reverse_probe.evaluate(reversed,frames,responder)==
+           AdaptiveMultiPid::Decision::UseGrouped);
+    assert(responder==0x18DAF101U);
 
     // Subsequent grouped reads must stay pinned to the chosen ECU even
     // when additional ECU responses differ from the chosen ECU.
@@ -213,6 +224,12 @@ int main() {
     assert(probe.lastRejectReason()==
            AdaptiveMultiPid::RejectReason::ValuesDisagree);
     assert(responder==0 && !probe.eligible(rpm,speed));
+    // CAN physically received a complete pair, while the application
+    // correctly refused to learn an ambiguous grouped ECU profile.
+    uint32_t transport_positive=0;
+    assert(AdaptiveMultiPid::hasCompletePositivePair(
+        differing,transport_positive));
+    assert(transport_positive==0x18DAF101U);
   }
   {
     AdaptiveMultiPid probe;
