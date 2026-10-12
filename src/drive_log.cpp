@@ -84,7 +84,8 @@ bool DriveLog::save(uint32_t now,bool forced) {
   // Rate-limit failed storage too. RAM evidence stays available on failure.
   last_saved_ms_=now;
   portENTER_CRITICAL(&mux_);if(ok)record_.saves=copy.saves;
-  if(record_.events_added==copy.events_added)urgent_=false;portEXIT_CRITICAL(&mux_);
+  if(record_.events_added==copy.events_added)urgent_=false;
+  portEXIT_CRITICAL(&mux_);
   if(!ok) Serial.println("#DRIVELOG,storage_error");
   return ok;
 }
