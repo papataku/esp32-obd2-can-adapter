@@ -14,7 +14,8 @@
 using namespace m5can;
 namespace {
 enum class Ecu { Full, Partial, Negative, Silent, Split, FirstFrame, Foreign,
-                 Lease, BusOff, Driver };
+                 Lease, BusOff, Driver, MultiAgree, MultiConflict, MultiPartial,
+                 PinnedOther };
 Ecu mode=Ecu::Full;
 bool demo=false, hold=false, ready=false;
 DiagnosticRequest queued{};
@@ -41,6 +42,23 @@ DiagnosticResult ecuReply(const DiagnosticRequest& r) {
   if(r.length==3 && r.data[0]==1) {
     switch(mode) {
       case Ecu::Full: feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50}); break;
+      case Ecu::MultiAgree:
+        // Five simulated complete responses, in non-CAN-ID order.
+        feed(tx,0x18DAF105,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF102,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF108,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF107,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        break;
+      case Ecu::MultiConflict:
+      case Ecu::PinnedOther:
+        feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF102,{0x41,0x0C,0x13,0x89,0x0D,0x50});
+        break;
+      case Ecu::MultiPartial:
+        feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF102,{0x41,0x0D,0x50});
+        break;
       case Ecu::Foreign: feed(tx,0x18DAF102,{0x41,0x0C,0x13,0x88,0x0D,0x50}); break;
       case Ecu::Partial: feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88}); break;
       case Ecu::Negative: feed(tx,0x18DAF101,{0x7F,1,0x12}); break;
@@ -151,6 +169,30 @@ int main() {
    assert(driveLog().snapshot().grouped==1 && driveLog().snapshot().group_ok==1);
    assert(driveLog().snapshot().individual==1);
    bench.batchBoth();bench.drain();assert(bench.groups()==2 && requests.size()==4);}
+  // Real dual-BLE routing of a five-ECU agreement: selected ECU is
+  // deterministic; both client envelopes are intact, without extra CAN TX.
+  {mode=Ecu::MultiAgree;Bench bench;bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==1 && requests.size()==2);
+   assert(driveLog().snapshot().group_ok==1 && driveLog().snapshot().fallback==0);
+   bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==2);
+  }
+  // An initial disagreeing or incomplete ECU rejects grouped probing once.
+  // Each BLE peer subsequently obtains only its independently requested data.
+  for(Ecu initial:{Ecu::MultiConflict,Ecu::MultiPartial}) {
+    mode=initial;Bench bench;bench.batchBoth();bench.drain();bench.values();
+    assert(bench.groups()==1 && driveLog().snapshot().fallback==1);
+    bench.batchBoth();bench.drain();assert(bench.groups()==1);
+  }
+  // After one successful probe, an extraneous ECU with different values is
+  // harmless; the learned ECU alone determines both cache entries.
+  {mode=Ecu::Full;Bench bench;bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==1 && driveLog().snapshot().group_ok==1);
+   g_test_millis+=150;test_notifications.clear();
+   mode=Ecu::PinnedOther;bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==2 && driveLog().snapshot().group_ok==2);
+   assert(driveLog().snapshot().fallback==0);
+  }
   for(Ecu failure:{Ecu::Partial,Ecu::Negative,Ecu::Silent,Ecu::Split,Ecu::FirstFrame}) {
     mode=failure;Bench bench;bench.batchBoth();bench.drain();bench.values();
     // A single complete RPM value from a partial grouped reply is cached;
