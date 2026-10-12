@@ -500,11 +500,14 @@ void DualBleElm::dispatch() {
         if (!s.pending) continue;
       }
     }
-    if (!s.multi_pid_pair &&
-        pid_cache_.lookup(s.request,now_us,cache_workspace_)) {
-      finishSingle(s,cache_workspace_);
-      // Another device may now be able to use that same PID value.
-      continue;
+    if (!s.multi_pid_pair) {
+      if (pid_cache_.lookup(s.request,now_us,cache_workspace_)) {
+        cache_hits_.fetch_add(1,std::memory_order_relaxed);
+        finishSingle(s,cache_workspace_);
+        // Another device may now use that same PID value.
+        continue;
+      }
+      cache_misses_.fetch_add(1,std::memory_order_relaxed);
     }
 #endif
 
@@ -549,6 +552,15 @@ void DualBleElm::dispatch() {
       continue;
     }
     if (can_.submitQuery(outgoing)) {
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+      if (shared) joins_.fetch_add(1,std::memory_order_relaxed);
+      if (cross) cross_groups_.fetch_add(1,std::memory_order_relaxed);
+#endif
+      if (outgoing.length==3 && outgoing.data[0]==0x01 &&
+          outgoing.data[1]==0x0C && outgoing.data[2]==0x0D)
+        grouped_submissions_.fetch_add(1,std::memory_order_relaxed);
+      else
+        single_submissions_.fetch_add(1,std::memory_order_relaxed);
       active_query_owner_=i;
       active_query_generation_=s.generation;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
