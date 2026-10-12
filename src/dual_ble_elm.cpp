@@ -386,6 +386,12 @@ void DualBleElm::onResult() {
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
 #endif
+    if (decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      Serial.printf("#MULTIPID,disabled,status=%u,reason=%u,responses=%u,ecu=%08lX\n",
+                    static_cast<unsigned>(result.status),
+                    static_cast<unsigned>(adaptive_multi_pid_.lastRejectReason()),
+                    static_cast<unsigned>(result.response_count),
+                    static_cast<unsigned long>(responder));
     driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
         ? DriveLog::Kind::GroupEnabled
         : decision==AdaptiveMultiPid::Decision::RetryLegacy
@@ -464,8 +470,10 @@ void DualBleElm::onResult() {
         Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
                       static_cast<unsigned long>(responder));
     } else {
-      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\n",
+      Serial.printf("#MULTIPID,disabled,status=%u,reason=%u,responses=%u,ecu=%08lX\n",
                     static_cast<unsigned>(result.status),
+                    static_cast<unsigned>(adaptive_multi_pid_.lastRejectReason()),
+                    static_cast<unsigned>(result.response_count),
                     static_cast<unsigned long>(responder));
       if (decision==AdaptiveMultiPid::Decision::Stop) {
         emitLine(s,"M5ITEM:00:010C");
