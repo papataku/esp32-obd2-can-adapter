@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_system.h>
 
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
@@ -17,6 +18,10 @@ bool g_ble_ok = false;
 void setup() {
   g_ui.begin();
   g_serial.begin();
+  Serial.printf("#BOOT,reset_reason=%d,uptime_ms=%lu,free_heap=%lu\n",
+                static_cast<int>(esp_reset_reason()),
+                static_cast<unsigned long>(millis()),
+                static_cast<unsigned long>(ESP.getFreeHeap()));
 
   g_ble_ok = g_ble.begin();
   if (!g_ble_ok) {
@@ -42,6 +47,27 @@ void loop() {
     g_serial.toggleDemoAuto();
   }
   g_serial.pollInput();
+  if (g_ble_ok) {
+    // Emit callback events from loop(), never from the BLE stack callback.
+    // Match these uptime values against iPad BLE_STATE session timestamps.
+    static uint32_t seen_connects = 0;
+    static uint32_t seen_disconnects = 0;
+    const auto stats = g_ble.stats();
+    if (stats.connect_count != seen_connects) {
+      seen_connects = stats.connect_count;
+      Serial.printf("#BLE,CONNECT,count=%lu,uptime_ms=%lu,free_heap=%lu\n",
+                    static_cast<unsigned long>(seen_connects),
+                    static_cast<unsigned long>(stats.last_connect_ms),
+                    static_cast<unsigned long>(ESP.getFreeHeap()));
+    }
+    if (stats.disconnect_count != seen_disconnects) {
+      seen_disconnects = stats.disconnect_count;
+      Serial.printf("#BLE,DISCONNECT,count=%lu,uptime_ms=%lu,free_heap=%lu\n",
+                    static_cast<unsigned long>(seen_disconnects),
+                    static_cast<unsigned long>(stats.last_disconnect_ms),
+                    static_cast<unsigned long>(ESP.getFreeHeap()));
+    }
+  }
   if (!g_can_ok) {
     delay(20);
     return;
@@ -53,7 +79,7 @@ void loop() {
   }
 
   g_serial.emitStats(false);
-  g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
+  g_ui.update(g_can,g_ble.stats(),g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
               g_serial.demoAutoEnabled(),g_serial.demoActive());
   delay(1);
 }
