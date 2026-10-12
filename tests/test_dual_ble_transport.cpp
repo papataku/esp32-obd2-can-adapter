@@ -145,4 +145,42 @@ int main() {
   assert(diag.connection_id==19 && diag.generation==eb.generation);
   assert(!diag.reason_known && transport.connectedClientCount()==1);
 
+  // Reproduce the physical ENOMEM -> locally requested disconnect path.
+  // GAP delivery is asynchronous: assert the disconnect request separately.
+  m5can::BleElmTransport fault_transport;
+  assert(fault_transport.begin());
+  NimBLEServer::callbacks->onConnect(server,&a);
+  NimBLEServer::callbacks->onConnect(server,&b);
+  m5can::BleClientEvent fa{},fb{};
+  assert(fault_transport.pollClientEvent(fa));
+  assert(fault_transport.pollClientEvent(fb));
+  while(fault_transport.pollDiagnostic(diag)) {}
+  test_disconnect_requests.clear();
+  test_notifications.clear();
+  test_notify_busy=99;
+  const auto recover_start=millis();
+  assert(fault_transport.writeTo(7,fa.generation,data,1)==1);
+  assert(millis()-recover_start==99);
+  assert(test_disconnect_requests.empty());
+  while(fault_transport.pollDiagnostic(diag)) {}
+  test_notify_busy=101;
+  const auto failure_start=millis();
+  assert(fault_transport.writeTo(7,fa.generation,data,1)==0);
+  assert(millis()-failure_start==100);
+  assert(test_disconnect_requests.size()==1);
+  assert(test_disconnect_requests[0]==7);
+  assert(fault_transport.pollDiagnostic(diag));
+  assert(diag.error_code==static_cast<uint16_t>(
+      m5can::DiagnosticError::BleNotifyBackpressure));
+  assert(diag.error_detail==100);
+  assert(fault_transport.pollDiagnostic(diag));
+  assert(diag.error_code==static_cast<uint16_t>(
+      m5can::DiagnosticError::BleNotifySendFailed));
+  assert(diag.error_detail==BLE_HS_ENOMEM);
+  assert(diag.connection_id==7 && diag.generation==fa.generation);
+  test_notify_busy=0;
+  assert(fault_transport.writeTo(19,fb.generation,data,1)==1);
+  assert(test_disconnect_requests.size()==1); // Other peer not disconnected.
+  // The synchronous caller cannot service the other peer during those 100ms.
+
 }
