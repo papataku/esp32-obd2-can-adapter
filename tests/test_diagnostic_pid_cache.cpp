@@ -83,17 +83,29 @@ int main() {
   assert(cache.lookup(speed,t+4000,out));
   assert(out.responses[0].can_id==0x18DAF101U);
 
-  // Replay more keys than fixed cache slots without heap allocation.
+  // Only independently characterized, fixed-size PIDs are cacheable;
+  // arbitrary Mode 01 PIDs, including vehicle-specific 019A, remain
+  // uncached rather than storing a truncated or wrong-sized meter value.
   DiagnosticPidCache bounded;
-  for(unsigned i=0;i<DiagnosticPidCache::kSlots+6;++i)
-    assert(bounded.rememberSingle(
-        read(static_cast<uint8_t>(0x80+i)),
-        reply(static_cast<uint8_t>(0x80+i),11),
-        t+i*1000));
-  assert(bounded.stats().evictions>=6);
-  assert(!bounded.lookup(read(0x80),t+20000,out));
-  assert(bounded.lookup(read(static_cast<uint8_t>(
-      0x80+DiagnosticPidCache::kSlots+5)),t+20000,out));
+  const uint8_t admitted[]={0x0D,0x05,0x5B};
+  for(unsigned cycle=0;cycle<1000;++cycle) {
+    const uint8_t pid=admitted[cycle%3];
+    assert(bounded.rememberSingle(read(pid),reply(pid,
+           static_cast<uint8_t>(cycle%100)),t+cycle*1000));
+    assert(bounded.stats().evictions==0);
+  }
+  assert(!bounded.rememberSingle(read(0x9A),reply(0x9A,1),t));
+  assert(!bounded.lookup(read(0x9A),t+1,out));
+  assert(bounded.lookup(read(0x5B),t+1000000,out));
+
+  // Functional CAN addressing alone does not permit silently changing
+  // which ECU owns a value between cache refreshes.
+  DiagnosticPidCache ecu_cache;
+  assert(ecu_cache.rememberSingle(speed,reply(0x0D,50),t));
+  assert(!ecu_cache.rememberSingle(
+      speed,reply(0x0D,60,0x18DAF102U),t+1000));
+  assert(!ecu_cache.lookup(speed,t+1001,out));
+  assert(ecu_cache.rememberSingle(speed,reply(0x0D,50),t+2000));
 
   // Status and read allowlist: never cache a diagnostic write transaction.
   auto denied=read(0x0D);denied.data[0]=0x2E;
