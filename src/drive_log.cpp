@@ -14,9 +14,10 @@ uint32_t DriveLog::probeChecksum(const ProbeRecord& r) {
   for(size_t i=0;i<sizeof(r);++i) hash=(hash^bytes[i])*16777619U;
   return hash;
 }
-bool DriveLog::loadProbe(unsigned slot,ProbeRecord& record) {
+bool DriveLog::loadProbe(unsigned slot,ProbeRecord& record,
+                         const char* prefix) {
   Preferences nvs;char key[12]{};
-  std::snprintf(key,sizeof(key),"probe%u",slot);
+  std::snprintf(key,sizeof(key),"%s%u",prefix,slot);
   if(!nvs.begin("m5can_trip",true))return false;
   const bool ok=nvs.getBytesLength(key)==sizeof(record) &&
       nvs.getBytes(key,&record,sizeof(record))==sizeof(record);
@@ -31,32 +32,49 @@ bool DriveLog::loadProbe(unsigned slot,ProbeRecord& record) {
   record.crc=stored;
   return valid;
 }
+void DriveLog::populateEvidence(
+    ProbeRecord& target,const DiagnosticResult& result,
+    uint32_t responder,uint8_t decision,uint8_t reject_reason) {
+  target=ProbeRecord{};
+  target.sequence=record_.sequence;
+  target.uptime_ms=millis();
+  target.responder=responder;
+  target.status=static_cast<uint8_t>(result.status);
+  target.decision=decision;target.reject_reason=reject_reason;
+  target.responses=result.response_count;
+  target.transaction_us=result.transaction_us;
+  target.first_response_us=result.tx_to_first_response_us;
+  target.raw_count=result.raw_frame_count;
+  target.raw_saved=result.raw_frame_count<kDiagnosticMaxRawFrames ?
+      result.raw_frame_count : kDiagnosticMaxRawFrames;
+  target.truncated=result.raw_frame_count>=kDiagnosticMaxRawFrames;
+  for(unsigned i=0;i<target.raw_saved;++i) {
+    target.raw[i]=result.raw_frames[i];
+    target.rx_offset_us[i]=result.raw_rx_offsets_us[i];
+  }
+}
 void DriveLog::recordFirstProbe(uint16_t peer,const DiagnosticResult& result,
                                 uint32_t responder,uint8_t decision,
                                 uint8_t reject_reason) {
-  (void)peer; // Complete BLE-peer attribution remains in the event journal.
+  (void)peer; // Peer attribution remains in the event journal.
   if(!enabled_)return;
   portENTER_CRITICAL(&mux_);
   if(!probe_present_) {
-    probe_=ProbeRecord{};
-    probe_.sequence=record_.sequence;
-    probe_.uptime_ms=millis();
-    probe_.responder=responder;
-    probe_.status=static_cast<uint8_t>(result.status);
-    probe_.decision=decision;probe_.reject_reason=reject_reason;
-    probe_.responses=result.response_count;
-    probe_.transaction_us=result.transaction_us;
-    probe_.first_response_us=result.tx_to_first_response_us;
-    probe_.raw_count=result.raw_frame_count;
-    probe_.raw_saved=result.raw_frame_count<kDiagnosticMaxRawFrames ?
-        result.raw_frame_count : kDiagnosticMaxRawFrames;
-    probe_.truncated=result.raw_frame_count>=kDiagnosticMaxRawFrames;
-    for(unsigned i=0;i<probe_.raw_saved;++i) {
-      probe_.raw[i]=result.raw_frames[i];
-      probe_.rx_offset_us[i]=result.raw_rx_offsets_us[i];
-    }
+    populateEvidence(probe_,result,responder,decision,reject_reason);
     probe_present_=true;probe_dirty_=true;probe_saved_=false;
-    // Permit the next idle Arduino-loop checkpoint immediately.
+    probe_last_attempt_ms_=0;
+  }
+  portEXIT_CRITICAL(&mux_);
+}
+void DriveLog::recordFirstFailure(uint16_t peer,const DiagnosticResult& result,
+                                  uint32_t responder,uint8_t decision,
+                                  uint8_t reject_reason) {
+  (void)peer;
+  if(!enabled_)return;
+  portENTER_CRITICAL(&mux_);
+  if(!failure_present_) {
+    populateEvidence(failure_,result,responder,decision,reject_reason);
+    failure_present_=true;failure_dirty_=true;failure_saved_=false;
     probe_last_attempt_ms_=0;
   }
   portEXIT_CRITICAL(&mux_);
@@ -83,8 +101,9 @@ void DriveLog::begin(uint32_t reset_reason,uint32_t rom_reset_reason) {
     if(load(slot,previous) && previous.sequence>latest) latest=previous.sequence;
   coordinator_=CoordinatorRecord{};coordinator_enabled_=false;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-  probe_=ProbeRecord{};
+  probe_=ProbeRecord{};failure_=ProbeRecord{};
   probe_present_=probe_dirty_=probe_saved_=false;
+  failure_present_=failure_dirty_=failure_saved_=false;
   probe_last_attempt_ms_=0;
 #endif
   record_=Record{};record_.sequence=latest+1;record_.reset_reason=reset_reason;record_.rom_reset_reason=rom_reset_reason;
@@ -151,7 +170,7 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
   portENTER_CRITICAL(&mux_);urgent=urgent_;portEXIT_CRITICAL(&mux_);
   const uint32_t elapsed=now-last_saved_ms_;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-  const bool probe_due=probe_dirty_ &&
+  const bool probe_due=(probe_dirty_ || failure_dirty_) &&
       (!probe_last_attempt_ms_ || now-probe_last_attempt_ms_>=2000);
 #else
   const bool probe_due=false;
@@ -166,16 +185,19 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   // BLE worker only mutates immutable first-probe RAM once. The Arduino
   // loop alone can commit the sidecar when CAN is quiescent.
-  ProbeRecord probe_copy{};
-  bool write_probe=false;
+  ProbeRecord probe_copy{},failure_copy{};
+  bool write_probe=false,write_failure=false;
   portENTER_CRITICAL(&mux_);
-  write_probe=probe_dirty_;
+  write_probe=probe_dirty_;write_failure=failure_dirty_;
   if(write_probe)probe_copy=probe_;
+  if(write_failure)failure_copy=failure_;
   portEXIT_CRITICAL(&mux_);
+  if(write_probe || write_failure)probe_last_attempt_ms_=now;
   if(write_probe) {
-    probe_copy.crc=0;
-    probe_copy.crc=probeChecksum(probe_copy);
-    probe_last_attempt_ms_=now;
+    probe_copy.crc=0;probe_copy.crc=probeChecksum(probe_copy);
+  }
+  if(write_failure) {
+    failure_copy.crc=0;failure_copy.crc=probeChecksum(failure_copy);
   }
 #endif
   Preferences nvs;char key[12]{};
@@ -204,6 +226,24 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
         portEXIT_CRITICAL(&mux_);
       } else {
         Serial.println("#DRIVELOG,probe_storage_error");
+        ok=false;
+      }
+    }
+    if(write_failure && ok) {
+      std::snprintf(key,sizeof(key),"fail%u",static_cast<unsigned>(copy.sequence%kSlots));
+      const bool stored=nvs.putBytes(key,&failure_copy,sizeof(failure_copy))==sizeof(failure_copy);
+      ProbeRecord readback{};
+      const bool verified=stored &&
+          loadProbe(copy.sequence%kSlots,readback,"fail") &&
+          readback.sequence==copy.sequence;
+      if(verified) {
+        portENTER_CRITICAL(&mux_);
+        if(failure_present_ && failure_.sequence==failure_copy.sequence) {
+          failure_dirty_=false;failure_saved_=true;
+        }
+        portEXIT_CRITICAL(&mux_);
+      } else {
+        Serial.println("#DRIVELOG,failure_storage_error");
         ok=false;
       }
     }
@@ -339,6 +379,44 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
       }
     } else if(r.grouped && r.multipid) {
       Serial.printf("#DRIVELOG,PROBE,boot=%lu,state=MISSING\n",
+                    static_cast<unsigned long>(seq));
+    }
+#endif
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    ProbeRecord failure_record{};
+    bool has_failure=false,failure_persisted=false;
+    if(seq==current.sequence) {
+      portENTER_CRITICAL(&mux_);
+      has_failure=failure_present_ && failure_.sequence==seq;
+      if(has_failure)failure_record=failure_;
+      failure_persisted=failure_saved_ && !failure_dirty_;
+      portEXIT_CRITICAL(&mux_);
+    } else {
+      has_failure=loadProbe(seq%kSlots,failure_record,"fail") &&
+          failure_record.sequence==seq;
+      failure_persisted=has_failure;
+    }
+    if(has_failure) {
+      Serial.printf("#DRIVELOG,GROUPFAIL,boot=%lu,state=%s,ms=%lu,decision=%u,reason=%u,status=%u,ecu=%08lX,responses=%u,raw_count=%u,raw_saved=%u,truncated=%u,transaction_us=%lu,first_response_us=%lu,rx_time=tx_offset_us\n",
+          static_cast<unsigned long>(seq),failure_persisted?"persisted":"RAM_ONLY",
+          static_cast<unsigned long>(failure_record.uptime_ms),
+          failure_record.decision,failure_record.reject_reason,
+          failure_record.status,static_cast<unsigned long>(failure_record.responder),
+          failure_record.responses,failure_record.raw_count,
+          failure_record.raw_saved,failure_record.truncated,
+          static_cast<unsigned long>(failure_record.transaction_us),
+          static_cast<unsigned long>(failure_record.first_response_us));
+      for(unsigned i=0;i<failure_record.raw_saved;++i) {
+        const auto& f=failure_record.raw[i];
+        Serial.printf("#DRIVELOG,GROUPFAIL_RAW,boot=%lu,index=%u,id=%08lX,dlc=%u,rx_tx_us=%lu,data=",
+            static_cast<unsigned long>(seq),i,
+            static_cast<unsigned long>(f.can_id),f.dlc,
+            static_cast<unsigned long>(failure_record.rx_offset_us[i]));
+        for(unsigned k=0;k<f.dlc && k<8;++k)Serial.printf("%02X",f.data[k]);
+        Serial.println("");
+      }
+    } else if(r.group_ok && r.fallback) {
+      Serial.printf("#DRIVELOG,GROUPFAIL,boot=%lu,state=MISSING\n",
                     static_cast<unsigned long>(seq));
     }
 #endif
