@@ -87,12 +87,13 @@ int main() {
   DiagnosticPidCache bounded;
   for(unsigned i=0;i<DiagnosticPidCache::kSlots+6;++i)
     assert(bounded.rememberSingle(
-        read(static_cast<uint8_t>(i)),reply(static_cast<uint8_t>(i),11),
+        read(static_cast<uint8_t>(0x80+i)),
+        reply(static_cast<uint8_t>(0x80+i),11),
         t+i*1000));
   assert(bounded.stats().evictions>=6);
-  assert(!bounded.lookup(read(0),t+20000,out));
+  assert(!bounded.lookup(read(0x80),t+20000,out));
   assert(bounded.lookup(read(static_cast<uint8_t>(
-      DiagnosticPidCache::kSlots+5)),t+20000,out));
+      0x80+DiagnosticPidCache::kSlots+5)),t+20000,out));
 
   // Status and read allowlist: never cache a diagnostic write transaction.
   auto denied=read(0x0D);denied.data[0]=0x2E;
