@@ -107,7 +107,7 @@ class BleElmTransport {
   size_t queueTo(uint16_t connection_id,uint32_t generation,
                  const uint8_t* data,size_t length);
   bool responseReady(uint16_t connection_id,uint32_t generation) const;
-  void pollTx(); // BLE application worker only; at most one chunk per peer.
+  void pollTx(); // BLE application worker only; at most three chunks per peer.
   uint8_t connectedClientCount() const;
   BlePeersSnapshot peerTraffic() const;
   bool pollDiagnostic(BleDiagnosticEvent& event);
