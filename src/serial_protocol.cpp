@@ -10,6 +10,7 @@
 #include "elm_response_formatter.h"
 #include "demo_drive.h"
 #include "drive_log.h"
+#include "log_storage_probe.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "ble_evidence_journal.h"
 #endif
@@ -490,6 +491,19 @@ void SerialProtocol::handleUsbLine(const char* line) {
     emitTextHello();
   } else if (!std::strcmp(command, "DRIVELOG")) {
     if (drive_log_ble_) driveLog().dump(monitor_,*drive_log_ble_,demoActive());
+  } else if (!std::strcmp(command, "LOGCAP")) {
+    // An operator explicitly asks for NVS capacity diagnostics. Never
+    // spend serial/NVS inspection time during any active vehicle traffic.
+    bool active=monitor_.queryPending();
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    if(drive_log_ble_ && drive_log_ble_->connectedClientCount())
+      active=true;
+#else
+    if(drive_log_ble_ && drive_log_ble_->connected())
+      active=true;
+#endif
+    if(active)Serial.println("#LOGCAP,ERR,ACTIVE_TRAFFIC,decision=BLOCK");
+    else reportLogStorageCapacity();
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   } else if (!std::strcmp(command, "BLELOG INDEX")) {
     if (drive_log_ble_) bleEvidenceJournal().index(monitor_,*drive_log_ble_);
@@ -532,7 +546,7 @@ void SerialProtocol::handleUsbLine(const char* line) {
   } else if (!std::strcmp(command, "HELP") ||
              !std::strcmp(command, "?")) {
     Serial.println(
-        "#HELP,INFO STATS DRIVELOG BLELOG [boot] BLELOG INDEX HELP STREAM ON STREAM OFF NATIVE ON; "
+        "#HELP,INFO STATS DRIVELOG LOGCAP BLELOG [boot] BLELOG INDEX HELP STREAM ON STREAM OFF NATIVE ON; "
         "BLE exposes ELM only; DEMO AUTO/ON/OFF (USB)");
   } else if (command[0]) {
     Serial.printf("#ERR,UNKNOWN_COMMAND,%s\n", command);
