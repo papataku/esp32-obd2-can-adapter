@@ -88,6 +88,16 @@ void BleEvidenceJournal::observeHealth(const CanStats& can,const BleStats& ble) 
   recordDelta(ble.notify_failures,last_ble_.notify_failures,DiagnosticError::BleNotifyFailureCounter);
   recordDelta(ble.notify_retries,last_ble_.notify_retries,DiagnosticError::BleNotifyRetryCounter);
   recordDelta(ble.session_rejections,last_ble_.session_rejections,DiagnosticError::BleSessionRejectCounter);
+  // Exact CAN owner outcome histogram, including requests made over USB
+  // or results lost after a BLE peer disconnect.
+  for(unsigned i=0;i<10;++i) {
+    if(can.result_status_count[i]!=record_.can_result_status[i]) {
+      if(i>0 && can.result_status_count[i]>record_.can_result_status[i])
+        urgent_=true;
+      record_.can_result_status[i]=can.result_status_count[i];
+      dirty_=true;
+    }
+  }
   last_can_=can;last_ble_=ble;
 }
 void BleEvidenceJournal::observeQueueDrops(uint32_t drops) {
@@ -193,6 +203,13 @@ void BleEvidenceJournal::print(const Record& r,bool persisted) {
       static_cast<unsigned long>(r.boot),
       static_cast<unsigned long>(r.storage_errors),
       static_cast<unsigned long>(r.unknown_faults),r.overflow);
+  for(unsigned status=0;status<10;++status)if(r.can_result_status[status]) {
+    Serial.printf("#BLELOG,CAN_STATUS,boot=%lu,status=%u,code=%u,name=%s,count=%lu\n",
+        static_cast<unsigned long>(r.boot),status,
+        status?static_cast<unsigned>(200+status):0U,
+        diagnosticErrorName(status?static_cast<uint16_t>(200+status):0),
+        static_cast<unsigned long>(r.can_result_status[status]));
+  }
   for(const auto& fault:r.faults)if(fault.code) {
     Serial.printf("#BLELOG,FAULT,boot=%lu,code=%u,name=%s,count=%lu,first_ms=%lu,last_ms=%lu,first_detail=%lu,last_detail=%lu\n",
         static_cast<unsigned long>(r.boot),fault.code,
