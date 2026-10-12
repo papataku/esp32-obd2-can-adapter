@@ -12,6 +12,9 @@ BUDGETS = {
     'm5can::DualBleElm::onLine(': 1280,
     'm5can::DualBleElm::onResult(': 2048,
     'm5can::BleElmTransport::writeTo(': 256,
+    'm5can::DriveLog::addEvent(': 192,
+    'm5can::DriveLog::outcome(': 128,
+    'm5can::DriveLog::submitted(': 128,
 }
 # Additional coordinator frames: these may be inlined and accounted for in
 # their caller. When emitted as their own static frames, enforce limits too.
@@ -49,11 +52,13 @@ for env in sys.argv[1:]:
         # of their parent's compiler .su value and need not be added twice.
         def sz(name):
             return frames.get(name, 0)
-        event_path = sz('m5can::DualBleElm::event(') + (
+        event_path = sz('m5can::DualBleElm::event(') + max(
             sz('m5can::DualBleElm::onLine(') +
-            sz('m5can::DualBleElm::advanceBatch('))
+            sz('m5can::DualBleElm::advanceBatch('),
+            sz('m5can::DriveLog::addEvent('))
         result_path = sz('m5can::DualBleElm::onResult(') + max(
             sz('m5can::DualBleElm::cacheSafePartialGroup('),
+            sz('m5can::DriveLog::outcome(') + sz('m5can::DriveLog::addEvent('),
             sz('m5can::DualBleElm::finishSingle(') +
             sz('m5can::DualBleElm::advanceBatch('))
         dispatch_path = sz('m5can::DualBleElm::dispatch(') + (

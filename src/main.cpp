@@ -2,12 +2,15 @@
 #include <atomic>
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_heap_caps.h>
+#include <esp_system.h>
+#include <rom/rtc.h>
 #endif
 
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
 #include "serial_protocol.h"
 #include "ui.h"
+#include "drive_log.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "dual_ble_elm.h"
 #ifndef M5CAN_DUAL_BLE_APP_CORE
@@ -45,8 +48,15 @@ bool g_ble_ok = false;
 }
 
 void setup() {
+  g_serial.setDriveLogTransport(&g_ble);
   g_ui.begin();
   g_serial.begin();
+#if defined(ARDUINO_ARCH_ESP32)
+  m5can::driveLog().begin(static_cast<uint32_t>(esp_reset_reason()),
+      static_cast<uint32_t>(rtc_get_reset_reason(0)));
+#else
+  m5can::driveLog().begin(0);
+#endif
 
   g_ble_ok = g_ble.begin();
   if (!g_ble_ok) {
@@ -119,6 +129,10 @@ void loop() {
         static_cast<unsigned long>(coordinator.single_submissions));
 #endif
 #if defined(ARDUINO_ARCH_ESP32)
+    m5can::driveLog().resources(g_can.ownerStackFreeBytes(),
+        static_cast<uint32_t>(uxTaskGetStackHighWaterMark(g_ble_app_task)),
+        static_cast<uint32_t>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)),
+        static_cast<uint32_t>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
     Serial.printf("#MEMORY,internal_free=%u,internal_min=%u,largest=%u,can_stack_free_bytes=%lu\n",
         static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
         static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)),
@@ -157,6 +171,13 @@ void loop() {
   }
 
   g_serial.emitStats(false);
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  const auto coord_log=g_dual.coordinatorStats();
+  m5can::driveLog().coordinator(coord_log.cache_hits,coord_log.cache_misses,
+      coord_log.joins,coord_log.grouped_submissions,coord_log.cross_group_submissions,
+      coord_log.single_submissions);
+#endif
+  m5can::driveLog().poll(g_can,g_ble,g_serial.demoActive());
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   const auto peers=g_ble.peerTraffic();
   g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),

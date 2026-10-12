@@ -6,6 +6,7 @@
 #include "adaptive_multi_pid.h"
 #include "diagnostic_transaction.h"
 #include "diagnostic_request_pacer.h"
+#include "diagnostic_result_cache.h"
 #include "elm_compat.h"
 #include "elm_response_formatter.h"
 
@@ -131,6 +132,23 @@ int main() {
          AdaptiveMultiPid::Decision::RetryLegacy);
   assert(!split.eligible(rpm,speed));
 
+  // A delayed CAN result must retain actual reception time, not acquire
+  // a fresh TTL at the end of the owner quiet window / BLE delivery.
+  {
+    DiagnosticTransaction single_tx;
+    single_tx.begin(rpm,sent_us);
+    const uint8_t rpm_value[]={0x41,0x0C,0x13,0x88};
+    const uint64_t received=sent_us+1000;
+    assert(single_tx.onFrame(sf(0x18DAF101U,received,sizeof(rpm_value),rpm_value)).event==TransactionEvent::Completed);
+    auto single=single_tx.result();single.status=DiagnosticStatus::Ok;
+    assert(single.completed_at_us==received);
+    DiagnosticResultCache owner_cache;
+    owner_cache.remember(rpm,single,received+20000);
+    DiagnosticResult cached{};
+    assert(owner_cache.lookup(rpm,received+99999,cached));
+    assert(cached.completed_at_us==received);
+    assert(!owner_cache.lookup(rpm,received+100000,cached));
+  }
   std::cout << "PASS ELM batch -> CAN multi-PID -> ISO-TP -> ELM replies -> fallback\\n";
   return 0;
 }

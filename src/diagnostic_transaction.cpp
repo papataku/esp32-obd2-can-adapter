@@ -49,7 +49,11 @@ TransactionStep DiagnosticTransaction::onFrame(const TransactionFrame& frame) {
       return step;
     case IsoTpEventType::Complete:
       appendRaw(frame);
-      appendMessage(event.message);
+      if (appendMessage(event.message) && !result_.completed_at_us) {
+        // Earliest completed response: do not grant extra freshness for
+        // the later quiet window, mode switching or result delivery.
+        result_.completed_at_us=frame.timestamp_us;
+      }
       step.event = TransactionEvent::Completed;
       return step;
     case IsoTpEventType::NeedFlowControl:

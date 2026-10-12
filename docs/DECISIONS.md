@@ -221,3 +221,19 @@ behavior. Keep the exact grouped read allowlist behind
 `m5dial_dual_ble_multipid_bench` profile. Existing dual-client stable profiles
 continue individual queries. Merge the tested implementation without advancing
 the physical CAN or vehicle acceptance gate; those remain pending.
+
+## D021 - Retain bounded post-drive summaries instead of full CAN flash logs
+
+The vehicle test may run without a USB host. Store eight boot summaries and the
+last eight diagnostic state events per boot in NVS, checkpointed by the Arduino
+loop. BLE only touches protected RAM. Retain original sample RX frames for group
+success/fallback/fault decisions, counters and reset/build metadata. USB DRIVELOG
+retrieves history without clearing it. Continuous RAW CAN still belongs on the
+host. Pending data can be lost on power cut between checkpoints; report this
+limit and storage failures explicitly. See `docs/drive_log.md`.
+
+Checkpoint writes reserve the same in-flight slot as diagnostic submissions,
+without holding a spinlock through flash IO. Defer a checkpoint while a query
+is active and reject/retry new submissions until it finishes. This avoids
+inserting an observed USB flash-write stall into a CAN response window. SDK
+reset=unknown on USB reset is supplemented by the raw ROM reason (schema 2).

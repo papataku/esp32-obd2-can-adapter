@@ -7,6 +7,8 @@
 #include <vector>
 #include <utility>
 #include <NimBLEDevice.h>
+#include <Preferences.h>
+#include "drive_log.h"
 #include "dual_ble_elm.h"
 #include "serial_protocol.h"
 using namespace m5can;
@@ -22,7 +24,7 @@ void feed(DiagnosticTransaction& tx, uint32_t ecu,
           std::initializer_list<uint8_t> payload, bool ff=false) {
   TransactionFrame frame{};
   frame.can_id=ecu; frame.extended=true; frame.dlc=8;
-  frame.timestamp_us=static_cast<uint64_t>(millis())*1000+1;
+  frame.timestamp_us=static_cast<uint64_t>(millis())*1000;
   if (ff) {
     const uint8_t bad[]={0x10,8,0x41,0x0C,0x13,0x88,0x0D,0x50};
     std::memcpy(frame.data,bad,8);
@@ -81,6 +83,7 @@ struct Bench {
     ready=false;hold=false;demo=false;requests.clear();test_notifications.clear();
     g_test_millis=1000;
     assert(ble.begin());
+    driveLog().begin(1);
     NimBLEServer::callbacks->onConnect(NimBLEDevice::createServer(),&a);
     NimBLEServer::callbacks->onConnect(NimBLEDevice::createServer(),&b);
     dual.poll();
@@ -123,6 +126,7 @@ uint32_t CanMonitor::leaseRemainingMs() const {
 }
 CanStats CanMonitor::stats() const {return stats_;}
 bool CanMonitor::submitQuery(const DiagnosticRequest& r) {
+  if(log_checkpoint_active_)return false;
   assert(!query_in_flight_); assert(leaseRemainingMs());
   assert(DiagnosticPolicy::allowedReadRequest(r));
   requests.push_back(r);queued=r;query_in_flight_=true;ready=true;return true;
@@ -144,6 +148,8 @@ int main() {
 #endif
   {mode=Ecu::Full;Bench bench;bench.batchBoth();bench.drain();bench.values();
    assert(bench.groups()==1 && requests.size()==2);
+   assert(driveLog().snapshot().grouped==1 && driveLog().snapshot().group_ok==1);
+   assert(driveLog().snapshot().individual==1);
    bench.batchBoth();bench.drain();assert(bench.groups()==2 && requests.size()==4);}
   for(Ecu failure:{Ecu::Partial,Ecu::Negative,Ecu::Silent,Ecu::Split,Ecu::FirstFrame}) {
     mode=failure;Bench bench;bench.batchBoth();bench.drain();bench.values();
@@ -151,6 +157,7 @@ int main() {
     // only speed is retried. All other unsupported cases retry both PIDs.
     const size_t first_count=failure==Ecu::Partial?3U:4U;
     assert(bench.groups()==1 && requests.size()==first_count);
+    assert(driveLog().snapshot().fallback==1);
     bench.batchBoth();bench.drain();bench.values();
     assert(bench.groups()==1 && requests.size()==first_count+3);
   }
@@ -190,6 +197,7 @@ int main() {
   for(Ecu failure:{Ecu::Lease,Ecu::BusOff,Ecu::Driver}) {
     mode=failure;Bench bench;write(bench.a,"ATM5B00:010C,010D,0105");bench.drain();
     assert(requests.size()==1 && bench.groups()==1);
+   assert(driveLog().snapshot().stopped==1);
     assert(output(7).find("M5DONE\r>")!=std::string::npos);
   }
   {mode=Ecu::Full;Bench bench;hold=true;bench.batchBoth();bench.dual.poll();
@@ -312,6 +320,67 @@ int main() {
    assert(bench.can.pollQueryResult(usb_done));
    bench.drain();bench.values();
    assert(bench.groups()==1 && requests.size()==3);
+  }
+  // NVS survives recorder reconstruction; writes are periodic/event-only,
+  // ring slots remain bounded and corrupt/truncated entries are rejected.
+  {
+    Bench bench;Preferences::storage.clear();Preferences::writes=0;
+    DriveLog journal;g_test_millis=1000;journal.begin(1,21);
+    DiagnosticRequest r{};r.length=3;r.data[0]=1;r.data[1]=0x0C;r.data[2]=0x0D;
+    DiagnosticResult result{};result.status=DiagnosticStatus::Ok;
+    result.raw_frame_count=1;result.response_count=1;
+    result.transaction_us=12000;result.tx_to_first_response_us=8000;
+    result.raw_frames[0].can_id=0x18DAF101;result.raw_frames[0].dlc=8;
+    const uint8_t bytes[]={6,0x41,0x0C,0x13,0x88,0x0D,0x50,0};
+    std::memcpy(result.raw_frames[0].data,bytes,8);
+    for(unsigned i=0;i<100;++i) {
+      journal.submitted(r);journal.outcome(DriveLog::Kind::GroupEnabled,7,result,0x18DAF101);
+      ++g_test_millis;journal.poll(bench.can,bench.ble,false);
+    }
+    assert(Preferences::writes==1);
+    assert(journal.snapshot().group_ok==100 && journal.snapshot().event_count==1);
+    g_test_millis=3000;
+    hold=true;write(bench.a,"ATM5B00:010C,010D,0105");bench.dual.poll();
+    assert(bench.can.queryPending());
+    assert(!bench.can.tryBeginLogCheckpoint());
+    journal.poll(bench.can,bench.ble,false);assert(Preferences::writes==1);
+    hold=false;bench.drain();
+    assert(bench.can.tryBeginLogCheckpoint());
+    assert(!bench.can.submitQuery(r));bench.can.endLogCheckpoint();
+    g_test_millis=6000;journal.poll(bench.can,bench.ble,false);
+    assert(Preferences::writes==2);
+    DriveLog restarted;restarted.begin(9);assert(restarted.snapshot().sequence==2);
+    Preferences nvs;assert(nvs.begin("m5can_trip",true));DriveLog::Record saved{};
+    assert(nvs.getBytes("trip1",&saved,sizeof(saved))==sizeof(saved));
+    assert(saved.grouped==100 && saved.group_ok==100 && saved.event_count==1);
+    assert(saved.events[0].responder==0x18DAF101);
+    assert(std::memcmp(saved.events[0].raw[0].data,bytes,8)==0);
+    assert(saved.uptime_ms==6000 && saved.rom_reset_reason==21);
+    assert(saved.group_time_us==1200000 && saved.group_max_us==12000);
+    assert(saved.events[0].transaction_us==12000 && saved.events[0].first_response_us==8000);
+    for(unsigned i=0;i<12;++i){DriveLog reboot;reboot.begin(1);}
+    assert(Preferences::storage.size()==DriveLog::kSlots);
+    Preferences::storage["m5can_trip/trip0"]={1,2,3};
+    DriveLog recover;recover.begin(1);assert(recover.snapshot().sequence==15);
+    saved.version=1;saved.sequence=9999;
+    Preferences::storage["m5can_trip/trip0"].resize(sizeof(saved));
+    std::memcpy(Preferences::storage["m5can_trip/trip0"].data(),&saved,sizeof(saved));
+    DriveLog version_recover;version_recover.begin(1);assert(version_recover.snapshot().sequence==16);
+    journal.dump(bench.can,bench.ble,false); // Never deletes older entries.
+    assert(Preferences::storage.size()==DriveLog::kSlots);
+  }
+  { // Coordinator metrics persist independently of the v2 trip layout.
+    Bench bench;Preferences::storage.clear();DriveLog journal;
+    g_test_millis=1000;journal.begin(1,21);
+    journal.coordinator(10,20,3,4,2,7);
+    g_test_millis=31000;journal.poll(bench.can,bench.ble,false);
+    DriveLog restarted;restarted.begin(1,21);
+    Preferences nvs;assert(nvs.begin("m5can_trip",true));
+    DriveLog::Record trip{};DriveLog::CoordinatorRecord coord{};
+    assert(nvs.getBytes("trip1",&trip,sizeof(trip))==sizeof(trip));
+    assert(nvs.getBytes("coord1",&coord,sizeof(coord))==sizeof(coord));
+    assert(trip.version==2 && coord.sequence==trip.sequence && coord.uptime_ms==trip.uptime_ms);
+    assert(coord.hits==10 && coord.misses==20 && coord.joins==3 && coord.groups==4 && coord.cross==2 && coord.singles==7);
   }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
 }

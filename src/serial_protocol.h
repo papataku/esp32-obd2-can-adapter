@@ -15,8 +15,9 @@ class SerialProtocol {
  public:
   explicit SerialProtocol(CanMonitor& monitor,
                           BleElmTransport* ble = nullptr)
-      : monitor_(monitor), ble_(ble) {}
+      : monitor_(monitor), ble_(ble), drive_log_ble_(ble) {}
 
+  void setDriveLogTransport(BleElmTransport* ble) { drive_log_ble_=ble; }
   void begin();
   void pollInput();
   void emitFrame(const CapturedFrame& frame);
@@ -84,6 +85,7 @@ class SerialProtocol {
 
   CanMonitor& monitor_;
   BleElmTransport* ble_ = nullptr;
+  BleElmTransport* drive_log_ble_ = nullptr;
   ElmCompat elm_{};
   ElmLink elm_link_ = ElmLink::None;
   bool elm_mode_ = false;

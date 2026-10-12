@@ -26,7 +26,7 @@ export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
 
 "$CXX" "${CXXFLAGS[@]}" \
   "$ROOT/tests/test_dual_ble_adaptive.cpp" \
-  "$ROOT/src/dual_ble_elm.cpp" "$ROOT/src/ble_elm_transport.cpp" \
+  "$ROOT/src/dual_ble_elm.cpp" "$ROOT/src/ble_elm_transport.cpp" "$ROOT/src/drive_log.cpp" \
   "$ROOT/src/elm_compat.cpp" "$ROOT/src/elm_response_formatter.cpp" \
   "$ROOT/src/diagnostic_transaction.cpp" "$ROOT/src/isotp_reassembler.cpp" \
   "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \

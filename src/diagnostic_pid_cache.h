@@ -49,6 +49,7 @@ class DiagnosticPidCache {
     // the coordinator; zero it in place without an aggregate temporary.
     std::memset(static_cast<void*>(&result),0,sizeof(result));
     result.status = DiagnosticStatus::Ok;
+    result.completed_at_us=e->completed_us;
     result.response_count = 1;
     result.responses[0] = e->message;
     result.raw_frame_count = e->raw_count;
