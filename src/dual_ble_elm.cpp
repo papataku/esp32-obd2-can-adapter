@@ -441,6 +441,20 @@ void DualBleElm::dispatch() {
     }
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
+    if (s.multi_pid_pair) {
+      const DiagnosticRequest rpm=requestOf(s.items[s.batch_next],s.elm);
+      const DiagnosticRequest speed=requestOf(s.items[s.batch_next+1],s.elm);
+      if (pid_cache_.hasFresh(rpm,now_us) ||
+          pid_cache_.hasFresh(speed,now_us)) {
+        // The second peer was staged before the first peer completed.
+        // Replan the *remaining misses* rather than redundantly sending a
+        // grouped CAN frame containing an already-cached PID.
+        s.multi_pid_pair=false;
+        s.pending=false;
+        advanceBatch(s);
+        if (!s.pending) continue;
+      }
+    }
     if (!s.multi_pid_pair &&
         pid_cache_.lookup(s.request,now_us,cache_workspace_)) {
       finishSingle(s,cache_workspace_);
