@@ -209,3 +209,56 @@ isolation, subsequent responses and zero submitted CAN requests;47 Swift
 unit tests and iPad unsigned device compile passed. Restore the captured
 adapter image/configuration after physical testing. These fixtures simulate
 application-visible error replies, not real ECU/ISO-TP electrical behavior.
+
+
+## Completed load/order/error trials (2026-10-12)
+
+| Trial | window | successful five-PID batches | negative fixtures | outcome |
+|---|---:|---:|---:|---|
+| Ring first, iPad second NO DATA |600.145s|1666|4998 NO DATA items|no in-window cut/reset/notify failure|
+| iPad first, Ring second NO DATA |600.175s|1662|4986 NO DATA items|no in-window cut/reset/notify failure|
+| high-load NO DATA, repeats3/delay0 |180s requested|1695|1695 NO DATA items|no in-window cut/reset/notify failure|
+| mixed errors, repeats8/delay0 |180s requested|1176|each of5 types147 times|no in-window cut/reset/notify failure|
+| high-load mixed errors, repeats24/delay0 |180s requested|1776|each of5 types74 times|completed, one end-boundary cut noted below|
+
+Five types are NO DATA, NRC31, NRC33, partial first-frame+BUFFER FULL, and
+no bytes/prompt (300ms command timeout), followed by normal positive reads
+without reconnect/re-init. Actual fixture uses TX-disabled adapter image
+(source basis2c227a6-dirty), signed app5f622f9 (repeats3/8), then3542550
+(repeats24). Main and the installed meter image were not changed.
+
+The original six pre-disconnect60s windows were54.53-82.58 notifications/s
+and1066.57-1593.22B/s. Earlier low-load NO DATA trial was40/s and746.67B/s;
+it was NOT a sufficient reproduction of that traffic. Actual iPad SQLite
+receive rates in every full60s high-load NO DATA window:111.63-119.73/s,
+2069.77-2219.48B/s. For repeats8 mixed errors:74.13-77.75/s,
+1360.83-1426.97B/s (within original range, below original maximum).
+For repeats24 mixed errors:105.42-113.72/s,1941.73-2094.17B/s. All full
+windows of both HIGH-load trials exceed the historical maximum in BOTH
+notification count and bytes. The recorded scan phase itself had10.64/s
+and161.59B/s; it is distinct from later collection/disconnect windows.
+Logged command counts include synthesized batch item results and must not
+be presented as wire request counts.
+
+Repeats24 raw531 GAP disconnect was timestamped11:25:43.752812 Mac UTC;
+iPad's final successful sample11:25:43.777 and SOAK_END11:25:43.782 UTC.
+Both clocks are independent; the29ms boundary inversion is consistent with
+intentional app cleanup but is not precise proof of initiating order. Keep
+this event in the analyzer output instead of silently filtering it. The
+app ended withfailed=false, SQLite integrity ok, complete host coverage,
+no notify failure/reset. Future debug source recordsSOAK_STOP_REQUEST before
+local teardown; that marker was NOT in the tested3542550 binary.
+
+No claim of equivalent CAN wait/ISO-TP electrical behavior, full discovery
+UI/CPU/storage load, full30min single-client/reverse-order matrix, or cause
+resolution is made. Ring RPM was8.887Hz during high-load NO DATA and9.281Hz
+during repeats24 mixed errors; hidden signals approximately2Hz. The10Hz
+RPM target remains unmet. Order trials had iPad notify retries340 vs464,
+Ring85 vs47; one trial each is insufficient for a causal order claim.
+
+After testing, the adapter's captured initial diagnostic binary was restored
+at0x10000 withflash hash verified. BOOT=a272c105-dirty, DEMO setting OFF,
+active NO, saved YES confirmed. Dedicated fault image is no longer installed.
+The iPad retains the signed3542550 diagnostic build and its normal/debug
+paths; no app uninstall/data deletion. A normal-path relaunch was refused
+bySpringBoard Locked after testing; no unlock bypass/retry was attempted.
