@@ -18,6 +18,7 @@ class BleEvidenceJournal {
   static constexpr unsigned kBootSlots=4;
   static constexpr unsigned kEvents=12;
   static constexpr unsigned kFaultBuckets=48;
+  static constexpr unsigned kPeerSummaries=4; // two active + reconnections
 
   struct Entry {
     uint32_t seq=0,ms=0,gen=0;
@@ -34,18 +35,25 @@ class BleEvidenceJournal {
     uint16_t code=0,reserved=0;
     uint32_t count=0,first_ms=0,last_ms=0,first_detail=0,last_detail=0;
   };
+  struct PeerDisconnect {
+    uint16_t address_suffix=0,conn=0;
+    uint32_t generation=0,count=0,first_ms=0,last_ms=0;
+    int32_t first_reason=0,last_reason=0;
+  };
   struct Record {
     uint32_t magic=kMagic;
     uint16_t version=kVersion,bytes=sizeof(Record);
     uint32_t crc=0,boot=0,saves=0,total=0,evicted=0,queue_drops=0;
     uint32_t first_seq=0,last_seq=0,seq_gaps=0;
     uint32_t unknown_faults=0,storage_errors=0;
+    uint32_t peer_summary_overflow=0;
     uint32_t can_result_status[10]{}; // owner-observed, includes USB requests
     uint8_t count=0,overflow=0;
     uint16_t reserved=0;
     char build[40]{};
     Entry events[kEvents]{};
     FaultSummary faults[kFaultBuckets]{};
+    PeerDisconnect disconnect_peers[kPeerSummaries]{};
   };
   static_assert(sizeof(Record)<=2304,"BLE evidence NVS record exceeds budget");
   void begin(uint32_t boot,const char* build);
