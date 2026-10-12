@@ -394,8 +394,12 @@ void DualBleElm::onResult() {
                     static_cast<unsigned>(result.response_count),
                     static_cast<unsigned long>(responder));
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-    if (first_success)
+    if(first_success)
       driveLog().recordFirstProbe(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
+    else if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      driveLog().recordFirstFailure(
           s.conn_id,result,responder,static_cast<uint8_t>(decision),
           static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
 #endif
@@ -463,8 +467,12 @@ void DualBleElm::onResult() {
     }
 #endif
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-    if (first_success)
+    if(first_success)
       driveLog().recordFirstProbe(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
+    else if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      driveLog().recordFirstFailure(
           s.conn_id,result,responder,static_cast<uint8_t>(decision),
           static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
 #endif
