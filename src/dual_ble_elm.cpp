@@ -330,15 +330,18 @@ void DualBleElm::onResult() {
   if (!can_.pollQueryResult(result)) return;
   const int index=active_query_owner_;
   const int second=active_secondary_owner_;
+  const uint32_t secondary_generation=active_secondary_generation_;
   const bool cross=active_cross_group_;
   active_query_owner_=-1;
   active_secondary_owner_=-1;
+  active_secondary_generation_=0;
   active_cross_group_=false;
   Session& s=sessions_[index];
   const bool primary_live=s.active &&
       s.generation==active_query_generation_;
   Session* other=second<0?nullptr:&sessions_[second];
   const bool other_live=other && other->active &&
+      other->generation==secondary_generation &&
       ble_.isClientConnected(other->conn_id,other->generation);
   const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
 
@@ -565,8 +568,10 @@ void DualBleElm::dispatch() {
       active_query_generation_=s.generation;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
       active_secondary_owner_=(shared || cross)?j:-1;
+      active_secondary_generation_=(shared || cross)?peer.generation:0;
 #else
       active_secondary_owner_=-1;
+      active_secondary_generation_=0;
 #endif
       active_cross_group_=cross;
       round_robin_=static_cast<uint8_t>((i+1)%2);
