@@ -221,7 +221,7 @@ int main() {
    bench.dual.poll();hold=false;bench.drain();
    assert(requests.size()==2 && bench.groups()==0);
    assert(output(7).empty());
-   assert(output(19).find("M5DONE\\r>")!=std::string::npos);
+   assert(output(19).find("M5DONE\r>")!=std::string::npos);
   }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
 }
