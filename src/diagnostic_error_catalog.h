@@ -47,6 +47,7 @@ inline uint16_t diagnosticStatusErrorCode(DiagnosticStatus status) {
   return 299;
 }
 inline const char* diagnosticErrorName(uint16_t raw) {
+  if(raw==0)return "NONE";
   switch(static_cast<DiagnosticError>(raw)) {
     case DiagnosticError::BleNoClientSlot:return "BLE_NO_SLOT";
     case DiagnosticError::BleRxQueueOverflow:return "BLE_RX_OVERFLOW";
