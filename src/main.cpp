@@ -76,15 +76,19 @@ void loop() {
     const auto stats = g_ble.stats();
     if (stats.connect_count != seen_connects) {
       seen_connects = stats.connect_count;
-      Serial.printf("#BLE,CONNECT,count=%lu,uptime_ms=%lu,free_heap=%lu\n",
+      Serial.printf("#BLE,CONNECT,count=%lu,conn_id=%u,uptime_ms=%lu,free_heap=%lu\n",
                     static_cast<unsigned long>(seen_connects),
+                    static_cast<unsigned>(stats.last_connect_conn_id),
                     static_cast<unsigned long>(stats.last_connect_ms),
                     static_cast<unsigned long>(freeHeapBytes()));
     }
     if (stats.disconnect_count != seen_disconnects) {
       seen_disconnects = stats.disconnect_count;
-      Serial.printf("#BLE,DISCONNECT,count=%lu,uptime_ms=%lu,free_heap=%lu\n",
+      Serial.printf("#BLE,DISCONNECT,count=%lu,conn_id=%u,reason_known=%u,reason=0x%02X,uptime_ms=%lu,free_heap=%lu\n",
                     static_cast<unsigned long>(seen_disconnects),
+                    static_cast<unsigned>(stats.last_disconnect_conn_id),
+                    stats.last_disconnect_reason_known ? 1U : 0U,
+                    static_cast<unsigned>(stats.last_disconnect_reason),
                     static_cast<unsigned long>(stats.last_disconnect_ms),
                     static_cast<unsigned long>(freeHeapBytes()));
     }
