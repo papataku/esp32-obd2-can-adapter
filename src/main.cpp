@@ -73,12 +73,18 @@ void setup() {
       static_cast<unsigned>(rtc_get_reset_reason(0)));
 #endif
   if (!g_ble_ok) {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    m5can::bleEvidenceJournal().appendError(m5can::DiagnosticError::BleInitFailure);
+#endif
     Serial.printf("#WARN,BLE_INIT,%s\n", g_ble.lastError());
   } else {
     Serial.println("#BLE,ADVERTISING,M5CAN-Dial");
   }
 
   if (!g_can.begin()) {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    m5can::bleEvidenceJournal().appendError(m5can::DiagnosticError::CanInitFailed);
+#endif
     Serial.printf("#FATAL,CAN_INIT,%s\n", g_can.lastError());
     g_ui.showFatal("CAN INIT FAIL", g_can.lastError());
     return;
@@ -88,6 +94,8 @@ void setup() {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   if (xTaskCreatePinnedToCore(bleAppTask,"m5can-ble-elm",8192,
           nullptr,4,&g_ble_app_task,M5CAN_DUAL_BLE_APP_CORE)!=pdPASS) {
+    m5can::bleEvidenceJournal().appendError(
+        m5can::DiagnosticError::AppTaskCreateFailed);
     Serial.println("#FATAL,BLE_TASK_CREATE");
     g_ui.showFatal("BLE TASK FAIL","core1 unavailable");
     g_can_ok=false;
@@ -187,6 +195,10 @@ void loop() {
   }
 #endif
   if (!g_can_ok) {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    // Initialisation may fail before normal loop journaling is reached.
+    m5can::bleEvidenceJournal().poll(g_can);
+#endif
     delay(20);
     return;
   }
