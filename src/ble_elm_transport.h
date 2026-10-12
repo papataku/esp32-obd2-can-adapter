@@ -18,6 +18,10 @@ struct BleStats {
   uint32_t disconnect_count = 0;
   uint32_t last_connect_ms = 0;
   uint32_t last_disconnect_ms = 0;
+  uint16_t last_connect_conn_id = 0;
+  uint16_t last_disconnect_conn_id = 0;
+  uint16_t last_disconnect_reason = 0;
+  bool last_disconnect_reason_known = false;
 };
 
 class BleElmTransport {
@@ -38,6 +42,8 @@ class BleElmTransport {
 
   void onConnect();
   void onDisconnect();
+  void onConnectDetails(uint16_t conn_id);
+  void onDisconnectDetails(uint16_t conn_id, uint16_t reason);
   void onWrite(const uint8_t* data, size_t length);
   void restartAdvertising();
   void setError(const char* message);
