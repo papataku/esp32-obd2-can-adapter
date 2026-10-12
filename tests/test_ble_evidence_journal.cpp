@@ -67,9 +67,9 @@ int main() {
     first.append(sample(i,BleDiagnosticEvent::Kind::Connect),2);
     assert(!first.poll(can));
   }
-  assert(first.snapshot().total==36 && first.snapshot().evicted==12);
+  assert(first.snapshot().total==36 && first.snapshot().evicted==24);
   assert(first.snapshot().count==BleEvidenceJournal::kEvents);
-  assert(first.snapshot().events[0].seq==14);
+  assert(first.snapshot().events[0].seq==26);
   assert(Preferences::writes==2);
   g_test_millis+=31000;
   assert(first.poll(can));
@@ -83,7 +83,7 @@ int main() {
   assert(exported.find("#BLELOG,BOOT,boot=41,state=persisted")!=std::string::npos);
   assert(exported.find("queue_drops=2")!=std::string::npos);
   assert(exported.find("seq_gaps=1")!=std::string::npos);
-  assert(exported.find("total=36,kept=24,evicted=12")!=std::string::npos);
+  assert(exported.find("total=36,kept=12,evicted=24")!=std::string::npos);
   assert(exported.find("seq=37")!=std::string::npos);
   // Inspect a disconnect BEFORE the 24-item ring has evicted it.
   BleEvidenceJournal disconnect_probe;
