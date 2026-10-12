@@ -91,7 +91,7 @@ bool Ui::pollDemoToggle() {
   return demo_touch_.onPress(touch.x,touch.y,millis());
 }
 
-void Ui::update(const CanMonitor& can, bool ble_ready,
+void Ui::update(const CanMonitor& can, const BleStats& ble_stats, bool ble_ready,
                 bool ble_connected, bool ble_elm, bool demo_auto,
                 bool demo_active) {
   const uint32_t now = millis();
@@ -160,7 +160,12 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
            static_cast<unsigned long>(stats.driver_rx_overrun),
            static_cast<unsigned long>(stats.driver_bus_error));
 
-  const char* ble = bleText(ble_ready, ble_connected, ble_elm);
+  char ble_status[32]{};
+  std::snprintf(ble_status, sizeof(ble_status), "%s C%lu D%lu",
+                bleText(ble_ready, ble_connected, ble_elm),
+                static_cast<unsigned long>(ble_stats.connect_count),
+                static_cast<unsigned long>(ble_stats.disconnect_count));
+  const char* ble = ble_status;
   const uint16_t ble_color = bleColor(ble_ready, ble_connected, ble_elm);
   if (std::strncmp(cached_ble_, ble, sizeof(cached_ble_)) != 0 ||
       cached_ble_color_ != ble_color) {
