@@ -34,6 +34,14 @@ class DriveLog {
     uint32_t events_added=0;
     Event events[8]{}; // Last eight state/fault events, not per-query writes.
   };
+  // Sidecar preserves the version-2 boot journal ABI and old trip history.
+  struct CoordinatorRecord {
+    uint32_t magic=0x4D35434FU,version=1,sequence=0,uptime_ms=0;
+    uint32_t sampled_ms=0,hits=0,misses=0,joins=0,groups=0,cross=0,singles=0;
+    uint64_t owner_cache_hits=0;
+  };
+  void coordinator(uint32_t hits,uint32_t misses,uint32_t joins,
+                   uint32_t groups,uint32_t cross,uint32_t singles);
   void begin(uint32_t reset_reason,uint32_t rom_reset_reason=0);
   void submitted(const DiagnosticRequest& request);
   void outcome(Kind kind,uint16_t peer,const DiagnosticResult& result,
@@ -50,6 +58,8 @@ class DriveLog {
                 uint32_t responder);
   mutable portMUX_TYPE mux_=portMUX_INITIALIZER_UNLOCKED;
   Record record_{};
+  CoordinatorRecord coordinator_{};
+  bool coordinator_enabled_=false;
   bool enabled_=false,urgent_=false;
   uint32_t last_saved_ms_=0;
 };

@@ -171,6 +171,12 @@ void loop() {
   }
 
   g_serial.emitStats(false);
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  const auto coord_log=g_dual.coordinatorStats();
+  m5can::driveLog().coordinator(coord_log.cache_hits,coord_log.cache_misses,
+      coord_log.joins,coord_log.grouped_submissions,coord_log.cross_group_submissions,
+      coord_log.single_submissions);
+#endif
   m5can::driveLog().poll(g_can,g_ble,g_serial.demoActive());
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   const auto peers=g_ble.peerTraffic();

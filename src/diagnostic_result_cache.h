@@ -10,7 +10,7 @@ namespace m5can {
 
 // CAN-owner-only cache: no lock is necessary because all reads/writes happen
 // on the serialized TWAI task. Only validated, successful read-only
-// transactions are reusable. 100ms is a strict maximum from completion time.
+// transactions are reusable. 100ms is a strict maximum from response reception time.
 class DiagnosticResultCache {
  public:
   static constexpr uint64_t kLifetimeUs = 100000;

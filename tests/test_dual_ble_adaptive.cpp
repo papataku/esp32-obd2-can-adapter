@@ -24,7 +24,7 @@ void feed(DiagnosticTransaction& tx, uint32_t ecu,
           std::initializer_list<uint8_t> payload, bool ff=false) {
   TransactionFrame frame{};
   frame.can_id=ecu; frame.extended=true; frame.dlc=8;
-  frame.timestamp_us=static_cast<uint64_t>(millis())*1000+1;
+  frame.timestamp_us=static_cast<uint64_t>(millis())*1000;
   if (ff) {
     const uint8_t bad[]={0x10,8,0x41,0x0C,0x13,0x88,0x0D,0x50};
     std::memcpy(frame.data,bad,8);
@@ -148,6 +148,8 @@ int main() {
 #endif
   {mode=Ecu::Full;Bench bench;bench.batchBoth();bench.drain();bench.values();
    assert(bench.groups()==1 && requests.size()==2);
+   assert(driveLog().snapshot().grouped==1 && driveLog().snapshot().group_ok==1);
+   assert(driveLog().snapshot().individual==1);
    bench.batchBoth();bench.drain();assert(bench.groups()==2 && requests.size()==4);}
   for(Ecu failure:{Ecu::Partial,Ecu::Negative,Ecu::Silent,Ecu::Split,Ecu::FirstFrame}) {
     mode=failure;Bench bench;bench.batchBoth();bench.drain();bench.values();
@@ -155,6 +157,7 @@ int main() {
     // only speed is retried. All other unsupported cases retry both PIDs.
     const size_t first_count=failure==Ecu::Partial?3U:4U;
     assert(bench.groups()==1 && requests.size()==first_count);
+    assert(driveLog().snapshot().fallback==1);
     bench.batchBoth();bench.drain();bench.values();
     assert(bench.groups()==1 && requests.size()==first_count+3);
   }
@@ -317,6 +320,7 @@ int main() {
    assert(bench.can.pollQueryResult(usb_done));
    bench.drain();bench.values();
    assert(bench.groups()==1 && requests.size()==3);
+  }
   // NVS survives recorder reconstruction; writes are periodic/event-only,
   // ring slots remain bounded and corrupt/truncated entries are rejected.
   {
@@ -364,6 +368,19 @@ int main() {
     DriveLog version_recover;version_recover.begin(1);assert(version_recover.snapshot().sequence==16);
     journal.dump(bench.can,bench.ble,false); // Never deletes older entries.
     assert(Preferences::storage.size()==DriveLog::kSlots);
+  }
+  { // Coordinator metrics persist independently of the v2 trip layout.
+    Bench bench;Preferences::storage.clear();DriveLog journal;
+    g_test_millis=1000;journal.begin(1,21);
+    journal.coordinator(10,20,3,4,2,7);
+    g_test_millis=31000;journal.poll(bench.can,bench.ble,false);
+    DriveLog restarted;restarted.begin(1,21);
+    Preferences nvs;assert(nvs.begin("m5can_trip",true));
+    DriveLog::Record trip{};DriveLog::CoordinatorRecord coord{};
+    assert(nvs.getBytes("trip1",&trip,sizeof(trip))==sizeof(trip));
+    assert(nvs.getBytes("coord1",&coord,sizeof(coord))==sizeof(coord));
+    assert(trip.version==2 && coord.sequence==trip.sequence && coord.uptime_ms==trip.uptime_ms);
+    assert(coord.hits==10 && coord.misses==20 && coord.joins==3 && coord.groups==4 && coord.cross==2 && coord.singles==7);
   }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
 }

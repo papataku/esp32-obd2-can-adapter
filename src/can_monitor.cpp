@@ -167,7 +167,8 @@ void CanMonitor::rxTask() {
               request, static_cast<uint64_t>(esp_timer_get_time()), result);
       if (!from_cache) {
         performQuery(request,result);
-        result.completed_at_us=static_cast<uint64_t>(esp_timer_get_time());
+        if(!result.completed_at_us)
+          result.completed_at_us=static_cast<uint64_t>(esp_timer_get_time());
         result_cache_.remember(request,result,result.completed_at_us);
       }
       // A negative ISO-TP response (7F <service> <NRC>) is still a

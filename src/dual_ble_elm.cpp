@@ -386,6 +386,11 @@ void DualBleElm::onResult() {
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
 #endif
+    driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
+        ? DriveLog::Kind::GroupEnabled
+        : decision==AdaptiveMultiPid::Decision::RetryLegacy
+          ? DriveLog::Kind::GroupFallback : DriveLog::Kind::GroupStopped,
+        s.conn_id,result,responder);
     if (decision==AdaptiveMultiPid::Decision::UseGrouped) {
       // The per-item M5ITEM lines were already emitted when staged.
       // Never rewrite or cross-deliver a peer's batch response.
@@ -394,7 +399,7 @@ void DualBleElm::onResult() {
       s.pending=false;
       other->pending=false;
       if (first_success)
-        Serial.printf("#MULTIPID,enabled,ecu=%08lX\\n",
+        Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
                       static_cast<unsigned long>(responder));
       if (s.batch) {
         ++s.batch_next;
@@ -456,10 +461,10 @@ void DualBleElm::onResult() {
       appendFrame(s,virtual_frames[1]);
       s.batch_next=static_cast<uint8_t>(s.batch_next+2);
       if (first_success)
-        Serial.printf("#MULTIPID,enabled,ecu=%08lX\\n",
+        Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
                       static_cast<unsigned long>(responder));
     } else {
-      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\\n",
+      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\n",
                     static_cast<unsigned>(result.status),
                     static_cast<unsigned long>(responder));
       if (decision==AdaptiveMultiPid::Decision::Stop) {

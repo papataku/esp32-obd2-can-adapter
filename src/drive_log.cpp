@@ -18,6 +18,7 @@ void DriveLog::begin(uint32_t reset_reason,uint32_t rom_reset_reason) {
   uint32_t latest=0;Record previous{};
   for(unsigned slot=0;slot<kSlots;++slot)
     if(load(slot,previous) && previous.sequence>latest) latest=previous.sequence;
+  coordinator_=CoordinatorRecord{};coordinator_enabled_=false;
   record_=Record{};record_.sequence=latest+1;record_.reset_reason=reset_reason;record_.rom_reset_reason=rom_reset_reason;
   std::snprintf(record_.build,sizeof(record_.build),"%s %s",__DATE__,__TIME__);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
@@ -26,6 +27,14 @@ void DriveLog::begin(uint32_t reset_reason,uint32_t rom_reset_reason) {
   enabled_=true;save(millis(),true);
   Serial.printf("#DRIVELOG,boot=%lu,slots=%lu,multipid=%u,save_period_ms=30000\n",
       static_cast<unsigned long>(record_.sequence),static_cast<unsigned long>(kSlots),record_.multipid);
+}
+void DriveLog::coordinator(uint32_t hits,uint32_t misses,uint32_t joins,
+                           uint32_t groups,uint32_t cross,uint32_t singles) {
+  portENTER_CRITICAL(&mux_);
+  coordinator_enabled_=true;coordinator_.sampled_ms=millis();
+  coordinator_.hits=hits;coordinator_.misses=misses;coordinator_.joins=joins;
+  coordinator_.groups=groups;coordinator_.cross=cross;coordinator_.singles=singles;
+  portEXIT_CRITICAL(&mux_);
 }
 DriveLog::Record DriveLog::snapshot() const {
   portENTER_CRITICAL(&mux_);const Record copy=record_;portEXIT_CRITICAL(&mux_);return copy;
@@ -76,11 +85,19 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
   if(!forced && elapsed<30000 && !(urgent && elapsed>=2000))return false;
   if(can && !can->tryBeginLogCheckpoint())return false;
   Record copy=snapshot();copy.uptime_ms=now;++copy.saves;
+  CoordinatorRecord coord{};bool coord_enabled;
+  portENTER_CRITICAL(&mux_);coord=coordinator_;coord_enabled=coordinator_enabled_;portEXIT_CRITICAL(&mux_);
+  coord.sequence=copy.sequence;coord.uptime_ms=now;
   Preferences nvs;char key[12]{};
   std::snprintf(key,sizeof(key),"trip%u",static_cast<unsigned>(copy.sequence%kSlots));
   bool ok=false;
   if(nvs.begin("m5can_trip",false)) {
-    ok=nvs.putBytes(key,&copy,sizeof(copy))==sizeof(copy);nvs.end();
+    ok=nvs.putBytes(key,&copy,sizeof(copy))==sizeof(copy);
+    if(ok && coord_enabled) {
+      std::snprintf(key,sizeof(key),"coord%u",static_cast<unsigned>(copy.sequence%kSlots));
+      ok=nvs.putBytes(key,&coord,sizeof(coord))==sizeof(coord);
+    }
+    nvs.end();
   }
   if(can)can->endLogCheckpoint();
   // Rate-limit failed storage too. RAM evidence stays available on failure.
@@ -108,6 +125,7 @@ void DriveLog::poll(CanMonitor& can,BleElmTransport& ble,bool demo) {
 #endif
   portENTER_CRITICAL(&mux_);
   const bool new_fault=fault && !record_.fault;
+  coordinator_.owner_cache_hits=c.query_cache_hits;
   record_.uptime_ms=millis();record_.can_rx=c.rx_frames;
   record_.tx_attempts=c.tx_attempts;record_.tx_success=c.tx_success;
   record_.queries=c.query_count;record_.timeouts=c.query_timeout;
@@ -135,7 +153,7 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
     Record r{};
     if(seq==current.sequence)r=current;
     else if(!load(seq%kSlots,r) || r.sequence!=seq)continue;
-    Serial.printf("#DRIVELOG,boot=%lu,reset=%lu,rom_reset=%lu,build=%s,multipid=%u,uptime_ms=%lu,saves=%lu,grouped=%lu,individual=%lu,group_ok=%lu,fallback=%lu,stopped=%lu,disconnects=%lu,demo=%u,clients=%u,peers=%04X/%04X,fault=%u,lease_ms=%lu\n",
+    Serial.printf("#DRIVELOG,boot=%lu,reset=%lu,rom_reset=%lu,build=%s,multipid=%u,uptime_ms=%lu,saves=%lu,grouped_submissions=%lu,individual_submissions=%lu,group_ok=%lu,fallback=%lu,stopped=%lu,disconnects=%lu,demo=%u,clients=%u,peers=%04X/%04X,fault=%u,lease_ms=%lu\n",
       static_cast<unsigned long>(r.sequence),static_cast<unsigned long>(r.reset_reason),static_cast<unsigned long>(r.rom_reset_reason),r.build,r.multipid,
       static_cast<unsigned long>(r.uptime_ms),static_cast<unsigned long>(r.saves),
       static_cast<unsigned long>(r.grouped),static_cast<unsigned long>(r.individual),static_cast<unsigned long>(r.group_ok),
@@ -153,6 +171,28 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
     Serial.printf("#DRIVELOG,MEMORY,boot=%lu,can_stack_free_bytes=%lu,ble_stack_free_bytes=%lu,heap_min=%lu,largest_heap=%lu\n",
       static_cast<unsigned long>(r.sequence),static_cast<unsigned long>(r.can_stack_free),
       static_cast<unsigned long>(r.ble_stack_free),static_cast<unsigned long>(r.heap_min),static_cast<unsigned long>(r.largest_heap));
+    CoordinatorRecord coord{};bool loaded=false;
+    if(seq==current.sequence) {
+      portENTER_CRITICAL(&mux_);coord=coordinator_;loaded=coordinator_enabled_;portEXIT_CRITICAL(&mux_);
+      coord.sequence=seq;coord.uptime_ms=current.uptime_ms;
+    } else {
+      Preferences nvs;char key[12]{};
+      std::snprintf(key,sizeof(key),"coord%u",static_cast<unsigned>(seq%kSlots));
+      if(nvs.begin("m5can_trip",true)) {
+        loaded=nvs.getBytesLength(key)==sizeof(coord) &&
+            nvs.getBytes(key,&coord,sizeof(coord))==sizeof(coord);
+        nvs.end();
+      }
+    }
+    if(loaded && coord.magic==0x4D35434FU && coord.version==1 &&
+        coord.sequence==seq && coord.uptime_ms==r.uptime_ms) {
+      Serial.printf("#DRIVELOG,COORD,boot=%lu,sampled_ms=%lu,cache_hits=%lu,cache_lookup_misses=%lu,joins=%lu,grouped_submissions=%lu,cross_group_submissions=%lu,single_submissions=%lu,owner_cache_hits=%llu\n",
+        static_cast<unsigned long>(seq),static_cast<unsigned long>(coord.sampled_ms),
+        static_cast<unsigned long>(coord.hits),static_cast<unsigned long>(coord.misses),
+        static_cast<unsigned long>(coord.joins),static_cast<unsigned long>(coord.groups),
+        static_cast<unsigned long>(coord.cross),static_cast<unsigned long>(coord.singles),
+        static_cast<unsigned long long>(coord.owner_cache_hits));
+    }
     for(unsigned i=0;i<r.event_count;++i) {
       const auto& e=r.events[i];Serial.printf("#DRIVELOG,EVENT,boot=%lu,ms=%lu,kind=%u,peer=%u,status=%u,ecu=%08lX,responses=%u,raw_count=%u,transaction_us=%lu,first_response_us=%lu\n",
         static_cast<unsigned long>(r.sequence),static_cast<unsigned long>(e.uptime_ms),e.kind,e.peer,e.status,static_cast<unsigned long>(e.responder),e.responses,e.raw_count,

@@ -50,3 +50,18 @@ USB trial). The query reservation prevents flash IO overlapping our diagnostic
 transaction; it does not establish that high-volume ambient CAN reception is
 unaffected. Driver drop/error counters are retained for that assessment. Schema
 version 2 includes the ROM reset reason; incompatible records are rejected.
+
+## Issue18 coordinator integration
+
+Trip records retain schema 2, so existing trip history stays readable. A bounded
+sidecar in the same namespace stores cache hit/lookup-miss counts, same-PID joins,
+group/single coordinator submissions, cross-peer groups and CAN-owner cache hits.
+It is matched by boot sequence and checkpoint uptime; mismatched/partial sidecars
+are ignored. Sidecar storage errors are reported just like trip writes.
+
+`#DRIVELOG,COORD` is emitted for matching recorded counters. Submissions are
+accepted CAN-owner API work, not physical transmissions. Physical TX is only the
+separate CAN `tx` counter. Cache misses count lookup attempts, not unique intents.
+Cross-peer grouped outcomes retain the same original RX samples and fallback
+records as same-peer groups. The two NVS blobs are individually atomic, not a
+transactional pair; trip history remains readable if the sidecar is interrupted.
