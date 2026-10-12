@@ -82,6 +82,22 @@ def run_analysis(capture, ipad_jsonl, database=None):
         result['sqlite_integrity']=c.execute('pragma integrity_check').fetchone()[0]
         result['command_counts']=c.execute('select count(*),sum(success) from commands').fetchone()
         result['session_states']=c.execute('select status,git_commit,tool_version from sessions').fetchall()
+        notifications=[(stamp(ts),size) for ts,size in c.execute(
+            'select ts_utc,length(payload) from raw_capture where layer="BLE" order by id')
+            if lo<=stamp(ts)<hi]
+        windows=[]
+        if start and end:
+            for offset in range(0,int(hi-lo)-59,60):
+                rows=[size for ts,size in notifications if lo+offset<=ts<lo+offset+60]
+                windows.append({'offset_s':offset,'notifications_per_s':round(len(rows)/60,3),
+                                'bytes_per_s':round(sum(rows)/60,3)})
+        result['ipad_received_load']={'full_60s_windows':windows,
+            'historical_pre_disconnect_max_notify_per_s':round(4955/60,3),
+            'historical_pre_disconnect_max_bytes_per_s':round(95593/60,3),
+            'all_full_windows_meet_historical_max':bool(windows) and all(
+                w['notifications_per_s']>=4955/60 and w['bytes_per_s']>=95593/60 for w in windows),
+            'limit':'Notification receive rate only; does not establish CAN wait, CPU, storage or UI equivalence.'}
+
     if host:
         result['host_coverage_utc']=[host[0]['utc'],host[-1]['utc']]
         result['full_host_coverage']=bool(start and end and stamp(host[0]['utc'])<=lo and stamp(host[-1]['utc'])>=hi)

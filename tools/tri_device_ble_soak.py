@@ -82,6 +82,7 @@ def capture(args):
             launch=['xcrun','devicectl','device','process','launch','--device',args.ipad_device,
                     '--terminate-existing','com.papataku.HondaAnalyzer','--ble-soak',
                     '--soak-scenario',args.ipad_scenario,'--soak-seconds',str(args.ipad_seconds),
+                    '--soak-delay-ms',str(args.ipad_delay_ms),'--soak-positive-repeats',str(args.ipad_positive_repeats),
                     '--soak-run-id',output.name,'--timeout','15','--json-output',str(output/'ipad-launch.json')]
             completed=subprocess.run(launch,capture_output=True,text=True,timeout=20)
             (output/'ipad-launch.log').write_text(completed.stdout+completed.stderr)
@@ -150,6 +151,7 @@ def analyze(rows):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ['adapter','ring','output']:p.add_argument('--'+name,required=True)
+    p.add_argument('--ipad-delay-ms',type=float,default=200);p.add_argument('--ipad-positive-repeats',type=int,default=1)
     p.add_argument('--ipad-device');p.add_argument('--ipad-scenario',choices=['idle','single','batch','no-data','faults'],default='batch');p.add_argument('--ipad-seconds',type=float,default=1800)
     p.add_argument('--jc');p.add_argument('--seconds',type=float,default=60)
     p.add_argument('--scenario',default='smoke');p.add_argument('--fw-sha',default='unknown');p.add_argument('--app-sha',default='unknown')
