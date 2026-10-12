@@ -375,7 +375,6 @@ void DualBleElm::onResult() {
     const DiagnosticRequest& rpm=s_rpm?s.request:other->request;
     const DiagnosticRequest& speed=s_rpm?other->request:s.request;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
         !pid_cache_.rememberApprovedPair(
             rpm,speed,virtual_frames,acquired_us)) {
@@ -435,6 +434,7 @@ void DualBleElm::onResult() {
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
     const DiagnosticRequest rpm=requestOf(s.items[s.batch_next],s.elm);
     const DiagnosticRequest speed=requestOf(s.items[s.batch_next+1],s.elm);
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
         !pid_cache_.rememberApprovedPair(
             rpm,speed,virtual_frames,acquired_us)) {
