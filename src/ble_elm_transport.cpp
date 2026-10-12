@@ -578,6 +578,21 @@ static bool notifyCredit(uint16_t id,uint16_t& pending) {
 #endif
 }
 
+bool BleElmTransport::responseReady(uint16_t id,uint32_t gen) const {
+#if defined(M5CAN_SYNC_NOTIFY_DIAGNOSTIC)
+  return isClientConnected(id,gen);
+#else
+  bool ready=false;
+  portENTER_CRITICAL(&mux_);
+  for(const auto& peer:clients_)
+    if(peer.active && !peer.tx_aborted && peer.connection_id==id && peer.generation==gen)
+      // Leave room for one maximum 48-frame RAW result plus session output.
+      ready=peer.pending_size<=1024;
+  portEXIT_CRITICAL(&mux_);
+  return ready;
+#endif
+}
+
 size_t BleElmTransport::queueTo(uint16_t id,uint32_t gen,
                                 const uint8_t* data,size_t length) {
 #if defined(M5CAN_SYNC_NOTIFY_DIAGNOSTIC)

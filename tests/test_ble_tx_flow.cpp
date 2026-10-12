@@ -71,12 +71,14 @@ int main() {
   uint8_t wrap[3000];for(unsigned n=0;n<sizeof(wrap);++n)wrap[n]=n%251;
   for(unsigned run=0;run<3;++run) {
     assert(ble.queueTo(7,fresh,wrap,sizeof(wrap))==sizeof(wrap));
+    assert(!ble.responseReady(7,fresh));
     test_notifications.clear();
     for(unsigned n=0;n<150;++n)ble.pollTx();
     offset=0;
     for(const auto& item:test_notifications)if(item.conn==7)
       for(auto byte:item.data)assert(byte==wrap[offset++]);
     assert(offset==sizeof(wrap));
+    assert(ble.responseReady(7,fresh));
   }
   test_notifications.clear();
   // Capacity rejection is atomic and quarantines the session before async GAP.

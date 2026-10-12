@@ -163,6 +163,8 @@ DiagnosticRequest DualBleElm::requestOf(const ElmVehicleRequest& item,
 
 void DualBleElm::advanceBatch(Session& s) {
   while (s.active && s.batch && s.batch_next < s.batch_count) {
+    flush(s);
+    if(!ble_.responseReady(s.conn_id,s.generation))return;
     const ElmVehicleRequest& item=s.items[s.batch_next];
     // Probe ONLY in the separately opted-in grouped CAN build (never in DEMO).
     // A failed probe disables this exact functional PID pair until reboot.
@@ -618,7 +620,8 @@ void DualBleElm::dispatch() {
     const int i=(round_robin_+scan)%2;
     Session& s=sessions_[i];
     if (!s.active || !s.pending ||
-        !ble_.isClientConnected(s.conn_id,s.generation)) continue;
+        !ble_.isClientConnected(s.conn_id,s.generation) ||
+        !ble_.responseReady(s.conn_id,s.generation)) continue;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     if (can_.faultLocked()) {
       ble_.recordDiagnosticError(s.conn_id,s.generation,
@@ -682,7 +685,8 @@ void DualBleElm::dispatch() {
     Session& peer=sessions_[j];
     const bool other_pending=peer.active && peer.pending &&
         !peer.multi_pid_pair &&
-        ble_.isClientConnected(peer.conn_id,peer.generation);
+        ble_.isClientConnected(peer.conn_id,peer.generation) &&
+        ble_.responseReady(peer.conn_id,peer.generation);
     const DiagnosticRequest* other=
         other_pending && !s.multi_pid_pair &&
         !pid_cache_.hasFresh(peer.request,now_us) ? &peer.request : nullptr;
@@ -749,6 +753,8 @@ void DualBleElm::poll() {
   for(int i=0;i<512 && ble_.pollClientEvent(event_item);++i)
     event(event_item);
   onResult();
+  for(auto& s:sessions_)
+    if(s.active && s.batch && !s.pending)advanceBatch(s);
   dispatch();
   ble_.pollTx();
 }

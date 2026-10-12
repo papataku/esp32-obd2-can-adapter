@@ -15,7 +15,7 @@ using namespace m5can;
 namespace {
 enum class Ecu { Full, Partial, Negative, Silent, Split, FirstFrame, Foreign,
                  Lease, BusOff, Driver, MultiAgree, MultiConflict, MultiPartial,
-                 PinnedOther };
+                 PinnedOther, LongRaw };
 Ecu mode=Ecu::Full;
 bool demo=false, hold=false, ready=false;
 DiagnosticRequest queued{};
@@ -566,4 +566,25 @@ int main() {
     assert(coord.hits==10 && coord.misses==20 && coord.joins==3 && coord.groups==4 && coord.cross==2 && coord.singles==7);
   }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
+  // A maximum RAW-result batch is streamed while the second peer keeps moving.
+  // Repeated frames are synthetic output-volume fixtures, not physical CAN.
+  {mode=Ecu::LongRaw;Bench bench;
+   write(bench.a,"ATM5B00:0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105");
+   for(unsigned n=0;n<2400;++n) {
+     if(n%20==0)write(bench.b,"010D");
+     bench.dual.poll();g_test_millis+=1;
+   }
+   bench.flushTx();
+   assert(output(7).find("M5DONE\r>")!=std::string::npos);
+   assert(output(19).find("41 0D 50")!=std::string::npos);
+   size_t items=0,pos=0;const auto stream=output(7);
+   while((pos=stream.find("M5ITEM:00:0105",pos))!=std::string::npos){++items;++pos;}
+   assert(items==16);
+   size_t frames=0;pos=0;
+   while((pos=stream.find("18DAF101 03 41 05 50",pos))!=std::string::npos){++frames;++pos;}
+   assert(frames==16*kDiagnosticMaxRawFrames);
+   assert(bench.ble.stats().notify_failures==0);
+   assert(bench.ble.stats().tx_queue_overflows==0);
+  }
+
 }
