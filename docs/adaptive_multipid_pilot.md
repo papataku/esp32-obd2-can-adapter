@@ -1,4 +1,4 @@
-# Adaptive multi-PID fallback pilot (draft; dual-BLE experimental only)
+# Adaptive multi-PID fallback pilot (explicit experimental build only)
 
 ## Why
 The `ATM5B00` command currently saves BLE command overhead, but normally sends
@@ -6,7 +6,10 @@ separate serialized CAN requests for each Mode 01 PID. ECU support for grouping
 may vary, and no in-vehicle support has been demonstrated for the Honda RP8.
 
 ## Conservative scope
-- Only `m5dial_dual_ble_bench` and `m5dial_dual_ble_mtu_bench` may probe.
+- Only `m5dial_dual_ble_multipid_bench`, with
+  `M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1`, may probe. Existing normal,
+  dual 20-byte, MTU247 and mode-switch dry-run profiles retain individual CAN
+  requests. This opt-in isolates the unqualified CAN pilot from stable users.
 - Only *adjacent* `010C,010D` (RPM then speed) inside `ATM5B00`,
   same functional CAN request ID `18DB33F1`. All other items are unchanged.
 - Never probe in synthetic DEMO mode; normal `m5dial` image is unchanged.

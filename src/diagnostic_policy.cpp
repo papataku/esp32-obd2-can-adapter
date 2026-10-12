@@ -11,7 +11,7 @@ bool DiagnosticPolicy::allowedHeader(uint32_t can_id) {
 
 bool DiagnosticPolicy::allowedReadRequest(const DiagnosticRequest& request) {
   if (!allowedHeader(request.can_id)) return false;
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   // Opt-in, exact read-only two-PID pilot. No arbitrary Mode01 payloads.
   if (request.can_id == 0x18DB33F1U &&
       request.length == 3 && request.data[0] == 0x01 &&
@@ -51,7 +51,7 @@ bool DiagnosticPolicy::responseMatches(const DiagnosticRequest& request,
   if (payload[0] == 0x7F) {
     return payload_len >= 2 && payload[1] == service;
   }
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   if (service == 0x01 && request.length == 3 &&
       request.can_id == 0x18DB33F1U &&
       request.data[1] == 0x0C && request.data[2] == 0x0D) {

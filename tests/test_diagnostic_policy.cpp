@@ -54,7 +54,7 @@ int main() {
   assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DBEFF1U, {0x31,0x01})));
   assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DB33F1U, {0x01})));
   assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DB33F1U, {0x01,0x0C,0x00})));
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   assert(DiagnosticPolicy::allowedReadRequest(request(0x18DB33F1U, {0x01,0x0C,0x0D})));
   assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DBEFF1U, {0x01,0x0C,0x0D})));
   assert(!DiagnosticPolicy::allowedReadRequest(request(0x18DB33F1U, {0x01,0x0C,0x05})));

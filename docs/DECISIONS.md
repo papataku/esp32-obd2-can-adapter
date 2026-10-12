@@ -212,3 +212,12 @@ as actual RAW CAN frame evidence.
 **Follow-up:** Only expand beyond RPM+speed after controlled ECU replay/bench
 results. Multiple UDS DIDs require separately verified record boundaries.
 See [adaptive_multipid_pilot.md](adaptive_multipid_pilot.md).
+
+## D020 - Grouped CAN pilot requires a separate build opt-in
+
+The PR15 host scheduler tests and USB DEMO checks cannot qualify physical CAN
+behavior. Keep the exact grouped read allowlist behind
+`M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL` in the separate
+`m5dial_dual_ble_multipid_bench` profile. Existing dual-client stable profiles
+continue individual queries. Merge the tested implementation without advancing
+the physical CAN or vehicle acceptance gate; those remain pending.

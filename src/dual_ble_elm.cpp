@@ -146,9 +146,10 @@ DiagnosticRequest DualBleElm::requestOf(const ElmVehicleRequest& item,
 void DualBleElm::advanceBatch(Session& s) {
   while (s.active && s.batch && s.batch_next < s.batch_count) {
     const ElmVehicleRequest& item=s.items[s.batch_next];
-    // Probe ONLY in the opt-in dual-client CAN build (never in DEMO).
+    // Probe ONLY in the separately opted-in grouped CAN build (never in DEMO).
     // A failed probe disables this exact functional PID pair until reboot.
     // Two BLE clients share one decision and still share one CAN owner.
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     if (!demo_source_.demoActive() &&
         s.batch_next + 1 < s.batch_count) {
       const DiagnosticRequest first=requestOf(item,s.elm);
@@ -165,6 +166,7 @@ void DualBleElm::advanceBatch(Session& s) {
         }
       }
     }
+#endif
     char label[32]{};
     if (item.length==3 && item.data[0]==0x22)
       std::snprintf(label,sizeof(label),"M5ITEM:01:%02X%02X",
