@@ -17,6 +17,10 @@ class DriveLog {
     uint8_t kind=0, status=0, responses=0, raw_count=0;
     DiagnosticRawFrame raw[2]{};
   };
+  // The version-2 journal stores DiagnosticRawFrame in its Event ABI.
+  // New RX metadata must never change the size of these legacy records.
+  static_assert(sizeof(DiagnosticRawFrame)==16,
+                "legacy NVS RAW size must not change");
   struct Record {
     uint32_t magic=kMagic,version=kVersion,size=sizeof(Record),sequence=0;
     uint32_t reset_reason=0,rom_reset_reason=0,uptime_ms=0,saves=0;
@@ -34,6 +38,8 @@ class DriveLog {
     uint32_t events_added=0;
     Event events[8]{}; // Last eight state/fault events, not per-query writes.
   };
+  static_assert(sizeof(Event)==56,
+                "legacy NVS event ABI must remain readable");
   // Sidecar preserves the version-2 boot journal ABI and old trip history.
   struct CoordinatorRecord {
     uint32_t magic=0x4D35434FU,version=1,sequence=0,uptime_ms=0;
