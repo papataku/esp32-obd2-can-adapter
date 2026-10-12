@@ -223,5 +223,26 @@ int main() {
    assert(output(7).empty());
    assert(output(19).find("M5DONE\r>")!=std::string::npos);
   }
+  // A joined secondary peer can disconnect and reuse the same connection
+  // ID with a different generation. It must NOT receive the old coolant
+  // result as its newly requested vehicle-speed result.
+  {mode=Ecu::Full;Bench bench;hold=true;
+   write(bench.a,"ATM5B00:0105,010D");
+   write(bench.b,"ATM5B00:0105,010D");
+   bench.dual.poll();assert(requests.size()==1);
+   NimBLEServer::callbacks->onDisconnect(
+       NimBLEDevice::createServer(),&bench.b);
+   bench.dual.poll();
+   NimBLEServer::callbacks->onConnect(
+       NimBLEDevice::createServer(),&bench.b);
+   bench.dual.poll();
+   test_notifications.clear();
+   write(bench.b,"ATM5B00:010D,0105");
+   bench.dual.poll();hold=false;bench.drain();
+   const auto fresh=output(19);
+   assert(fresh.find("M5ITEM:00:010D")!=std::string::npos);
+   assert(fresh.find("18DAF101 03 41 0D 50")!=std::string::npos);
+   assert(fresh.find("M5DONE\r>")!=std::string::npos);
+  }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
 }
