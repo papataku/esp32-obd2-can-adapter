@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "diagnostic_policy.h"
 
 namespace m5can {
 // Stable event category/code ABI for exported BLELOG records.
@@ -14,6 +15,7 @@ enum class DiagnosticError : uint16_t {
   CanNoData=201, CanBusy=202, CanLeaseRequired=203,
   CanInvalidRequest=204, CanRateLimited=205, CanDriverError=206,
   CanBusOff=207, CanModeError=208, CanIsoTpError=209,
+  CanUnknownStatus=299,
   GroupRejected=301, GroupStopped=302, GroupPeerGone=303,
   ElmBusy=401, ElmInputOverflow=402, ElmInvalidCommand=403,
   AppPeerGone=404,
@@ -25,6 +27,24 @@ enum class DiagnosticError : uint16_t {
   BleSessionRejectCounter=523, BleNotifyRetryCounter=524,
   JournalStorageFailure=901
 };
+// Exhaustively translate the CAN owner's result status to journal codes.
+// No implicit enum-order arithmetic; adding a new DiagnosticStatus must be
+// accompanied by a catalog/test update to prevent silent misclassification.
+inline uint16_t diagnosticStatusErrorCode(DiagnosticStatus status) {
+  switch(status) {
+    case DiagnosticStatus::Ok:return 0;
+    case DiagnosticStatus::NoData:return 201;
+    case DiagnosticStatus::Busy:return 202;
+    case DiagnosticStatus::LeaseRequired:return 203;
+    case DiagnosticStatus::InvalidRequest:return 204;
+    case DiagnosticStatus::RateLimited:return 205;
+    case DiagnosticStatus::DriverError:return 206;
+    case DiagnosticStatus::BusOff:return 207;
+    case DiagnosticStatus::ModeError:return 208;
+    case DiagnosticStatus::IsoTpError:return 209;
+  }
+  return 299;
+}
 inline const char* diagnosticErrorName(uint16_t raw) {
   switch(static_cast<DiagnosticError>(raw)) {
     case DiagnosticError::BleNoClientSlot:return "BLE_NO_SLOT";
@@ -42,6 +62,7 @@ inline const char* diagnosticErrorName(uint16_t raw) {
     case DiagnosticError::CanBusOff:return "CAN_BUS_OFF";
     case DiagnosticError::CanModeError:return "CAN_MODE_FAILURE";
     case DiagnosticError::CanIsoTpError:return "ISOTP_FAILURE";
+    case DiagnosticError::CanUnknownStatus:return "CAN_UNKNOWN_STATUS";
     case DiagnosticError::GroupRejected:return "PID_GROUP_REJECTED";
     case DiagnosticError::GroupStopped:return "PID_GROUP_STOPPED";
     case DiagnosticError::GroupPeerGone:return "PID_GROUP_PEER_GONE";
