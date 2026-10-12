@@ -47,7 +47,7 @@ def run_analysis(capture, ipad_jsonl, database=None):
     hi=stamp(end['utc']) if end else float('inf')
     selected=[r for r in host if lo<=stamp(r['utc'])<=hi]
     fields=lambda line:dict(re.findall(r'([A-Za-z0-9_]+)=([^,\s]+)',line))
-    disconnects=[];reboots=[];signal_rows={};peer_start={};peer_end={}
+    disconnects=[];reboots=[];signal_rows={};peer_start={};peer_end={};malformed_signals=0;malformed_peers=0
     for r in selected:
         line=r['line'];d=fields(line)
         if '#BLE_EVENT,' in line and d.get('kind')=='DISCONNECT':
@@ -55,9 +55,11 @@ def run_analysis(capture, ipad_jsonl, database=None):
         if 'ESP-ROM:' in line:reboots.append({'utc':r['utc'],'device':r['device']})
         if '#BLE_PEER,' in line:
             key=(d.get('id'),d.get('gen'))
-            if d.get('up')=='1' and 'rx_bytes' in d and 'tx_bytes' in d:
+            if d.get('up')=='1' and {'rx_bytes','tx_bytes'}<=d.keys() and all(d[k].isdigit() for k in ['rx_bytes','tx_bytes']):
                 peer_start.setdefault(key,(r,d));peer_end[key]=(r,d)
-        if 'M5CAN SIGNAL' in line and {'id','updates','age_ms','quality'}<=d.keys():
+        if 'M5CAN SIGNAL' in line:
+            if not {'id','updates','age_ms','quality'}<=d.keys() or not all(d[k].isdigit() for k in ['id','updates','age_ms','quality']):
+                malformed_signals+=1;continue
             signal_rows.setdefault(r['device']+':'+d['id'],[]).append((r,d))
     traffic=[]
     for key,(last,d) in peer_end.items():
@@ -74,7 +76,7 @@ def run_analysis(capture, ipad_jsonl, database=None):
         if m:latencies.append(float(m[1]))
     latencies.sort()
     percentile=lambda q:latencies[min(len(latencies)-1,int((len(latencies)-1)*q))] if latencies else None
-    result={'app_complete':bool(end),'app_failures':failures,'samples':len(samples),'duration_from_demo_s':round(hi-lo,3) if start and end else None,'latency_ms':{'p50':percentile(.5),'p95':percentile(.95),'p99':percentile(.99),'max':max(latencies) if latencies else None},'disconnects_during_app':disconnects,'reboots_during_app':reboots,'signals':rates,'peer_traffic':traffic,'missing':'Capture coverage and all-peer mapping must be checked before physical PASS; receipt timestamps are not exact controller callback clocks.'}
+    result={'app_complete':bool(end),'app_failures':failures,'samples':len(samples),'duration_from_demo_s':round(hi-lo,3) if start and end else None,'latency_ms':{'p50':percentile(.5),'p95':percentile(.95),'p99':percentile(.99),'max':max(latencies) if latencies else None},'disconnects_during_app':disconnects,'reboots_during_app':reboots,'signals':rates,'peer_traffic':traffic,'malformed_signal_rows':malformed_signals,'missing':'Capture coverage and all-peer mapping must be checked before physical PASS; receipt timestamps are not exact controller callback clocks.'}
     if database:
         c=sqlite3.connect('file:'+str(Path(database).resolve())+'?mode=ro',uri=True)
         result['sqlite_integrity']=c.execute('pragma integrity_check').fetchone()[0]

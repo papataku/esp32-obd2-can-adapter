@@ -25,12 +25,14 @@ class EvidenceWindow(unittest.TestCase):
   analyzer=importlib.util.module_from_spec(spec);spec.loader.exec_module(analyzer)
   with tempfile.TemporaryDirectory() as directory:
    p=Path(directory)
-   (p/'mac_events.jsonl').write_text(json.dumps({'utc':'2026-10-12T00:00:02Z','device':'ring','line':'M5CAN SIGNAL id=0 updates=9 age_ms=30 quality=1'})+'\n')
+   rows=[{'utc':'2026-10-12T00:00:02Z','device':'ring','line':'M5CAN SIGNAL id=0 updates=9 age_ms=30 quality=1'}, {'utc':'2026-10-12T00:00:03Z','device':'ring','line':'M5CAN SIGNAL id=0 updates=10 age_ms=ms=253 quality=1'}]
+   (p/'mac_events.jsonl').write_text('\n'.join(json.dumps(x) for x in rows)+'\n')
    app=[{'utc':'2026-10-12T00:00:00Z','kind':'DEMO_VERIFIED','note':'MODE=DEMO'}, {'utc':'2026-10-12T00:00:01Z','kind':'SAMPLE','note':'latency_ms=60'}, {'utc':'2026-10-12T00:00:30Z','kind':'SOAK_END','note':'failed=false'}]
    (p/'app.jsonl').write_text('\n'.join(json.dumps(x) for x in app))
    result=analyzer.run_analysis(p,p/'app.jsonl')
    self.assertTrue(result['app_complete'])
    self.assertEqual(result['samples'],1)
+   self.assertEqual(result['malformed_signal_rows'],1)
    self.assertEqual(result['latency_ms']['p95'],60)
    self.assertIsNone(result['signals']['ring:0']['actual_hz'])
    self.assertFalse(result['full_host_coverage'])
