@@ -79,9 +79,12 @@ class DualBleElm {
 
   AdaptiveMultiPid adaptive_multi_pid_{};
   // Shared across both BLE sessions, independent of the CAN grouping policy.
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   DiagnosticPidCache pid_cache_{};
-  // Avoid allocating a multi-KiB DiagnosticResult on the BLE task stack.
+  // Cache and its large output buffer do not consume RAM in the stable
+  // dual-BLE profile; only the experimental grouped image owns them.
   DiagnosticResult cache_workspace_{};
+#endif
   // Separately retained return buffer for the physical CAN transaction.
   // Never reserve the ~1.7 KiB DiagnosticResult on the BLE worker stack.
   DiagnosticResult query_result_workspace_{};
