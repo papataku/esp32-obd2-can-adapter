@@ -98,6 +98,34 @@ int main() {
   assert(!bounded.lookup(read(0x9A),t+1,out));
   assert(bounded.lookup(read(0x5B),t+1000000,out));
 
+  // A spoofed/truncated raw Single Frame with a valid-looking decoded
+  // message must not enter the cache.
+  {
+    DiagnosticPidCache raw_checked;
+    auto bad=reply(0x0D,70);
+    bad.raw_frames[0].data[3]=90;
+    assert(!raw_checked.rememberSingle(speed,bad,t));
+    assert(!raw_checked.lookup(speed,t+1,out));
+    bad=reply(0x0D,70);
+    bad.raw_frames[0].data[0]=2;
+    assert(!raw_checked.rememberSingle(speed,bad,t));
+    assert(!raw_checked.lookup(speed,t+1,out));
+  }
+
+  // A grouped reply can be complete yet incompatible with the ECU
+  // previously observed for one PID. Either BOTH entries are updated,
+  // or neither is: no partial mutation of RPM.
+  {
+    DiagnosticPidCache atomic;
+    assert(atomic.rememberSingle(speed,reply(0x0D,50),t));
+    frames[1].can_id=0x18DAF102U;
+    frames[0].can_id=0x18DAF102U;
+    assert(!atomic.rememberApprovedPair(rpm,speed,frames,t+1000));
+    assert(!atomic.lookup(rpm,t+1001,out));
+    assert(!atomic.lookup(speed,t+1001,out));
+    frames[0].can_id=frames[1].can_id=0x18DAF101U;
+  }
+
   // Functional CAN addressing alone does not permit silently changing
   // which ECU owns a value between cache refreshes.
   DiagnosticPidCache ecu_cache;
