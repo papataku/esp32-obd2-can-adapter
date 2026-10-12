@@ -450,7 +450,9 @@ void DualBleElm::onResult() {
       ble_.recordDiagnosticError(s.conn_id,s.generation,
           static_cast<uint16_t>(decision==AdaptiveMultiPid::Decision::Stop ?
               DiagnosticError::GroupStopped:DiagnosticError::GroupRejected),
-          static_cast<uint32_t>(result.status));
+          (static_cast<uint32_t>(result.status)<<16) |
+          (static_cast<uint32_t>(result.response_count)<<8) |
+          static_cast<uint32_t>(result.raw_frame_count));
     driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
         ? DriveLog::Kind::GroupEnabled
         : decision==AdaptiveMultiPid::Decision::RetryLegacy
@@ -521,7 +523,9 @@ void DualBleElm::onResult() {
       ble_.recordDiagnosticError(s.conn_id,s.generation,
           static_cast<uint16_t>(decision==AdaptiveMultiPid::Decision::Stop ?
               DiagnosticError::GroupStopped:DiagnosticError::GroupRejected),
-          static_cast<uint32_t>(result.status));
+          (static_cast<uint32_t>(result.status)<<16) |
+          (static_cast<uint32_t>(result.response_count)<<8) |
+          static_cast<uint32_t>(result.raw_frame_count));
     driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
         ? DriveLog::Kind::GroupEnabled
         : decision==AdaptiveMultiPid::Decision::RetryLegacy
