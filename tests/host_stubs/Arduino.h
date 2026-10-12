@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstdarg>
+#include <string>
 using TickType_t=uint32_t;
 using QueueHandle_t=void*;
 using TaskHandle_t=void*;
@@ -32,9 +34,21 @@ inline const char* pcTaskGetName(TaskHandle_t){return "host-test";}
 inline unsigned uxTaskPriorityGet(TaskHandle_t){return 4;}
 inline unsigned uxTaskGetStackHighWaterMark(TaskHandle_t){return 4096;}
 struct SerialStub {
+  inline static bool capture=false;
+  inline static std::string captured{};
   void begin(uint32_t){}
-  int printf(const char*,...){return 0;}
-  void println(const char*){}
+  int printf(const char* fmt,...) {
+    if(!capture) return 0;
+    char buffer[512]{};
+    va_list args;va_start(args,fmt);
+    const int written=std::vsnprintf(buffer,sizeof(buffer),fmt,args);
+    va_end(args);
+    if(written>0)captured.append(buffer);
+    return written;
+  }
+  void println(const char* line) {
+    if(capture) {captured+=line;captured+='\n';}
+  }
   size_t write(const uint8_t*,size_t n){return n;}
   void flush(){}
   int available(){return 0;}
