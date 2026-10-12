@@ -68,8 +68,7 @@ class DiagnosticPidCache {
                       const DiagnosticResult& result,
                       uint64_t completed_us) {
     if (!trackable(request) || result.status != DiagnosticStatus::Ok ||
-        result.response_count != 1 || !result.raw_frame_count ||
-        result.raw_frame_count > kMaxCachedRawFrames) {
+        result.response_count != 1 || result.raw_frame_count != 1) {
       invalidate(request);
       return false;
     }
@@ -79,11 +78,16 @@ class DiagnosticPidCache {
       return false;
     }
     // The cached reply must correspond exclusively to this ECU.
-    for (uint8_t i = 0; i < result.raw_frame_count; ++i) {
-      if (result.raw_frames[i].can_id != message.can_id) {
-        invalidate(request);
-        return false;
-      }
+    // All admitted Mode01 PIDs fit in one Classical CAN Single Frame.
+    // Validate the REAL SF payload against the decoded message, not just
+    // its arbitration ID; never cache a parser/transport-inconsistent value.
+    const auto& frame=result.raw_frames[0];
+    if (frame.can_id!=message.can_id ||
+        frame.dlc<message.length+1U ||
+        frame.data[0]!=message.length ||
+        std::memcmp(&frame.data[1],message.data,message.length)!=0) {
+      invalidate(request);
+      return false;
     }
     return put(request, message, result.raw_frames,
                result.raw_frame_count, completed_us);
@@ -115,7 +119,17 @@ class DiagnosticPidCache {
         !validMessage(rpm, messages[0]) ||
         !validMessage(speed, messages[1]))
       return false;
-    // Both entries are already proven, independently retrievable samples.
+    // Ensure atomic semantics across the pair: never write RPM and then
+    // discover that speed belongs to a different previously learned ECU.
+    const Entry* old_rpm=find(rpm);
+    const Entry* old_speed=find(speed);
+    const uint32_t ecu=messages[0].can_id;
+    if ((old_rpm && old_rpm->message.can_id!=ecu) ||
+        (old_speed && old_speed->message.can_id!=ecu)) {
+      invalidate(rpm);
+      invalidate(speed);
+      return false;
+    }
     return put(rpm, messages[0], &frames[0], 1, completed_us) &&
            put(speed, messages[1], &frames[1], 1, completed_us);
   }
