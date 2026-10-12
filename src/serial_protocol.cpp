@@ -3,12 +3,16 @@
 #include <algorithm>
 #include <Preferences.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "app_config.h"
 #include "elm_response_formatter.h"
 #include "demo_drive.h"
 #include "drive_log.h"
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#include "ble_evidence_journal.h"
+#endif
 
 namespace m5can {
 namespace {
@@ -486,6 +490,25 @@ void SerialProtocol::handleUsbLine(const char* line) {
     emitTextHello();
   } else if (!std::strcmp(command, "DRIVELOG")) {
     if (drive_log_ble_) driveLog().dump(monitor_,*drive_log_ble_,demoActive());
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  } else if (!std::strcmp(command, "BLELOG INDEX")) {
+    if (drive_log_ble_) bleEvidenceJournal().index(monitor_,*drive_log_ble_);
+  } else if (!std::strcmp(command, "BLELOG") ||
+             !std::strncmp(command, "BLELOG ",7)) {
+    if (drive_log_ble_) {
+      uint32_t boot=0;
+      if(command[6]==' ') {
+        char* end=nullptr;
+        const unsigned long parsed=std::strtoul(command+7,&end,10);
+        if(end==command+7 || *end || !parsed || parsed>0xFFFFFFFFUL) {
+          Serial.println("#BLELOG,ERR,INVALID_BOOT");
+          return;
+        }
+        boot=static_cast<uint32_t>(parsed);
+      }
+      bleEvidenceJournal().dump(monitor_,*drive_log_ble_,boot);
+    }
+#endif
   } else if (!std::strcmp(command, "STATS")) {
     emitStats(true);
   } else if (!std::strcmp(command, "STREAM ON")) {
@@ -509,7 +532,7 @@ void SerialProtocol::handleUsbLine(const char* line) {
   } else if (!std::strcmp(command, "HELP") ||
              !std::strcmp(command, "?")) {
     Serial.println(
-        "#HELP,INFO STATS DRIVELOG HELP STREAM ON STREAM OFF NATIVE ON; "
+        "#HELP,INFO STATS DRIVELOG BLELOG [boot] BLELOG INDEX HELP STREAM ON STREAM OFF NATIVE ON; "
         "BLE exposes ELM only; DEMO AUTO/ON/OFF (USB)");
   } else if (command[0]) {
     Serial.printf("#ERR,UNKNOWN_COMMAND,%s\n", command);
