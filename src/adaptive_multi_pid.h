@@ -79,7 +79,11 @@ class AdaptiveMultiPid {
   bool decode(const DiagnosticResult& result,
               DiagnosticRawFrame output[2],
               uint32_t& responder) const {
-    if (result.status != DiagnosticStatus::Ok) return false;
+    // Reject any ambiguous extra ECU reply, even when ONE message contains
+    // a fully valid pair. A functional request may have multiple responders.
+    // Picking the first valid one could mix an unexpected ECU's samples.
+    if (result.status != DiagnosticStatus::Ok ||
+        result.response_count != 1) return false;
     for (uint8_t i = 0; i < result.response_count; ++i) {
       const DiagnosticMessage& m = result.responses[i];
       if ((m.can_id & 0x1FFFFF00U) != 0x18DAF100U ||
