@@ -40,7 +40,8 @@ class DiagnosticBatchPlanner {
     } else if (AdaptiveMultiPid::isPair(other,current)) {
       rpm=&other;speed=&current;
     }
-    if (!rpm || !capability.eligible(*rpm,*speed)) return output;
+    if (!rpm || rpm->timeout_ms!=speed->timeout_ms ||
+        !capability.eligible(*rpm,*speed)) return output;
     const DiagnosticRequest group=AdaptiveMultiPid::group(*rpm,*speed);
     if (!DiagnosticPolicy::allowedReadRequest(group)) return output;
     output.kind=Kind::GroupDistinct;
