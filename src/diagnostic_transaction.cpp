@@ -18,6 +18,9 @@ bool DiagnosticTransaction::appendRaw(const TransactionFrame& frame) {
   DiagnosticRawFrame& out = result_.raw_frames[result_.raw_frame_count++];
   out.can_id = frame.can_id;
   out.dlc = frame.dlc;
+  out.rx_offset_us = frame.timestamp_us >= tx_us_ &&
+      frame.timestamp_us-tx_us_ < UINT32_MAX
+      ? static_cast<uint32_t>(frame.timestamp_us-tx_us_) : UINT32_MAX;
   std::memcpy(out.data, frame.data, frame.dlc);
   if (!result_.tx_to_first_response_us && frame.timestamp_us >= tx_us_) {
     result_.tx_to_first_response_us =
