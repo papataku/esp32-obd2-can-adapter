@@ -126,6 +126,7 @@ class BleElmTransport {
     uint16_t mtu = 23;
     uint32_t generation = 0;
     bool active = false;
+    bool gap_disconnect_seen = false;
     BlePeerTraffic traffic{};
   };
   static constexpr size_t kMaxClients = 2;
