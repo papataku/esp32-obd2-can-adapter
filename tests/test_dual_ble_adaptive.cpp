@@ -146,9 +146,12 @@ int main() {
    bench.batchBoth();bench.drain();assert(bench.groups()==2 && requests.size()==4);}
   for(Ecu failure:{Ecu::Partial,Ecu::Negative,Ecu::Silent,Ecu::Split,Ecu::FirstFrame}) {
     mode=failure;Bench bench;bench.batchBoth();bench.drain();bench.values();
-    assert(bench.groups()==1 && requests.size()==4);
+    // A single complete RPM value from a partial grouped reply is cached;
+    // only speed is retried. All other unsupported cases retry both PIDs.
+    const size_t first_count=failure==Ecu::Partial?3U:4U;
+    assert(bench.groups()==1 && requests.size()==first_count);
     bench.batchBoth();bench.drain();bench.values();
-    assert(bench.groups()==1 && requests.size()==7);
+    assert(bench.groups()==1 && requests.size()==first_count+3);
   }
   // Two different BLE peers independently request different PIDs. The
   // coordinator may group them only because both were already pending;
