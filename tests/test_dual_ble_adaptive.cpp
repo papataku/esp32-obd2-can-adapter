@@ -236,19 +236,14 @@ int main() {
    NimBLEServer::callbacks->onConnect(
        NimBLEDevice::createServer(),&bench.b);
    bench.dual.poll();
+   // Reconnected ELM session starts with default ATS0 (no spaces); apply
+   // ATS1 again before checking the human-readable reply formatting.
+   write(bench.b,"ATS1");bench.dual.poll();
    test_notifications.clear();
    write(bench.b,"ATM5B00:010D,0105");
    bench.dual.poll();hold=false;bench.drain();
    const auto fresh=output(19);
    assert(fresh.find("M5ITEM:00:010D")!=std::string::npos);
-   if(fresh.find("18DAF101 03 41 0D 50")==std::string::npos) {
-     std::cerr<<"RECONNECT_DEBUG tx="<<requests.size()<<" peer19="<<fresh
-              <<" peer7="<<output(7)<<"\\n";
-     for(const auto& req:requests)
-       std::cerr<<"REQ "<<static_cast<unsigned>(req.length)<<" "
-                <<static_cast<unsigned>(req.data[0])<<" "
-                <<static_cast<unsigned>(req.data[1])<<"\\n";
-   }
    assert(fresh.find("18DAF101 03 41 0D 50")!=std::string::npos);
    assert(fresh.find("M5DONE\r>")!=std::string::npos);
   }
