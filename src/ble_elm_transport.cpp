@@ -356,10 +356,20 @@ void BleElmTransport::recordDiagnosticError(
     if(peer.active && peer.connection_id==id &&
        peer.generation==generation) {found=true;break;}
   }
-  if(found || code==static_cast<uint16_t>(
-      DiagnosticError::BlePeerGenerationStale))
-    pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
-                   code,detail);
+  const size_t previous_head=diagnostic_head_;
+  pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
+                 code,detail);
+  if(!found && diagnostic_head_!=previous_head) {
+    // An old in-flight transaction may finish after the peer disconnected
+    // or its numerical handle was reused. Preserve the OLD generation and
+    // never invent the current peer's identity/traffic for that error.
+    auto& logged=diagnostics_[previous_head];
+    logged.generation=generation;
+    logged.address_suffix=0;
+    logged.mtu=0;
+    logged.rx_bytes=0;logged.tx_bytes=0;
+    logged.retries=0;logged.failed=0;
+  }
   portEXIT_CRITICAL(&mux_);
 }
 bool BleElmTransport::pollDiagnostic(BleDiagnosticEvent& event) {
