@@ -45,8 +45,10 @@ jobs:
         run: pio run -e m5dial_dual_ble_multipid_bench
       - name: Build explicit TX-disabled DEMO error fixture
         run: pio run -e m5dial_dual_ble_fault_fixture
+      - name: Build integrated DEMO soak with CAN TX disabled
+        run: pio run -e m5dial_integrated_soak
       - name: Check compiler stack frame budgets
-        run: python tools/check_dual_stack.py m5dial m5dial_dual_ble_bench m5dial_dual_ble_mtu_bench m5dial_dual_ble_canmode_dry_bench m5dial_dual_ble_multipid_bench m5dial_dual_ble_fault_fixture m5dial_mtu23_bench m5dial_mtu_bench
+        run: python tools/check_dual_stack.py m5dial m5dial_dual_ble_bench m5dial_dual_ble_mtu_bench m5dial_dual_ble_canmode_dry_bench m5dial_dual_ble_multipid_bench m5dial_dual_ble_fault_fixture m5dial_mtu23_bench m5dial_mtu_bench m5dial_integrated_soak
       - name: Build BLE MTU A/B benchmark firmware
         run: pio run -e m5dial_mtu23_bench -e m5dial_mtu_bench
       - name: Upload M5Dial build artifacts (quota-dependent)

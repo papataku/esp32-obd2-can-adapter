@@ -67,6 +67,10 @@ LOGTEST exists ONLY in the TX-disabled DEMO fault fixture and queues explicitly
 SYNTHETIC full48-frame sidecars. It cannot qualify real ECU replies; exports
 mark origin=SYNTHETIC. It requires no BLE peers and verified DEMO.
 
+Long-run profile m5dial_integrated_soak retains the grouped coordinator and
+logger code with the physical CAN TX API compiled out, without fixture replies.
+It does not qualify real-CAN acquisition or electrical behavior.
+
 Physical gates pending: full-RAW synthetic flash/readback/reset, dual-meter
 smoke,2h sustained traffic/heap/fps/error check, cold power cycle and setting
 preservation, human LCD/touch observation. Hardware test data and residual
