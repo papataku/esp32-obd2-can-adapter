@@ -44,7 +44,10 @@ class DiagnosticPidCache {
       ++stats_.misses;
       return false;
     }
-    result = DiagnosticResult{};
+    // An aggregate temporary would place ~1.7 KiB on the calling BLE
+    // task stack when optimized/inlined. This POD workspace is owned by
+    // the coordinator; zero it in place without an aggregate temporary.
+    std::memset(&result,0,sizeof(result));
     result.status = DiagnosticStatus::Ok;
     result.response_count = 1;
     result.responses[0] = e->message;
