@@ -86,6 +86,8 @@ int main() {
   // itself was evicted by unrelated connects.
   assert(exported.find("name=BLE_DISCONNECT,count=1")!=std::string::npos);
   assert(exported.find("first_detail=520,last_detail=520")!=std::string::npos);
+  assert(exported.find("#BLELOG,PEER_DISCONNECT,boot=41,peer_suffix=DD41")!=std::string::npos);
+  assert(exported.find("count=1,first_ms=2000,last_ms=2000,first_reason=520,last_reason=520")!=std::string::npos);
   assert(exported.find("seq_gaps=1")!=std::string::npos);
   assert(exported.find("total=36,kept=12,evicted=24")!=std::string::npos);
   assert(exported.find("seq=37")!=std::string::npos);
@@ -166,6 +168,32 @@ int main() {
   assert(fault_dump.find("name=ELM_INPUT_OVERFLOW,count=1")!=std::string::npos);
   assert(fault_dump.find("name=JOURNAL_NVS_FAILURE,count=1")!=std::string::npos);
   assert(fault_dump.find("first_detail=17,last_detail=3")!=std::string::npos);
+  SerialStub::capture=false;SerialStub::lines.clear();
+
+  // Multiple peers are counted separately even when their 12 details
+  // age out, and the fifth identity sets a visible saturation flag.
+  BleEvidenceJournal per_peer;
+  per_peer.begin(46,"peer-storm");
+  for(unsigned i=0;i<5;++i) {
+    auto event=sample(i+1,BleDiagnosticEvent::Kind::Disconnect);
+    event.address_suffix=static_cast<uint16_t>(0xB100+i);
+    event.reason=0x200+static_cast<int>(i);
+    per_peer.append(event,0);
+  }
+  g_test_millis+=1000;
+  assert(per_peer.poll(can));
+  BleEvidenceJournal peers_reload;
+  peers_reload.begin(47,"peer-reboot");
+  SerialStub::capture=true;SerialStub::lines.clear();
+  peers_reload.dump(can,transport,46);
+  const std::string peers_dump=SerialStub::lines;
+  assert(peers_dump.find("PEER_SUMMARY,boot=46,overflow=1")!=std::string::npos);
+  for(unsigned i=0;i<4;++i) {
+    char needle[48]{};
+    std::snprintf(needle,sizeof(needle),"peer_suffix=%04X",
+                  static_cast<unsigned>(0xB100+i));
+    assert(peers_dump.find(needle)!=std::string::npos);
+  }
   SerialStub::capture=false;SerialStub::lines.clear();
 
   // Journal and CAN trip history occupy separate NVS namespaces. The
