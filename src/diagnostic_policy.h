@@ -32,6 +32,9 @@ struct DiagnosticRawFrame {
   uint32_t can_id = 0;
   uint8_t dlc = 0;
   uint8_t data[8]{};
+  // Monotonic CAN RX time relative to diagnostic TX; available after reboot
+  // without depending on a USB serial stream. UINT32_MAX means unknown.
+  uint32_t rx_offset_us = UINT32_MAX;
 };
 
 struct DiagnosticMessage {
