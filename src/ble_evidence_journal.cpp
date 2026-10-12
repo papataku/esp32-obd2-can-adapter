@@ -42,6 +42,50 @@ void BleEvidenceJournal::begin(uint32_t boot,const char* build) {
   started_=boot!=0;
   dirty_=persisted_=urgent_=false;
   last_attempt_ms_=last_success_ms_=0;
+  last_can_=CanStats{};last_ble_=BleStats{};health_initialized_=false;
+}
+void BleEvidenceJournal::recordFault(uint16_t code,uint32_t detail,uint32_t at_ms) {
+  if(!code || !started_)return;
+  for(unsigned i=0;i<kFaultBuckets;++i) {
+    auto& b=record_.faults[i];
+    if(!b.code || b.code==code) {
+      if(!b.code) {b.code=code;b.first_ms=at_ms;}
+      if(b.count!=UINT32_MAX)++b.count;
+      b.last_ms=at_ms;b.last_detail=detail;
+      dirty_=urgent_=true;
+      return;
+    }
+  }
+  ++record_.unknown_faults; // Exhaustion is explicit
+  dirty_=urgent_=true;
+}
+void BleEvidenceJournal::appendError(DiagnosticError code,uint32_t detail,
+                                     uint32_t at_ms) {
+  recordFault(static_cast<uint16_t>(code),detail,at_ms?at_ms:millis());
+}
+void BleEvidenceJournal::observeHealth(const CanStats& can,const BleStats& ble) {
+  if(!started_)return;
+  if(!health_initialized_) {
+    last_can_=CanStats{};last_ble_=BleStats{};health_initialized_=true;
+  }
+  const uint32_t now=millis();
+  auto recordDelta=[&](uint64_t newer,uint64_t old,DiagnosticError code) {
+    if(newer>old)
+      recordFault(static_cast<uint16_t>(code),
+          static_cast<uint32_t>(newer-old>UINT32_MAX?UINT32_MAX:newer-old),now);
+  };
+  recordDelta(can.query_timeout,last_can_.query_timeout,DiagnosticError::CanQueryTimeout);
+  recordDelta(can.query_failed,last_can_.query_failed,DiagnosticError::CanFailedCounter);
+  recordDelta(can.app_queue_drops,last_can_.app_queue_drops,DiagnosticError::CanRxQueueDrop);
+  recordDelta(can.driver_rx_missed,last_can_.driver_rx_missed,DiagnosticError::CanDriverMissed);
+  recordDelta(can.driver_rx_overrun,last_can_.driver_rx_overrun,DiagnosticError::CanDriverOverrun);
+  recordDelta(can.driver_bus_error,last_can_.driver_bus_error,DiagnosticError::CanBusErrorCounter);
+  recordDelta(can.driver_arb_lost,last_can_.driver_arb_lost,DiagnosticError::CanArbitrationLoss);
+  recordDelta(ble.rx_overflow,last_ble_.rx_overflow,DiagnosticError::BleRxOverflowCounter);
+  recordDelta(ble.notify_failures,last_ble_.notify_failures,DiagnosticError::BleNotifyFailureCounter);
+  recordDelta(ble.notify_retries,last_ble_.notify_retries,DiagnosticError::BleNotifyRetryCounter);
+  recordDelta(ble.session_rejections,last_ble_.session_rejections,DiagnosticError::BleSessionRejectCounter);
+  last_can_=can;last_ble_=ble;
 }
 void BleEvidenceJournal::observeQueueDrops(uint32_t drops) {
   if(!started_ || drops==record_.queue_drops)return;
@@ -72,7 +116,10 @@ void BleEvidenceJournal::append(const BleDiagnosticEvent& event,
   out.reason_known=event.reason_known?1:0;
   out.kind=static_cast<uint8_t>(event.kind);
   out.retries=event.retries;out.failed=event.failed;
+  out.code=event.error_code;out.detail=event.error_detail;
   out.rx_bytes=event.rx_bytes;out.tx_bytes=event.tx_bytes;
+  if(event.kind==BleDiagnosticEvent::Kind::Error || event.error_code)
+    recordFault(event.error_code,event.error_detail,event.uptime_ms);
   dirty_=true;
   if(event.kind!=BleDiagnosticEvent::Kind::Connect)urgent_=true;
 }
@@ -109,6 +156,9 @@ bool BleEvidenceJournal::poll(CanMonitor& can) {
     persisted_=true;
     last_success_ms_=now;
   } else {
+    if(record_.storage_errors!=UINT32_MAX)++record_.storage_errors;
+    appendError(DiagnosticError::JournalStorageFailure,record_.storage_errors);
+    persisted_=false;
     Serial.println("#BLELOG,storage_error");
   }
   return ok;
@@ -131,9 +181,22 @@ void BleEvidenceJournal::print(const Record& r,bool persisted) {
       static_cast<unsigned long>(r.first_seq),
       static_cast<unsigned long>(r.last_seq),
       static_cast<unsigned long>(r.saves));
+  Serial.printf("#BLELOG,INTEGRITY,boot=%lu,storage_errors=%lu,unclassified=%lu,overflow=%u\n",
+      static_cast<unsigned long>(r.boot),
+      static_cast<unsigned long>(r.storage_errors),
+      static_cast<unsigned long>(r.unknown_faults),r.overflow);
+  for(const auto& fault:r.faults)if(fault.code) {
+    Serial.printf("#BLELOG,FAULT,boot=%lu,code=%u,name=%s,count=%lu,first_ms=%lu,last_ms=%lu,last_detail=%lu\n",
+        static_cast<unsigned long>(r.boot),fault.code,
+        diagnosticErrorName(fault.code),
+        static_cast<unsigned long>(fault.count),
+        static_cast<unsigned long>(fault.first_ms),
+        static_cast<unsigned long>(fault.last_ms),
+        static_cast<unsigned long>(fault.last_detail));
+  }
   for(unsigned i=0;i<r.count;++i) {
     const auto& e=r.events[i];
-    Serial.printf("#BLELOG,EVENT,boot=%lu,index=%u,seq=%lu,ms=%lu,kind=%u,id=%u,gen=%lu,peer_suffix=%04X,reason_known=%u,reason_raw=%ld,mtu=%u,interval=%u,latency=%u,supervision=%u,rx_bytes=%llu,tx_bytes=%llu,retries=%lu,failed=%lu\n",
+    Serial.printf("#BLELOG,EVENT,boot=%lu,index=%u,seq=%lu,ms=%lu,kind=%u,id=%u,gen=%lu,peer_suffix=%04X,reason_known=%u,reason_raw=%ld,mtu=%u,interval=%u,latency=%u,supervision=%u,rx_bytes=%llu,tx_bytes=%llu,retries=%lu,failed=%lu,code=%u,error=%s,detail=%lu\n",
         static_cast<unsigned long>(r.boot),i,
         static_cast<unsigned long>(e.seq),static_cast<unsigned long>(e.ms),
         e.kind,e.conn,static_cast<unsigned long>(e.gen),
@@ -142,7 +205,9 @@ void BleEvidenceJournal::print(const Record& r,bool persisted) {
         static_cast<unsigned long long>(e.rx_bytes),
         static_cast<unsigned long long>(e.tx_bytes),
         static_cast<unsigned long>(e.retries),
-        static_cast<unsigned long>(e.failed));
+        static_cast<unsigned long>(e.failed),
+        e.code,diagnosticErrorName(e.code),
+        static_cast<unsigned long>(e.detail));
   }
 }
 void BleEvidenceJournal::index(CanMonitor& can,BleElmTransport& ble) {
