@@ -22,6 +22,34 @@ void upperNoSpaces(const char* source, char* dest, size_t capacity) {
   }
   dest[n] = 0;
 }
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+// One-shot physical CAN evidence on the first group probe only; never write
+// every CAN frame to flash or send per-query telemetry to either BLE peer.
+// USB must be connected to collect these records. Individual frame RX
+// timestamps are NOT carried by DiagnosticRawFrame.
+void logFirstProbeRaw(const DiagnosticResult& result) {
+  constexpr uint8_t kMaxPrinted=12;
+  const uint8_t n=std::min(result.raw_frame_count,kMaxPrinted);
+  Serial.printf("#MULTIPID,PROBE,responses=%u,raw_count=%u,printed=%u\n",
+                static_cast<unsigned>(result.response_count),
+                static_cast<unsigned>(result.raw_frame_count),
+                static_cast<unsigned>(n));
+  constexpr char digits[]="0123456789ABCDEF";
+  for (uint8_t i=0; i<n; ++i) {
+    const auto& f=result.raw_frames[i];
+    const uint8_t dlc=std::min<uint8_t>(f.dlc,8);
+    char bytes[17]{};
+    for(uint8_t j=0;j<dlc;++j) {
+      bytes[j*2]=digits[f.data[j]>>4];
+      bytes[j*2+1]=digits[f.data[j]&0x0F];
+    }
+    Serial.printf("#MULTIPID,RAW,index=%u,id=%08lX,dlc=%u,data=%s\n",
+                  static_cast<unsigned>(i),
+                  static_cast<unsigned long>(f.can_id),
+                  static_cast<unsigned>(f.dlc),bytes);
+  }
+}
+#endif
 }
 
 DualBleElm::Session* DualBleElm::find(uint16_t conn_id, uint32_t generation) {
@@ -371,6 +399,9 @@ void DualBleElm::onResult() {
     uint32_t responder=0;
     const bool first_success=
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    if (first_success) logFirstProbeRaw(result);
+#endif
     auto decision=
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
     const bool s_rpm=s.request.data[1]==0x0C;
@@ -443,6 +474,9 @@ void DualBleElm::onResult() {
     uint32_t responder=0;
     const bool first_success=
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    if (first_success) logFirstProbeRaw(result);
+#endif
     auto decision=
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
