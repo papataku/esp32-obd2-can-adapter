@@ -5,6 +5,7 @@
 #include <cstring>
 #include "app_config.h"
 #include "diagnostic_policy.h"
+#include "diagnostic_batch_planner.h"
 #include "elm_response_formatter.h"
 #include "serial_protocol.h"
 
@@ -166,12 +167,11 @@ void DualBleElm::advanceBatch(Session& s) {
       // do not issue an unnecessary grouped physical CAN query.
       const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
       if (!pid_cache_.hasFresh(first,now_us) &&
-          !pid_cache_.hasFresh(second,now_us) &&
-          adaptive_multi_pid_.eligible(first,second)) {
-        const DiagnosticRequest grouped=
-            AdaptiveMultiPid::group(first,second);
-        if (DiagnosticPolicy::allowedReadRequest(grouped)) {
-          s.request=grouped;
+          !pid_cache_.hasFresh(second,now_us)) {
+        const auto plan=DiagnosticBatchPlanner::plan(
+            first,&second,adaptive_multi_pid_);
+        if (plan.kind==DiagnosticBatchPlanner::Kind::GroupDistinct) {
+          s.request=plan.transmission;
           s.multi_pid_pair=true;
           s.pending=true;
           return;
@@ -490,51 +490,24 @@ void DualBleElm::dispatch() {
     }
 #endif
 
-    // At most two BLE peers: do not need a heap-backed global queue.
-    // Both waiting peer intents may share ONE physical read, or an
-    // eligible RPM+speed pair can be bundled across DIFFERENT peers.
-#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-    const int j=1-i;
-#endif
-#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-    Session& peer=sessions_[j];
-#endif
+    // Already requested, actually pending and individually missing PID
+    // intents are the ONLY candidates. Planning never reads cache state.
     bool cross=false;
-#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-    bool shared=false;
-#endif
     DiagnosticRequest outgoing=s.request;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    const int j=1-i;
+    Session& peer=sessions_[j];
     const bool other_pending=peer.active && peer.pending &&
         !peer.multi_pid_pair &&
         ble_.isClientConnected(peer.conn_id,peer.generation);
-    const bool can_pair=other_pending && !s.multi_pid_pair &&
-        !pid_cache_.hasFresh(peer.request,now_us);
-    if (can_pair) {
-      const DiagnosticRequest* rpm=nullptr;
-      const DiagnosticRequest* speed=nullptr;
-      if (s.request.length==2 && s.request.data[0]==0x01 &&
-          peer.request.length==2 && peer.request.data[0]==0x01 &&
-          s.request.data[1]==0x0C && peer.request.data[1]==0x0D) {
-        rpm=&s.request;speed=&peer.request;
-      } else if (peer.request.length==2 && peer.request.data[0]==0x01 &&
-                 s.request.length==2 && s.request.data[0]==0x01 &&
-                 peer.request.data[1]==0x0C && s.request.data[1]==0x0D) {
-        rpm=&peer.request;speed=&s.request;
-      }
-      if (rpm && speed && adaptive_multi_pid_.eligible(*rpm,*speed)) {
-        outgoing=AdaptiveMultiPid::group(*rpm,*speed);
-        cross=DiagnosticPolicy::allowedReadRequest(outgoing);
-      }
-    }
-#endif
-#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-    if (!cross && other_pending && !s.multi_pid_pair &&
-        s.request.can_id==peer.request.can_id &&
-        s.request.length==peer.request.length &&
-        s.request.timeout_ms==peer.request.timeout_ms &&
-        std::memcmp(s.request.data,peer.request.data,s.request.length)==0)
-      shared=true;
+    const DiagnosticRequest* other=
+        other_pending && !s.multi_pid_pair &&
+        !pid_cache_.hasFresh(peer.request,now_us) ? &peer.request : nullptr;
+    const auto plan=DiagnosticBatchPlanner::plan(
+        s.request,other,adaptive_multi_pid_);
+    outgoing=plan.transmission;
+    cross=plan.kind==DiagnosticBatchPlanner::Kind::GroupDistinct;
+    const bool shared=plan.kind==DiagnosticBatchPlanner::Kind::JoinSameParameter;
 #endif
 
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
