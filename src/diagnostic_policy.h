@@ -32,9 +32,6 @@ struct DiagnosticRawFrame {
   uint32_t can_id = 0;
   uint8_t dlc = 0;
   uint8_t data[8]{};
-  // Monotonic CAN RX time relative to diagnostic TX; available after reboot
-  // without depending on a USB serial stream. UINT32_MAX means unknown.
-  uint32_t rx_offset_us = UINT32_MAX;
 };
 
 struct DiagnosticMessage {
@@ -54,6 +51,9 @@ struct DiagnosticResult {
   DiagnosticMessage responses[kDiagnosticMaxResponses]{};
   uint8_t raw_frame_count = 0;
   DiagnosticRawFrame raw_frames[kDiagnosticMaxRawFrames]{};
+  // DiagnosticResult is transient, never persisted as the legacy trip ABI.
+  // Physical accepted CAN-frame RX times relative to request TX.
+  uint32_t raw_rx_offsets_us[kDiagnosticMaxRawFrames]{};
 };
 
 class DiagnosticPolicy {
