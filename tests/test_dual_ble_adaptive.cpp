@@ -445,6 +445,13 @@ int main() {
     ++g_test_millis;
     journal.poll(bench.can,bench.ble,false);
     assert(journal.probeSaved());
+    // A later grouped fallback has its OWN CRC-protected evidence slot.
+    // The original successful probe must remain unchanged.
+    DiagnosticResult later=first;
+    later.raw_frames[1].data[4]=0x01; // Synthetic conflicting ECU value
+    journal.recordFirstFailure(7,later,0,1,5);
+    journal.outcome(DriveLog::Kind::GroupFallback,7,later,0);
+    journal.poll(bench.can,bench.ble,false);
     for(unsigned i=0;i<12;++i)
       journal.event(DriveLog::Kind::Disconnect,7);
     g_test_millis+=3000;
@@ -457,6 +464,11 @@ int main() {
            probe.responses==5);
     assert(probe.raw_count==5 && probe.raw_saved==5 && !probe.truncated);
     assert(probe.decision==0 && probe.reject_reason==0);
+    DriveLog::ProbeRecord failure{};
+    assert(nvs.getBytes("fail1",&failure,sizeof(failure))==sizeof(failure));
+    assert(failure.sequence==1 && failure.raw_saved==5 &&
+           failure.decision==1 && failure.reject_reason==5);
+    assert(failure.raw[1].data[4]==0x01);
     for(unsigned i=0;i<5;++i) {
       assert(probe.raw[i].can_id==ids[i]);
       assert(probe.rx_offset_us[i]==656+i*137U);
@@ -477,6 +489,8 @@ int main() {
     assert(valid_dump.find("#DRIVELOG,PROBE,boot=1,state=persisted")!=std::string::npos);
     assert(valid_dump.find("#DRIVELOG,PROBE_RAW,boot=1,index=4,id=18DAF103")!=std::string::npos);
     assert(valid_dump.find("rx_tx_us=1204")!=std::string::npos);
+    assert(valid_dump.find("#DRIVELOG,GROUPFAIL,boot=1,state=persisted")!=std::string::npos);
+    assert(valid_dump.find("#DRIVELOG,GROUPFAIL_RAW,boot=1,index=4,id=18DAF103")!=std::string::npos);
     // A corrupted NVS record must be rejected visibly rather than
     // presenting incomplete evidence as valid after a future restart.
     auto& bytes=Preferences::storage["m5can_trip/probe1"];
