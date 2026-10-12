@@ -459,6 +459,24 @@ void DualBleElm::dispatch() {
     Session& s=sessions_[i];
     if (!s.active || !s.pending ||
         !ble_.isClientConnected(s.conn_id,s.generation)) continue;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    if (can_.faultLocked()) {
+      // A cached sample is not authorization for a fresh diagnostic read.
+      // Do not report fresh values while the physical bus is fault locked.
+      pid_cache_.clear();
+      cache_workspace_=DiagnosticResult{};
+      cache_workspace_.status=DiagnosticStatus::LeaseRequired;
+      if (s.multi_pid_pair) {
+        s.multi_pid_pair=false;
+        adaptive_multi_pid_.disable();
+        emitLine(s,"M5ITEM:00:010C");
+        appendResult(s,cache_workspace_);
+        emitLine(s,"M5ITEM:00:010D");
+        abortBatch(s,cache_workspace_);
+      } else abortBatch(s,cache_workspace_);
+      continue;
+    }
+#endif
     if (s.multi_pid_pair &&
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Disabled) {
       s.multi_pid_pair=false;
