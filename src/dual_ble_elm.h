@@ -94,6 +94,7 @@ class DualBleElm {
   int active_query_owner_ = -1;
   // A second pending request may join the same physical CAN transaction.
   int active_secondary_owner_ = -1;
+  uint32_t active_secondary_generation_ = 0;
   bool active_cross_group_ = false;
   uint32_t active_query_generation_ = 0;
   uint8_t round_robin_ = 0;
