@@ -134,6 +134,10 @@ void BleEvidenceJournal::append(const BleDiagnosticEvent& event,
   out.retries=event.retries;out.failed=event.failed;
   out.code=event.error_code;out.detail=event.error_detail;
   out.rx_bytes=event.rx_bytes;out.tx_bytes=event.tx_bytes;
+  if(event.kind==BleDiagnosticEvent::Kind::Disconnect)
+    recordFault(static_cast<uint16_t>(DiagnosticError::BleDisconnected),
+                event.reason_known?static_cast<uint32_t>(event.reason):UINT32_MAX,
+                event.uptime_ms);
   if(event.kind==BleDiagnosticEvent::Kind::Error || event.error_code)
     recordFault(event.error_code,event.error_detail,event.uptime_ms);
   dirty_=true;
