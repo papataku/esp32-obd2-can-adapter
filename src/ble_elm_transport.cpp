@@ -356,8 +356,10 @@ void BleElmTransport::recordDiagnosticError(
     if(peer.active && peer.connection_id==id &&
        peer.generation==generation) {found=true;break;}
   }
-  if(found)pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
-                          code,detail);
+  if(found || code==static_cast<uint16_t>(
+      DiagnosticError::BlePeerGenerationStale))
+    pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
+                   code,detail);
   portEXIT_CRITICAL(&mux_);
 }
 bool BleElmTransport::pollDiagnostic(BleDiagnosticEvent& event) {
@@ -454,7 +456,11 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
     }
   }
   portEXIT_CRITICAL(&mux_);
-  if (!active) return 0;
+  if (!active) {
+    recordDiagnosticError(id,gen,static_cast<uint16_t>(
+        DiagnosticError::BlePeerGenerationStale),gen);
+    return 0;
+  }
   // The established meter bench accepts 20-byte notifications. A larger
   // negotiated MTU does not imply that its application RX queue accepts
   // larger chunks; keep the dual stability baseline compatible.
@@ -469,6 +475,7 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
   size_t sent = 0;
   uint32_t chunks = 0;
   uint32_t retries = 0;
+  int last_notify_error=0;
   const uint32_t started=millis();
   while (sent < length && isClientConnected(id, gen)) {
     const uint16_t chunk = static_cast<uint16_t>(
@@ -482,6 +489,7 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
     const int result=packet ? ble_gattc_notify_custom(
         id,tx_characteristic_->getHandle(),packet) : BLE_HS_ENOMEM;
     if (result!=0) {
+      last_notify_error=result;
       // Two peers share NimBLE's bounded packet pool. Brief exhaustion is
       // backpressure, not permission to silently discard the ELM prompt.
       if ((result==BLE_HS_ENOMEM || result==BLE_HS_EAGAIN || result==BLE_HS_EBUSY) &&
@@ -519,7 +527,7 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
   if(sent<length)
     pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
                    static_cast<uint16_t>(DiagnosticError::BleNotifySendFailed),
-                   static_cast<uint32_t>(length-sent));
+                   static_cast<uint32_t>(last_notify_error));
   portEXIT_CRITICAL(&mux_);
   if (sent<length && isClientConnected(id,gen)) server_->disconnect(id);
   return sent;
