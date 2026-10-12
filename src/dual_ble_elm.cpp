@@ -1,4 +1,5 @@
 #include "dual_ble_elm.h"
+#include <esp_timer.h>
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include <algorithm>
 #include <cstdio>
@@ -165,7 +166,7 @@ void DualBleElm::advanceBatch(Session& s) {
       // A group is a transmission optimization for already-requested
       // CACHE MISSES. If either PID is fresh, serve it independently and
       // do not issue an unnecessary grouped physical CAN query.
-      const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
+      const uint64_t now_us=static_cast<uint64_t>(esp_timer_get_time());
       if (!pid_cache_.hasFresh(first,now_us) &&
           !pid_cache_.hasFresh(second,now_us)) {
         const auto plan=DiagnosticBatchPlanner::plan(
@@ -345,7 +346,9 @@ void DualBleElm::onResult() {
   const bool other_live=other && other->active &&
       other->generation==secondary_generation &&
       ble_.isClientConnected(other->conn_id,other->generation);
-  const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
+  const uint64_t now_us=static_cast<uint64_t>(esp_timer_get_time());
+  const uint64_t acquired_us =
+      result.completed_at_us ? result.completed_at_us : now_us;
 
   if (cross) {
     // The pair was constructed solely from TWO ALREADY PENDING peers.
@@ -366,7 +369,7 @@ void DualBleElm::onResult() {
     const DiagnosticRequest& speed=s_rpm?other->request:s.request;
     if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
         !pid_cache_.rememberApprovedPair(
-            rpm,speed,virtual_frames,now_us)) {
+            rpm,speed,virtual_frames,acquired_us)) {
       // A previously identified ECU differs from this grouped responder.
       // Do not send or cache ambiguous signals as successful readings.
       adaptive_multi_pid_.disable();
@@ -399,7 +402,7 @@ void DualBleElm::onResult() {
       // independently. Re-fetch ONLY the still-missing PID.
       const bool s_rpm=s.request.data[1]==0x0C;
       cacheSafePartialGroup(result,s_rpm?s.request:other->request,
-                            s_rpm?other->request:s.request,now_us);
+                            s_rpm?other->request:s.request,acquired_us);
     }
     // RetryLegacy leaves both individual requests pending. The next
     // dispatch will observe the disabled capability and send them one by
@@ -424,7 +427,7 @@ void DualBleElm::onResult() {
     const DiagnosticRequest speed=requestOf(s.items[s.batch_next+1],s.elm);
     if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
         !pid_cache_.rememberApprovedPair(
-            rpm,speed,virtual_frames,now_us)) {
+            rpm,speed,virtual_frames,acquired_us)) {
       adaptive_multi_pid_.disable();
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
@@ -453,7 +456,7 @@ void DualBleElm::onResult() {
       }
       const DiagnosticRequest rpm=requestOf(s.items[s.batch_next],s.elm);
       const DiagnosticRequest speed=requestOf(s.items[s.batch_next+1],s.elm);
-      cacheSafePartialGroup(result,rpm,speed,now_us);
+      cacheSafePartialGroup(result,rpm,speed,acquired_us);
     }
     advanceBatch(s);
     return;
@@ -463,7 +466,7 @@ void DualBleElm::onResult() {
   // whether it was sent alone or followed a failed group probe. Cache
   // failures invalidate ONLY the requested PID, never unrelated samples.
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-  pid_cache_.rememberSingle(s.request,result,now_us);
+  pid_cache_.rememberSingle(s.request,result,acquired_us);
 #endif
   finishSingle(s,result);
   if (other_live && other->pending) finishSingle(*other,result);
@@ -502,7 +505,7 @@ void DualBleElm::dispatch() {
       if (!s.pending) continue;
     }
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-    const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
+    const uint64_t now_us=static_cast<uint64_t>(esp_timer_get_time());
     if (s.multi_pid_pair) {
       const DiagnosticRequest rpm=requestOf(s.items[s.batch_next],s.elm);
       const DiagnosticRequest speed=requestOf(s.items[s.batch_next+1],s.elm);
