@@ -152,9 +152,11 @@ bool BleEvidenceJournal::poll(CanMonitor& can) {
     wrote=prefs.putBytes(key,&scratch_,sizeof(scratch_))==sizeof(scratch_);
     prefs.end();
   }
-  Record verified{};
-  const bool ok=wrote && load(record_.boot%kBootSlots,verified) &&
-      verified.boot==record_.boot && verified.saves==scratch_.saves;
+  const uint32_t expected_saves=scratch_.saves;
+  // Reuse the preallocated workspace for NVS readback verification.
+  // Never put a multi-KiB Record on the Arduino/UI task stack.
+  const bool ok=wrote && load(record_.boot%kBootSlots,scratch_) &&
+      scratch_.boot==record_.boot && scratch_.saves==expected_saves;
   can.endLogCheckpoint();
   if(ok) {
     record_.saves=scratch_.saves;
