@@ -161,10 +161,18 @@ void Ui::update(const CanMonitor& can, const BleStats& ble_stats, bool ble_ready
            static_cast<unsigned long>(stats.driver_bus_error));
 
   char ble_status[32]{};
-  std::snprintf(ble_status, sizeof(ble_status), "%s C%lu D%lu",
-                bleText(ble_ready, ble_connected, ble_elm),
-                static_cast<unsigned long>(ble_stats.connect_count),
-                static_cast<unsigned long>(ble_stats.disconnect_count));
+  if (ble_stats.last_disconnect_reason_known) {
+    std::snprintf(ble_status, sizeof(ble_status), "%s C%lu D%lu R%02X",
+                  bleText(ble_ready, ble_connected, ble_elm),
+                  static_cast<unsigned long>(ble_stats.connect_count),
+                  static_cast<unsigned long>(ble_stats.disconnect_count),
+                  static_cast<unsigned>(ble_stats.last_disconnect_reason));
+  } else {
+    std::snprintf(ble_status, sizeof(ble_status), "%s C%lu D%lu R--",
+                  bleText(ble_ready, ble_connected, ble_elm),
+                  static_cast<unsigned long>(ble_stats.connect_count),
+                  static_cast<unsigned long>(ble_stats.disconnect_count));
+  }
   const char* ble = ble_status;
   const uint16_t ble_color = bleColor(ble_ready, ble_connected, ble_elm);
   if (std::strncmp(cached_ble_, ble, sizeof(cached_ble_)) != 0 ||
