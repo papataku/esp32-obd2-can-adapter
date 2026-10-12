@@ -14,7 +14,7 @@ namespace m5can {
 class BleEvidenceJournal {
  public:
   static constexpr uint32_t kMagic=0x4D35424CU; // M5BL
-  static constexpr uint16_t kVersion=1;
+  static constexpr uint16_t kVersion=2;
   static constexpr unsigned kBootSlots=4;
   static constexpr unsigned kEvents=12;
   static constexpr unsigned kFaultBuckets=48;
