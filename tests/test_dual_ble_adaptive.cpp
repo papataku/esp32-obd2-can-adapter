@@ -78,6 +78,11 @@ DiagnosticResult ecuReply(const DiagnosticRequest& r) {
     if(mode==Ecu::BusOff) result.status=DiagnosticStatus::BusOff;
     if(mode==Ecu::Driver) result.status=DiagnosticStatus::ModeError;
   }
+  if(mode==Ecu::LongRaw && result.status==DiagnosticStatus::Ok) {
+    for(unsigned n=1;n<kDiagnosticMaxRawFrames;++n)
+      result.raw_frames[n]=result.raw_frames[0];
+    result.raw_frame_count=kDiagnosticMaxRawFrames;
+  }
   return result;
 }
 std::string output(uint16_t id) {
@@ -581,7 +586,7 @@ int main() {
    while((pos=stream.find("M5ITEM:00:0105",pos))!=std::string::npos){++items;++pos;}
    assert(items==16);
    size_t frames=0;pos=0;
-   while((pos=stream.find("18DAF101 03 41 05 50",pos))!=std::string::npos){++frames;++pos;}
+   while((pos=stream.find("18DAF101 03 41 05 67",pos))!=std::string::npos){++frames;++pos;}
    assert(frames==16*kDiagnosticMaxRawFrames);
    assert(bench.ble.stats().notify_failures==0);
    assert(bench.ble.stats().tx_queue_overflows==0);
