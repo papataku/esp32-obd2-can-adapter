@@ -116,13 +116,15 @@ void loop() {
     const char* kind=event.kind==m5can::BleDiagnosticEvent::Kind::Connect ? "CONNECT"
         : event.kind==m5can::BleDiagnosticEvent::Kind::Disconnect ? "DISCONNECT"
         : event.kind==m5can::BleDiagnosticEvent::Kind::Reject ? "REJECT" : "ERROR";
-    Serial.printf("#BLE_EVENT,kind=%s,seq=%lu,ms=%lu,id=%u,gen=%lu,addr=%04X,reason_known=%u,reason=%d,mtu=%u,interval=%u,latency=%u,supervision=%u,rx=%llu,tx=%llu,retries=%lu,failed=%lu,drops=%lu\n",
+    Serial.printf("#BLE_EVENT,kind=%s,seq=%lu,ms=%lu,id=%u,gen=%lu,addr=%04X,reason_known=%u,reason=%d,mtu=%u,interval=%u,latency=%u,supervision=%u,rx=%llu,tx=%llu,retries=%lu,failed=%lu,drops=%lu,code=%u,error=%s,detail=%lu\n",
         kind,static_cast<unsigned long>(event.sequence),static_cast<unsigned long>(event.uptime_ms),
         event.connection_id,static_cast<unsigned long>(event.generation),event.address_suffix,
         event.reason_known?1U:0U,event.reason,event.mtu,event.interval,event.latency,event.supervision,
         static_cast<unsigned long long>(event.rx_bytes),static_cast<unsigned long long>(event.tx_bytes),
         static_cast<unsigned long>(event.retries),static_cast<unsigned long>(event.failed),
-        static_cast<unsigned long>(g_ble.diagnosticDrops()));
+        static_cast<unsigned long>(g_ble.diagnosticDrops()),
+        event.error_code,m5can::diagnosticErrorName(event.error_code),
+        static_cast<unsigned long>(event.error_detail));
   }
 
   static uint32_t last_loop_us=0,loop_peak_us=0;
