@@ -20,9 +20,10 @@ class AnalysisTest(unittest.TestCase):
                     (11, 'adapter', '#BLE_DUAL,clients=2,connects=2,disconnects=0,rx_overflow=0,notify=100,retries=0,failed=0'),
                     (19, 'adapter', '#BLE_DUAL,clients=2,connects=3,disconnects=1,rx_overflow=0,notify=200,retries=0,failed=0'),
                     (21, 'adapter', 'ESP-ROM: cleanup reset'),
-                    (11, 'ring', 'M5CAN SIGNAL id=0 updates=10 age_ms=4 quality=1'),
+                    (11, 'ring', 'M5CAN SIGNAL id=0 value_x100=10 quality=1 updates=10 age_ms=4'),
                     (15, 'ring', 'M5CAN SIGNAL id=0 updates=bad'),
-                    (19, 'ring', 'M5CAN SIGNAL id=0 updates=50 age_ms=5 quality=1'),
+                    (16, 'ring', 'M5CAN SIGNAL id=0 value_x100=10 quality=1 updates=40 99 age_ms=4'),
+                    (19, 'ring', 'M5CAN SIGNAL id=0 value_x100=10 quality=1 updates=50 age_ms=5'),
                     (19, 'ring', 'TACOLOG {"type":"saved","ok":false,"write_us":100}')]
             (root/'mac_events.jsonl').write_text(''.join(json.dumps({'monotonic': t, 'utc': str(t),
                 'device': dev, 'line': line})+'\n' for t, dev, line in data))
@@ -32,7 +33,7 @@ class AnalysisTest(unittest.TestCase):
             self.assertEqual(result['reboots_or_panics'], [])
             self.assertEqual(result['counters']['adapter:disconnects']['delta'], 1)
             self.assertEqual(result['signals']['ring:0']['hz'], 5)
-            self.assertEqual(result['malformed_rows']['ring:signal'], 1)
+            self.assertEqual(result['malformed_rows']['ring:signal'], 2)
             self.assertEqual(result['ranges']['ring:save_failed']['max'], 1)
             self.assertIsNone(result['capture_coverage']['jc'])
             self.assertEqual(result['capture_coverage']['ring']['last_delay_s'], 1)

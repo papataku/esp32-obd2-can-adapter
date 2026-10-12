@@ -43,22 +43,22 @@ def analyze(root):
             malformed[key] = malformed.get(key, 0)+1
         if 'ESP-ROM:' in line or 'Guru Meditation' in line or 'panic' in line.lower():
             reboots.append({'device': device, 'utc': row['utc'], 'line': line})
-        if line.startswith('M5CAN SIGNAL '):
-            if numeric(['id', 'updates', 'age_ms', 'quality']):
+        if 'M5CAN SIGNAL ' in line:
+            if re.fullmatch(r'M5CAN SIGNAL id=\d+ value_x100=-?\d+ quality=\d+ updates=\d+ age_ms=\d+', line):
                 signals.setdefault(device+':'+d['id'], []).append((row['monotonic'], d))
             else: invalid('signal')
-        if line.startswith('#BLE_PEER,'):
-            if numeric(['id', 'gen', 'up', 'rx_bytes', 'tx_bytes', 'notify', 'failed']):
+        if '#BLE_PEER,' in line:
+            if re.fullmatch(r'#BLE_PEER,slot=\d+,up=[01],id=\d+,gen=\d+,addr=[0-9A-Fa-f]+,mtu=\d+,rx_bytes=\d+,tx_bytes=\d+,rx_writes=\d+,notify=\d+,retries=\d+,failed=\d+', line):
                 peers.setdefault(d['id']+':'+d['gen'], []).append((row['monotonic'], d))
             else: invalid('peer')
-        if line.startswith('#BLE_DUAL,'):
+        if '#BLE_DUAL,' in line:
             keys = ['clients', 'connects', 'disconnects', 'rx_overflow', 'notify', 'retries', 'failed']
-            if numeric(keys):
+            if re.fullmatch(r'#BLE_DUAL,clients=\d+,connects=\d+,disconnects=\d+,rx_overflow=\d+,notify=\d+,retries=\d+,failed=\d+', line):
                 for k in keys: counters.setdefault('adapter:'+k, []).append((row['monotonic'], int(d[k])))
             else: invalid('dual')
         if line.startswith('POLL '):
             match = re.match(r'POLL (\d+) ', line)
-            if match and numeric(['ok', 'timeout', 'error']):
+            if match and re.fullmatch(r'POLL \d+ enabled=[01] period=\d+ ok=\d+ timeout=\d+ error=\d+ latency=\d+', line):
                 for k in ['ok', 'timeout', 'error']:
                     counters.setdefault(device+':poll'+match[1]+':'+k, []).append((row['monotonic'], int(d[k])))
             else: invalid('poll')

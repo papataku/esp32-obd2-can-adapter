@@ -12,6 +12,12 @@ def fields(line):
     return dict(re.findall(r'([A-Za-z0-9_]+)=([^,\s]+)', line))
 
 
+def bench_applied(line, preset):
+    expected = {'moderate': ('10', '5', '5'), 'high': ('20', '20', '20')}[preset]
+    d = fields(line)
+    return line.startswith('M5CAN BENCH RATE APPLIED ') and tuple(d.get(k) for k in ['rpm', 'speed', 'power']) == expected and d.get('coolant') == d.get('soc') == '1'
+
+
 def capture(args):
     import serial
     from serial.tools import list_ports
@@ -51,6 +57,7 @@ def capture(args):
                         if '#DRIVELOG,END' in text:latest['trip_complete']=True
                         if text.startswith('#BLE_DUAL,'):latest['dual']=fields(text)
                         if text.startswith('#BLELOG,END'):latest['blelog_complete']=True
+                        if text.startswith('M5CAN BENCH RATE APPLIED '):latest[name+'_bench']=text
         except Exception as exc:
             with lock:errors.append(name+': '+repr(exc))
         finally:raw.close()
@@ -78,6 +85,20 @@ def capture(args):
         if args.isolate_jc and 'jc' in links:send('jc','x')
         if args.isolate_ring or args.ring_after_ipad:send('ring','x')
         time.sleep(2)
+        if args.meter_bench_preset:
+            # DEMO has already been verified. Only the volatile existing
+            # single-byte meter commands are allowed; never change NVS rates.
+            if not args.require_two_meters or 'jc' not in links or args.isolate_ring or args.isolate_jc:
+                raise RuntimeError('bench preset requires both active meters')
+            command = '#' if args.meter_bench_preset == 'high' else '!'
+            send('ring', command);send('jc', command)
+            deadline=time.monotonic()+10
+            while time.monotonic()<deadline:
+                if all(bench_applied(latest.get(name+'_bench',''),args.meter_bench_preset) for name in ['ring','jc']):break
+                time.sleep(.1)
+            else:raise RuntimeError('volatile bench rates not applied on both meters')
+            manifest['meter_bench_preset']=args.meter_bench_preset
+            manifest['meter_bench_rates_volatile']=True
         started=time.monotonic();manifest['measurement_start_monotonic']=started
         (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
         if args.ipad_device:
@@ -175,6 +196,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ['adapter','ring','output']:p.add_argument('--'+name,required=True)
     p.add_argument('--meter-sha',default='unknown')
+    p.add_argument('--meter-bench-preset',choices=['moderate','high'])
     p.add_argument('--require-two-meters',action='store_true');p.add_argument('--export-evidence',action='store_true')
     p.add_argument('--ipad-delay-ms',type=float,default=200);p.add_argument('--ipad-positive-repeats',type=int,default=1)
     p.add_argument('--ipad-device');p.add_argument('--ipad-scenario',choices=['idle','single','batch','no-data','faults'],default='batch');p.add_argument('--ipad-seconds',type=float,default=1800)
