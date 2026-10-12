@@ -26,8 +26,9 @@ Output groups:
 
 - `#LOGCAP,PARTITION`: actual `nvs` label, flash offset, partition size
   and encryption flag, read from the live ESP-IDF partition table.
-- `#LOGCAP,STATS`: `nvs_get_stats` used, free, available, total entries
-  and namespaces for that NVS partition.
+- `#LOGCAP,STATS`: `nvs_get_stats` used, free and total entries,
+  namespaces and an explicit unknown BLOB write capacity. The pinned
+  ESP-IDF version does not expose an `available_entries` member.
 - `#LOGCAP,MODEL`: compiled size of the legacy DriveLog records (8 boot
   slots), coordinator sidecars, BLE error journal (4 slots in PR #27), and
   **raw-array payload-only minimum** projected for 8 × (initial group,
