@@ -278,6 +278,7 @@ void BleElmTransport::onPeerConnect(uint16_t id, uint16_t address_suffix) {
       peer.generation = ++next_generation_;
       peer.mtu = 23;
       peer.active = true;
+      peer.gap_disconnect_seen = false;
       peer.traffic = {};
       peer.traffic.connected = true;
       peer.traffic.connection_id = id;
@@ -309,7 +310,13 @@ void BleElmTransport::onPeerDisconnect(uint16_t id) {
   portENTER_CRITICAL(&mux_);
   for (auto& peer : clients_) {
     if (peer.active && peer.connection_id == id) {
+      // GAP observer isn't guaranteed for every NimBLE/server exit path.
+      // Preserve an explicit unknown-reason event rather than silently
+      // treating a server callback as a clean or explained disconnect.
+      if(!peer.gap_disconnect_seen)
+        pushDiagnostic(BleDiagnosticEvent::Kind::Disconnect,id,0,false);
       pushEvent(BleClientEvent::Type::Disconnect,id,peer.generation,0);
+      peer.gap_disconnect_seen=false;
       peer.active = false;
       peer.traffic.connected = false;
     }
@@ -358,6 +365,9 @@ void BleElmTransport::pushDiagnostic(BleDiagnosticEvent::Kind kind, uint16_t id,
 void BleElmTransport::recordGapDisconnect(uint16_t id, int reason,
     uint16_t interval, uint16_t latency, uint16_t supervision) {
   portENTER_CRITICAL(&mux_);
+  for(auto& peer:clients_)
+    if(peer.active && peer.connection_id==id)
+      peer.gap_disconnect_seen=true;
   pushDiagnostic(BleDiagnosticEvent::Kind::Disconnect,id,reason,true,
                  interval,latency,supervision);
   portEXIT_CRITICAL(&mux_);
