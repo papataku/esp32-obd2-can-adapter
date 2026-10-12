@@ -100,7 +100,7 @@ bool Ui::pollDemoToggle() {
   return demo_touch_.onPress(touch.x,touch.y,millis());
 }
 
-void Ui::update(const CanMonitor& can, bool ble_ready,
+void Ui::update(const CanMonitor& can, const BleStats& ble_stats, bool ble_ready,
                 bool ble_connected, bool ble_elm, bool demo_auto,
                 bool demo_active
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -178,10 +178,25 @@ void Ui::update(const CanMonitor& can, bool ble_ready,
   unsigned connected_peers=0;
   if (peers) for (const auto& p : peers->peers)
     connected_peers += p.connected ? 1U : 0U;
-  snprintf(dual_ble_text,sizeof(dual_ble_text),"BLE %u/2",connected_peers);
+  if(ble_stats.last_disconnect_reason_known)
+    snprintf(dual_ble_text,sizeof(dual_ble_text),"BLE %u/2 R%X",connected_peers,ble_stats.last_disconnect_reason);
+  else snprintf(dual_ble_text,sizeof(dual_ble_text),"BLE %u/2 R--",connected_peers);
   const char* ble = ble_ready ? dual_ble_text : "BLE ERROR";
 #else
-  const char* ble = bleText(ble_ready, ble_connected, ble_elm);
+  char ble_status[32]{};
+  if (ble_stats.last_disconnect_reason_known) {
+    std::snprintf(ble_status, sizeof(ble_status), "%s C%lu D%lu R%02X",
+                  bleText(ble_ready, ble_connected, ble_elm),
+                  static_cast<unsigned long>(ble_stats.connect_count),
+                  static_cast<unsigned long>(ble_stats.disconnect_count),
+                  static_cast<unsigned>(ble_stats.last_disconnect_reason));
+  } else {
+    std::snprintf(ble_status, sizeof(ble_status), "%s C%lu D%lu R--",
+                  bleText(ble_ready, ble_connected, ble_elm),
+                  static_cast<unsigned long>(ble_stats.connect_count),
+                  static_cast<unsigned long>(ble_stats.disconnect_count));
+  }
+  const char* ble = ble_status;
 #endif
   const uint16_t ble_color = bleColor(ble_ready, ble_connected, ble_elm);
   if (std::strncmp(cached_ble_, ble, sizeof(cached_ble_)) != 0 ||

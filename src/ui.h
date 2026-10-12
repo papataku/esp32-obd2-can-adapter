@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "can_monitor.h"
+#include "ble_elm_transport.h"
 #include "demo_touch_control.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "ble_elm_transport.h"
@@ -13,7 +14,7 @@ class Ui {
   void begin();
   // Updates the M5Dial touch hardware every loop. Call before update().
   bool pollDemoToggle();
-  void update(const CanMonitor& can, bool ble_ready,
+  void update(const CanMonitor& can, const BleStats& ble_stats, bool ble_ready,
               bool ble_connected, bool ble_elm, bool demo_auto,
               bool demo_active
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -41,7 +42,7 @@ class Ui {
   char cached_lower_label_[32]{};
 #endif
 
-  char cached_ble_[24]{};
+  char cached_ble_[32]{};
   char cached_status_[24]{};
   char cached_demo_mode_[24]{};
   char cached_fps_[20]{};

@@ -24,6 +24,15 @@
 #endif
 
 namespace {
+#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+uint32_t bootFreeHeapBytes() {
+#if defined(ARDUINO_ARCH_ESP32)
+  return ESP.getFreeHeap();
+#else
+  return 0;
+#endif
+}
+#endif
 m5can::CanMonitor g_can;
 m5can::BleElmTransport g_ble;
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -148,6 +157,34 @@ void loop() {
     g_serial.toggleDemoAuto();
   }
   g_serial.pollInput();
+#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  if (g_ble_ok) {
+    // Emit callback events from loop(), never from the BLE stack callback.
+    // Match these uptime values against iPad BLE_STATE session timestamps.
+    static uint32_t seen_connects = 0;
+    static uint32_t seen_disconnects = 0;
+    const auto stats = g_ble.stats();
+    if (stats.connect_count != seen_connects) {
+      seen_connects = stats.connect_count;
+      Serial.printf("#BLE,CONNECT,count=%lu,conn_id=%u,uptime_ms=%lu,free_heap=%lu\n",
+                    static_cast<unsigned long>(seen_connects),
+                    static_cast<unsigned>(stats.last_connect_conn_id),
+                    static_cast<unsigned long>(stats.last_connect_ms),
+                    static_cast<unsigned long>(bootFreeHeapBytes()));
+    }
+    if (stats.disconnect_count != seen_disconnects) {
+      seen_disconnects = stats.disconnect_count;
+      Serial.printf("#BLE,DISCONNECT,count=%lu,conn_id=%u,reason_known=%u,reason=0x%02X,uptime_ms=%lu,free_heap=%lu\n",
+                    static_cast<unsigned long>(seen_disconnects),
+                    static_cast<unsigned>(stats.last_disconnect_conn_id),
+                    stats.last_disconnect_reason_known ? 1U : 0U,
+                    static_cast<unsigned>(stats.last_disconnect_reason),
+                    static_cast<unsigned long>(stats.last_disconnect_ms),
+                    static_cast<unsigned long>(bootFreeHeapBytes()));
+    }
+  }
+#endif
+
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   // BLE worker owns DualBleElm; do not poll sessions from the LCD loop.
   static uint32_t last_dual_stats=0;
@@ -262,10 +299,10 @@ void loop() {
 #endif
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   const auto peers=g_ble.peerTraffic();
-  g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
+  g_ui.update(g_can,g_ble.stats(),g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
               g_serial.demoAutoEnabled(),g_serial.demoActive(),&peers);
 #else
-  g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
+  g_ui.update(g_can,g_ble.stats(),g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
               g_serial.demoAutoEnabled(),g_serial.demoActive());
 #endif
   delay(1);

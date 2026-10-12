@@ -70,6 +70,21 @@ class M5CanBleServerCallbacks final : public BLEServerCallbacks {
   void onMtuChanged(BLEServer*,esp_ble_gatts_cb_param_t* p) override {
     if(p)owner_.onMtuChanged(p->mtu.mtu);
   }
+#if defined(ESP_PLATFORM)
+  // The Arduino-ESP32 Bluedroid callbacks expose the controller's true
+  // disconnect reason and per-connection ID in the two-argument overload.
+  // Keep the one-argument overload for the existing transport bookkeeping.
+  void onConnect(BLEServer*, esp_ble_gatts_cb_param_t* event) override {
+    if (event) owner_.onConnectDetails(event->connect.conn_id);
+  }
+  void onDisconnect(BLEServer*, esp_ble_gatts_cb_param_t* event) override {
+    if (event) {
+      owner_.onDisconnectDetails(
+          event->disconnect.conn_id,
+          static_cast<uint16_t>(event->disconnect.reason));
+    }
+  }
+#endif
  private:
   BleElmTransport& owner_;
 };
@@ -153,6 +168,7 @@ bool BleElmTransport::begin() {
 
 void BleElmTransport::onConnect() {
   portENTER_CRITICAL(&mux_);
+  ++stats_.connect_count;stats_.last_connect_ms=millis();
   connected_ = true;
   peer_mtu_=stats_.peer_mtu=23;
   disconnect_event_ = false;
@@ -167,6 +183,8 @@ void BleElmTransport::restartAdvertising() {
 
 void BleElmTransport::onDisconnect() {
   portENTER_CRITICAL(&mux_);
+  ++stats_.disconnect_count;stats_.last_disconnect_ms=millis();
+  stats_.last_disconnect_reason_known=false;
   connected_ = false;
   peer_mtu_=stats_.peer_mtu=23;
   disconnect_event_ = true;
@@ -174,6 +192,20 @@ void BleElmTransport::onDisconnect() {
   rx_tail_ = 0;
   portEXIT_CRITICAL(&mux_);
   restartAdvertising();
+}
+
+void BleElmTransport::onConnectDetails(uint16_t conn_id) {
+  portENTER_CRITICAL(&mux_);
+  stats_.last_connect_conn_id = conn_id;
+  portEXIT_CRITICAL(&mux_);
+}
+
+void BleElmTransport::onDisconnectDetails(uint16_t conn_id, uint16_t reason) {
+  portENTER_CRITICAL(&mux_);
+  stats_.last_disconnect_conn_id = conn_id;
+  stats_.last_disconnect_reason = reason;
+  stats_.last_disconnect_reason_known = true;
+  portEXIT_CRITICAL(&mux_);
 }
 
 void BleElmTransport::onMtuChanged(uint16_t mtu) {
@@ -308,7 +340,7 @@ void BleElmTransport::onPeerConnect(uint16_t id, uint16_t address_suffix) {
       peer.traffic.generation = peer.generation;
       peer.traffic.address_suffix = address_suffix;
       connected_ = true;
-  peer_mtu_=stats_.peer_mtu=23;
+      ++stats_.connect_count;stats_.last_connect_ms=millis();stats_.last_connect_conn_id=id;
       pushEvent(BleClientEvent::Type::Connect,id,peer.generation,0);
       pushDiagnostic(BleDiagnosticEvent::Kind::Connect,id);
       accepted = true;
@@ -337,6 +369,8 @@ void BleElmTransport::onPeerDisconnect(uint16_t id) {
       // GAP observer isn't guaranteed for every NimBLE/server exit path.
       // Preserve an explicit unknown-reason event rather than silently
       // treating a server callback as a clean or explained disconnect.
+      ++stats_.disconnect_count;stats_.last_disconnect_ms=millis();stats_.last_disconnect_conn_id=id;
+      if(!peer.gap_disconnect_seen)stats_.last_disconnect_reason_known=false;
       if(!peer.gap_disconnect_seen)
         pushDiagnostic(BleDiagnosticEvent::Kind::Disconnect,id,0,false);
       pushEvent(BleClientEvent::Type::Disconnect,id,peer.generation,0);
@@ -346,7 +380,6 @@ void BleElmTransport::onPeerDisconnect(uint16_t id) {
     }
   }
   connected_ = false;
-  peer_mtu_=stats_.peer_mtu=23;
   for (const auto& peer : clients_) if (peer.active) connected_ = true;
   portEXIT_CRITICAL(&mux_);
   restartAdvertising();
@@ -390,6 +423,9 @@ void BleElmTransport::pushDiagnostic(BleDiagnosticEvent::Kind kind, uint16_t id,
 void BleElmTransport::recordGapDisconnect(uint16_t id, int reason,
     uint16_t interval, uint16_t latency, uint16_t supervision) {
   portENTER_CRITICAL(&mux_);
+  stats_.last_disconnect_conn_id=id;
+  stats_.last_disconnect_reason=static_cast<uint16_t>(reason);
+  stats_.last_disconnect_reason_known=true;
   for(auto& peer:clients_)
     if(peer.active && peer.connection_id==id)
       peer.gap_disconnect_seen=true;
