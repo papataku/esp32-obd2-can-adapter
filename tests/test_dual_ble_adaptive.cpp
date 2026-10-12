@@ -297,5 +297,21 @@ int main() {
       assert(requests.size()<=6);
     }
   }
+  // USB and BLE remain different ELM sessions but physically serialize
+  // through the SAME CanMonitor query-in-flight gate. No second CAN TX
+  // may start while the USB read owns the transaction slot.
+  {mode=Ecu::Full;Bench bench;
+   DiagnosticRequest usb{};
+   usb.can_id=0x18DB33F1U;usb.length=2;
+   usb.data[0]=0x01;usb.data[1]=0x05;
+   assert(bench.can.acquireLease(5000));
+   assert(bench.can.submitQuery(usb));
+   bench.batchBoth();bench.dual.poll();
+   assert(requests.size()==1 && bench.groups()==0);
+   DiagnosticResult usb_done{};
+   assert(bench.can.pollQueryResult(usb_done));
+   bench.drain();bench.values();
+   assert(bench.groups()==1 && requests.size()==3);
+  }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
 }
