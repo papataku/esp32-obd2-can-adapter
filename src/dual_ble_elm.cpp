@@ -413,7 +413,7 @@ void DualBleElm::onResult() {
             rpm,speed,virtual_frames,acquired_us)) {
       // A previously identified ECU differs from this grouped responder.
       // Do not send or cache ambiguous signals as successful readings.
-      adaptive_multi_pid_.disable();
+      adaptive_multi_pid_.rejectCacheEcuConflict();
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
 #endif
@@ -485,7 +485,7 @@ void DualBleElm::onResult() {
     if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
         !pid_cache_.rememberApprovedPair(
             rpm,speed,virtual_frames,acquired_us)) {
-      adaptive_multi_pid_.disable();
+      adaptive_multi_pid_.rejectCacheEcuConflict();
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
 #endif
