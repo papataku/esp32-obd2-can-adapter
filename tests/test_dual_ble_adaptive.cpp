@@ -161,9 +161,9 @@ int main() {
    write(bench.b,"ATM5B00:010D,0105");
    bench.dual.poll();bench.dual.poll();bench.dual.poll();
    assert(bench.groups()==1 && requests.size()==2);
-   assert(output(7).find("M5ITEM:00:010C\\r18DAF101 04 41 0C 13 88")!=std::string::npos);
+   assert(output(7).find("M5ITEM:00:010C\r18DAF101 04 41 0C 13 88")!=std::string::npos);
    assert(output(7).find("M5ITEM:00:010D")==std::string::npos);
-   assert(output(19).find("M5ITEM:00:010D\\r18DAF101 03 41 0D 50")!=std::string::npos);
+   assert(output(19).find("M5ITEM:00:010D\r18DAF101 03 41 0D 50")!=std::string::npos);
    assert(output(19).find("M5ITEM:00:010C")==std::string::npos);
    // Both parameters are cached individually: reusing RPM in a different
    // BLE session within the TTL does not generate a new CAN transaction.
