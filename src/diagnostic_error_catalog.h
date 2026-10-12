@@ -12,17 +12,18 @@ enum class DiagnosticError : uint16_t {
   BleNoClientSlot=101, BleRxQueueOverflow=102,
   BleNotifyBackpressure=103, BleNotifySendFailed=104,
   BlePeerGenerationStale=105, BleDiagnosticRingOverflow=106,
+  BleInitFailure=107,
   CanNoData=201, CanBusy=202, CanLeaseRequired=203,
   CanInvalidRequest=204, CanRateLimited=205, CanDriverError=206,
   CanBusOff=207, CanModeError=208, CanIsoTpError=209,
   CanUnknownStatus=299,
   GroupRejected=301, GroupStopped=302, GroupPeerGone=303,
   ElmBusy=401, ElmInputOverflow=402, ElmInvalidCommand=403,
-  AppPeerGone=404,
+  AppPeerGone=404, AppTaskCreateFailed=405,
   CanQueryTimeout=501, CanFailedCounter=502,
   CanRxQueueDrop=503, CanDriverMissed=504,
   CanDriverOverrun=505, CanBusErrorCounter=506,
-  CanArbitrationLoss=507,
+  CanArbitrationLoss=507, CanInitFailed=508,
   BleRxOverflowCounter=521, BleNotifyFailureCounter=522,
   BleSessionRejectCounter=523, BleNotifyRetryCounter=524,
   JournalStorageFailure=901
@@ -53,6 +54,7 @@ inline const char* diagnosticErrorName(uint16_t raw) {
     case DiagnosticError::BleNotifySendFailed:return "BLE_NOTIFY_FAILURE";
     case DiagnosticError::BlePeerGenerationStale:return "BLE_STALE_GENERATION";
     case DiagnosticError::BleDiagnosticRingOverflow:return "BLE_DIAG_OVERFLOW";
+    case DiagnosticError::BleInitFailure:return "BLE_INIT_FAILURE";
     case DiagnosticError::CanNoData:return "CAN_NO_DATA";
     case DiagnosticError::CanBusy:return "CAN_BUSY";
     case DiagnosticError::CanLeaseRequired:return "CAN_LEASE_DENIED";
@@ -70,6 +72,7 @@ inline const char* diagnosticErrorName(uint16_t raw) {
     case DiagnosticError::ElmInputOverflow:return "ELM_INPUT_OVERFLOW";
     case DiagnosticError::ElmInvalidCommand:return "ELM_INVALID";
     case DiagnosticError::AppPeerGone:return "APP_PEER_GONE";
+    case DiagnosticError::AppTaskCreateFailed:return "APP_TASK_CREATE_FAILED";
     case DiagnosticError::CanQueryTimeout:return "CAN_TIMEOUT_COUNTER";
     case DiagnosticError::CanFailedCounter:return "CAN_FAILED_COUNTER";
     case DiagnosticError::CanRxQueueDrop:return "CAN_QUEUE_DROPS";
@@ -77,6 +80,7 @@ inline const char* diagnosticErrorName(uint16_t raw) {
     case DiagnosticError::CanDriverOverrun:return "CAN_RX_OVERRUN";
     case DiagnosticError::CanBusErrorCounter:return "CAN_BUS_ERRORS";
     case DiagnosticError::CanArbitrationLoss:return "CAN_ARB_LOST";
+    case DiagnosticError::CanInitFailed:return "CAN_INIT_FAILED";
     case DiagnosticError::BleRxOverflowCounter:return "BLE_RX_DROPS";
     case DiagnosticError::BleNotifyFailureCounter:return "BLE_TX_FAILED";
     case DiagnosticError::BleSessionRejectCounter:return "BLE_SESSION_REJECT";
