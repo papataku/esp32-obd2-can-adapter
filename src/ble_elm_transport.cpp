@@ -24,6 +24,21 @@ class M5CanBleServerCallbacks final : public BLEServerCallbacks {
   void onDisconnect(BLEServer*) override {
     owner_.onDisconnect();
   }
+#if defined(ESP_PLATFORM)
+  // The Arduino-ESP32 Bluedroid callbacks expose the controller's true
+  // disconnect reason and per-connection ID in the two-argument overload.
+  // Keep the one-argument overload for the existing transport bookkeeping.
+  void onConnect(BLEServer*, esp_ble_gatts_cb_param_t* event) override {
+    if (event) owner_.onConnectDetails(event->connect.conn_id);
+  }
+  void onDisconnect(BLEServer*, esp_ble_gatts_cb_param_t* event) override {
+    if (event) {
+      owner_.onDisconnectDetails(
+          event->disconnect.conn_id,
+          static_cast<uint16_t>(event->disconnect.reason));
+    }
+  }
+#endif
 
  private:
   BleElmTransport& owner_;
@@ -106,6 +121,20 @@ void BleElmTransport::onConnect() {
   disconnect_event_ = false;
   rx_head_ = 0;
   rx_tail_ = 0;
+  portEXIT_CRITICAL(&mux_);
+}
+
+void BleElmTransport::onConnectDetails(uint16_t conn_id) {
+  portENTER_CRITICAL(&mux_);
+  stats_.last_connect_conn_id = conn_id;
+  portEXIT_CRITICAL(&mux_);
+}
+
+void BleElmTransport::onDisconnectDetails(uint16_t conn_id, uint16_t reason) {
+  portENTER_CRITICAL(&mux_);
+  stats_.last_disconnect_conn_id = conn_id;
+  stats_.last_disconnect_reason = reason;
+  stats_.last_disconnect_reason_known = true;
   portEXIT_CRITICAL(&mux_);
 }
 
