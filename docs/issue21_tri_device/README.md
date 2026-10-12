@@ -157,3 +157,32 @@ order alone is insufficient. Compare the same firmware, rates and window.
 Public reports list5 review angles performed by the author, not fictitious
 independent reviewers: BLE APIs/routing, RTOS/resource bounds, CAN safety,
 SQLite/RAW persistence, and test/clock/UX reliability.
+
+
+## Failure fixture and current acceptance limits
+
+A normal30min simultaneous trial completed6026 five-PID batches with no
+unexpected disconnect, runtime reset or notification failure. It had81 iPad
+notify retries and70 Ring retries, and p95 batch RTT115ms. This is not a
+zero-congestion result. Ring RPM effective update rate was8.826Hz under this
+load (target10Hz), hidden signals2Hz. Interleaved USB signal diagnostics
+produced27 unparseable rows; they remain UNKNOWN rather than fabricated ages.
+
+The user's original condition includes unknown DID exploration. The raw
+iPad SQLite contains130 NRC0x31 and1 NRC0x33 responses. Host tests replay
+these, NO DATA, partial positive/BUFFER FULL and missing-prompt timeout.
+The physical no-data fixture uses the same installed adapter DEMO image and
+a finite three-DID error batch followed immediately by five known positive
+PIDs. This differs from a real CAN ECU timeout/ISO-TP workload, so a passing
+fixture cannot exclude CAN-side blocking or the original full analyzer UI.
+Compare Ring-first/iPad-first for the same600s error-mixed load and record
+actual handles/generations (not merely launch order). Record successful
+normal batches separately from expected negative items; no unknown-vehicle
+discovery or write/security/session commands are introduced.
+
+Meter image identity is observed from TACOLOG ready (full ELF SHA), but the
+matching saved source ELF has not yet been located. Keep the SAME unmodified
+Ring image across order trials, publish this provenance limit, and do not
+claim the current saved pre-drive ELF matches a differently fingerprinted
+installed image. Adapter/app first trial binaries and source basis are stored
+locally; later app error fixture is a clean signed source63b6c77.

@@ -76,7 +76,7 @@ def run_analysis(capture, ipad_jsonl, database=None):
         if m:latencies.append(float(m[1]))
     latencies.sort()
     percentile=lambda q:latencies[min(len(latencies)-1,int((len(latencies)-1)*q))] if latencies else None
-    result={'app_complete':bool(end),'app_failures':failures,'samples':len(samples),'duration_from_demo_s':round(hi-lo,3) if start and end else None,'latency_ms':{'p50':percentile(.5),'p95':percentile(.95),'p99':percentile(.99),'max':max(latencies) if latencies else None},'disconnects_during_app':disconnects,'reboots_during_app':reboots,'signals':rates,'peer_traffic':traffic,'malformed_signal_rows':malformed_signals,'missing':'Capture coverage and all-peer mapping must be checked before physical PASS; receipt timestamps are not exact controller callback clocks.'}
+    result={'app_complete':bool(end),'app_failures':failures,'samples':len(samples),'expected_error_events':sum(r['kind']=='EXPECTED_ERROR' for r in app),'duration_from_demo_s':round(hi-lo,3) if start and end else None,'latency_ms':{'p50':percentile(.5),'p95':percentile(.95),'p99':percentile(.99),'max':max(latencies) if latencies else None},'disconnects_during_app':disconnects,'reboots_during_app':reboots,'signals':rates,'peer_traffic':traffic,'malformed_signal_rows':malformed_signals,'missing':'Capture coverage and all-peer mapping must be checked before physical PASS; receipt timestamps are not exact controller callback clocks.'}
     if database:
         c=sqlite3.connect('file:'+str(Path(database).resolve())+'?mode=ro',uri=True)
         result['sqlite_integrity']=c.execute('pragma integrity_check').fetchone()[0]
