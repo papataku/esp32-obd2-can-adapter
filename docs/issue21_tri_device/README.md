@@ -186,3 +186,26 @@ Ring image across order trials, publish this provenance limit, and do not
 claim the current saved pre-drive ELF matches a differently fingerprinted
 installed image. Adapter/app first trial binaries and source basis are stored
 locally; later app error fixture is a clean signed source63b6c77.
+
+
+Ring-first NO DATA physical trial completed600.145s:1666 negative three-DID
+batches (4998 NO DATA items), each followed by a successful five-PID batch.
+No unexpected disconnect/reset/notify failure during the app window;
+SQLite integrity ok and complete host coverage. Ring RPM9.208Hz, hidden
+signals approximately2Hz;9 malformed USB rows excluded. The end disconnect
+raw531 was intentional app cleanup. Reverse-order launch was refused by
+SpringBoard Locked; no reverse-order result exists yet.
+
+For explicit error injection only, `m5dial_dual_ble_fault_fixture` inherits
+the same two-peer profile with physical CAN TX compiled out. Compilation
+fails if FAULT_FIXTURE is enabled without CAN_MODE_DRY_RUN. Only verified
+DEMO responds to22FFFD with NRC31,22FFFC with NRC33,222012 with incomplete
+ISO-TP first frame+BUFFER FULL, and22FFFE with no bytes/prompt. Normal UDS
+still returns NO DATA. The app `faults` scenario requires FAULTS=1 and
+MODE=DEMO, expects a300ms command timeout, then verifies a fresh five-PID
+batch without reconnect/reinitialization. This dedicated image has NOT
+been installed or physically tested yet. Host fixture confirms peer
+isolation, subsequent responses and zero submitted CAN requests;47 Swift
+unit tests and iPad unsigned device compile passed. Restore the captured
+adapter image/configuration after physical testing. These fixtures simulate
+application-visible error replies, not real ECU/ISO-TP electrical behavior.

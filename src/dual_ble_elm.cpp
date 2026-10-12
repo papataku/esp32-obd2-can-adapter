@@ -1,4 +1,7 @@
 #include "dual_ble_elm.h"
+#if defined(M5CAN_DEMO_FAULT_FIXTURE) && !defined(M5CAN_CAN_MODE_DRY_RUN)
+#error "DEMO fault fixture requires physical CAN TX compiled out"
+#endif
 #include <esp_timer.h>
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include <algorithm>
@@ -235,6 +238,9 @@ void DualBleElm::onLine(Session& s,const char* line) {
           char caps[200]{};
           std::snprintf(caps,sizeof(caps),"%s DEMO=1 MODE=%s",
                         parsed.reply,demo_source_.demoActive()?"DEMO":"CAN");
+#if defined(M5CAN_DEMO_FAULT_FIXTURE)
+          std::strncat(caps," FAULTS=1",sizeof(caps)-std::strlen(caps)-1);
+#endif
           emitLine(s,caps);
         } else emitLine(s,parsed.reply);
       }
@@ -254,6 +260,19 @@ void DualBleElm::onLine(Session& s,const char* line) {
       s.request=requestOf(parsed.request,s.elm);
       if (!DiagnosticPolicy::allowedReadRequest(s.request)) emitLine(s,"?");
       else if (demo_source_.demoActive()) {
+#if defined(M5CAN_DEMO_FAULT_FIXTURE)
+        // Explicit TX-disabled bench only. No CAN ownership/query changes.
+        if (s.request.length==3 && s.request.data[0]==0x22) {
+          const uint16_t did=(static_cast<uint16_t>(s.request.data[1])<<8)|s.request.data[2];
+          if (did==0xFFFE) { prompt_now=false; break; } // no bytes/prompt
+          if (did==0xFFFD) { emitLine(s,"18DAF101037F2231"); break; }
+          if (did==0xFFFC) { emitLine(s,"18DAF101037F2233"); break; }
+          if (did==0x2012) {
+            emitLine(s,"18DAF101100A622012AABBCC");
+            emitLine(s,"BUFFER FULL"); break;
+          }
+        }
+#endif
         DiagnosticRawFrame frames[2]{};
         const uint8_t n=parsed.request.length==2 && parsed.request.data[0]==0x01
             ? DemoDrive::frames(parsed.request.data[1],millis(),frames):0;

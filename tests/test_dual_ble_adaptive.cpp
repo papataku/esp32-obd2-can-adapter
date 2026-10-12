@@ -140,6 +140,26 @@ bool CanMonitor::pollQueryResult(DiagnosticResult& result) {
 }
 }
 int main() {
+#ifdef M5CAN_DEMO_FAULT_FIXTURE
+  Bench bench; demo=true;
+  for (const auto& item:std::vector<std::pair<const char*,const char*>>{
+      {"22FFFF","NO DATA"}, {"22FFFD","7F2231"},
+      {"22FFFC","7F2233"}, {"222012","BUFFER FULL"}}) {
+    test_notifications.clear(); write(bench.a,item.first); bench.drain();
+    assert(output(7).find(item.second)!=std::string::npos);
+    assert(output(7).find('>')!=std::string::npos);
+    assert(output(19).empty());
+  }
+  test_notifications.clear(); write(bench.a,"22FFFE"); bench.drain();
+  assert(output(7).empty());
+  write(bench.a,"010C"); write(bench.b,"010D"); bench.drain();
+  assert(output(7).find("41 0C")!=std::string::npos);
+  assert(output(19).find("41 0D")!=std::string::npos);
+  assert(requests.empty());
+  std::cout << "PASS DEMO fault replies, silent timeout, peer isolation and fresh recovery without CAN submission\n";
+  return 0;
+#endif
+
 #ifndef M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL
   mode=Ecu::Full; Bench stable; stable.batchBoth(); stable.drain(); stable.values();
   assert(stable.groups()==0 && requests.size()==6);
