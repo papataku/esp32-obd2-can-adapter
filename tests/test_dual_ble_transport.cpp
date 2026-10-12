@@ -137,5 +137,12 @@ int main() {
   // actual latest disconnection. Loss count remains explicit.
   assert(last_reason==0x300+69);
   assert(logged==63 && transport.connectedClientCount()==2);
+  // If NimBLE's server callback fires without a corresponding GAP observer
+  // notification, the journal must still report DISCONNECT reason_unknown.
+  NimBLEServer::callbacks->onDisconnect(server,&b);
+  assert(transport.pollDiagnostic(diag));
+  assert(diag.kind==m5can::BleDiagnosticEvent::Kind::Disconnect);
+  assert(diag.connection_id==19 && diag.generation==eb.generation);
+  assert(!diag.reason_known && transport.connectedClientCount()==1);
 
 }
