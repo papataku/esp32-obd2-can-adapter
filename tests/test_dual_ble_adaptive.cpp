@@ -471,11 +471,21 @@ int main() {
     assert(reload.getBytes("probe1",&saved,sizeof(saved))==sizeof(saved));
     assert(saved.sequence==1 && saved.raw_saved==5);
     assert(saved.raw[4].can_id==0x18DAF103);
-    // A corrupted NVS record must not be mistaken for valid evidence.
+    SerialStub::capture=true;SerialStub::captured.clear();
+    after_reboot.dump(bench.can,bench.ble,false);
+    const std::string valid_dump=SerialStub::captured;
+    assert(valid_dump.find("#DRIVELOG,PROBE,boot=1,state=persisted")!=std::string::npos);
+    assert(valid_dump.find("#DRIVELOG,PROBE_RAW,boot=1,index=4,id=18DAF103")!=std::string::npos);
+    assert(valid_dump.find("rx_tx_us=1204")!=std::string::npos);
+    // A corrupted NVS record must be rejected visibly rather than
+    // presenting incomplete evidence as valid after a future restart.
     auto& bytes=Preferences::storage["m5can_trip/probe1"];
     bytes[sizeof(saved)-1]^=0x80;
+    SerialStub::captured.clear();
     after_reboot.dump(bench.can,bench.ble,false);
-    assert(bytes[sizeof(saved)-1]!=(reinterpret_cast<uint8_t*>(&saved))[sizeof(saved)-1]);
+    assert(SerialStub::captured.find("#DRIVELOG,PROBE,boot=1,state=MISSING")!=std::string::npos);
+    assert(SerialStub::captured.find("#DRIVELOG,PROBE_RAW,boot=1")==std::string::npos);
+    SerialStub::capture=false;SerialStub::captured.clear();
     reload.end();
   }
 #endif
