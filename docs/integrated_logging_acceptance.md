@@ -71,10 +71,10 @@ Long-run profile m5dial_integrated_soak retains the grouped coordinator and
 logger code with the physical CAN TX API compiled out, without fixture replies.
 It does not qualify real-CAN acquisition or electrical behavior.
 
-Physical gates pending: full-RAW synthetic flash/readback/reset, dual-meter
-smoke,2h sustained traffic/heap/fps/error check, cold power cycle and setting
-preservation, human LCD/touch observation. Hardware test data and residual
-limits will be appended before merging. Existing vehicle issues stay open.
+Physical full-RAW synthetic save/readback/warm reset and dual-meter smoke
+passed at544268b. The2h sustained traffic/heap/fps/error check is running.
+Physical cold power loss and human LCD/touch are still unobserved; keep these
+limits explicit in residual issues. Existing vehicle issues stay open.
 
 
 ## Pre-soak physical blocker and stack correction
@@ -82,8 +82,9 @@ limits will be appended before merging. Existing vehicle issues stay open.
 The first full integration fixture3f00008 was application-only flashed with
 hash verification; its USB and BLE runtime did not respond, and esptool
 could not subsequently enter ROM by default or explicitUSB reset. The2h
-soak has NOT started and no physical PASS/merge is claimed. A user10s power
-cycle/ROM recovery is needed; complete8MiB/16MiB backups are available.
+soak had NOT started at that point. A user power cycle was requested, then
+revoked after recovery by serial-selected1MHz JTAG reset. This was a warm
+reset, not a physical power cycle. Complete8MiB/16MiB backups are available.
 
 Compiler inspection found startup frames752+2464+3872=7088 bytes before
 NVS/library calls, and export could nest3632+3872 before caller frames.
@@ -101,7 +102,31 @@ DEMO verification uses non-blockingSTATS instead of a journal dump.
 Host/sanitizer tests and corrected profile builds/stack check pass locally.
 Meter integration's14 CI jobs pass at1860414; native evidence is verified
 in persistent runner storage, remote artifact quota remainsIssue94.
-Meter images72f7ad9 are flashed, but they cannot link to the unresponsive
-adapter. No merge until device recovery and long-run evidence. Preserve
+Both meter images72f7ad9 are flashed and their runtime ELF hashes match
+the archived binaries. The recovered adapter544268b connects both actual
+peers. No merge until long-run evidence is assessed. Preserve
 this failed prototype's logs (including zero-byte UART captures) and avoid
 NVS/partition erase as a recovery shortcut.
+
+
+## Initial physical evidence at544268b
+
+The TX-disabled fault fixture saved boot44 full-RAW firstProbe/firstFailure
+with48 frames each and RX offsets100+i*137; exports explicitly say
+origin=SYNTHETIC. BLE journal schema3 stored both connect/disconnect reasons,
+full40-character SHA and no storage/queue/sequence errors. After an esptool
+warm reset, BLELOG44 and both48-frame sidecars were still readable from
+flash; durable ready=1,foreign=0,errors=0,corrupt=0,uncommitted=0.
+
+The TX-disabled integrated soak then started2026-10-13 00:44 JST, with
+SmartRing andJC confirmed connected before the measured7200s window.
+Initial opening resets and intentional export disconnects are outside the
+window. mac_events.jsonl retains host UTC and monotonic receipt times. The
+offline two-meter analyzer checks counter regressions, brief reconnects,
+per-signal rates/ages, transport traffic, flash-save outcomes, heap/stack and
+UI/DMA distributions; malformed/interleaved USB rows are excluded and counted.
+No assumption equates this DEMO traffic with vehicle CAN wait/electrical
+load or the original three-client iPad exploration.
+
+Private evidence root: Developer/TacoTacoMeter-artifacts/20261012-integration.
+Full flash backups and firmware binaries are not uploaded as public artifacts.
