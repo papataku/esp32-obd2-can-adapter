@@ -98,6 +98,50 @@ int main() {
   assert(SerialStub::lines.find("#BLELOG,MISSING,boot=41")!=std::string::npos);
   SerialStub::capture=false;SerialStub::lines.clear();
 
+  // Cross-domain faults are independent of the transient last-24-event
+  // ring. CAN and BLE counters contribute their actual DELTA, not one
+  // count for each periodic sampling cycle.
+  BleEvidenceJournal faults;
+  g_test_millis+=1200;
+  faults.begin(44,"fault-matrix");
+  CanStats can_stat{};
+  BleStats ble_stat{};
+  can_stat.query_timeout=4;
+  can_stat.query_failed=3;
+  can_stat.driver_rx_overrun=2;
+  can_stat.driver_rx_missed=8;
+  can_stat.driver_bus_error=17;
+  can_stat.driver_arb_lost=9;
+  can_stat.app_queue_drops=11;
+  ble_stat.rx_overflow=6;
+  ble_stat.notify_failures=2;
+  ble_stat.notify_retries=50;
+  ble_stat.session_rejections=1;
+  faults.observeHealth(can_stat,ble_stat);
+  faults.observeHealth(can_stat,ble_stat); // no double counting
+  can_stat.driver_bus_error+=3;
+  faults.observeHealth(can_stat,ble_stat);
+  faults.appendError(DiagnosticError::CanIsoTpError,22);
+  faults.appendError(DiagnosticError::CanBusOff,3);
+  faults.appendError(DiagnosticError::GroupRejected,5);
+  faults.appendError(DiagnosticError::ElmInputOverflow,129);
+  faults.appendError(DiagnosticError::JournalStorageFailure,1);
+  assert(faults.poll(can));
+  BleEvidenceJournal persisted_faults;
+  persisted_faults.begin(45,"after-fault");
+  SerialStub::capture=true;SerialStub::lines.clear();
+  persisted_faults.dump(can,transport,44);
+  const auto fault_dump=SerialStub::lines;
+  assert(fault_dump.find("name=CAN_TIMEOUT_COUNTER,count=4")!=std::string::npos);
+  assert(fault_dump.find("name=CAN_BUS_ERRORS,count=20")!=std::string::npos);
+  assert(fault_dump.find("name=BLE_TX_BACKPRESSURE,count=50")!=std::string::npos);
+  assert(fault_dump.find("name=ISOTP_FAILURE,count=1")!=std::string::npos);
+  assert(fault_dump.find("name=PID_GROUP_REJECTED,count=1")!=std::string::npos);
+  assert(fault_dump.find("name=ELM_INPUT_OVERFLOW,count=1")!=std::string::npos);
+  assert(fault_dump.find("name=JOURNAL_NVS_FAILURE,count=1")!=std::string::npos);
+  assert(fault_dump.find("first_detail=17,last_detail=3")!=std::string::npos);
+  SerialStub::capture=false;SerialStub::lines.clear();
+
   // Journal and CAN trip history occupy separate NVS namespaces. The
   // legacy trip key, if present, remains byte-for-byte untouched.
   assert(Preferences::storage.count("m5can_trip/trip1")==0);
