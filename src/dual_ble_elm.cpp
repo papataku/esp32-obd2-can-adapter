@@ -163,7 +163,8 @@ DiagnosticRequest DualBleElm::requestOf(const ElmVehicleRequest& item,
 
 void DualBleElm::advanceBatch(Session& s) {
   while (s.active && s.batch && s.batch_next < s.batch_count) {
-    flush(s);
+    // The 512-byte staging buffer is included in responseReady() reserve.
+    // Keep packing adjacent small PID results into full notification chunks.
     if(!ble_.responseReady(s.conn_id,s.generation))return;
     const ElmVehicleRequest& item=s.items[s.batch_next];
     // Probe ONLY in the separately opted-in grouped CAN build (never in DEMO).
