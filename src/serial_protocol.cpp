@@ -8,6 +8,7 @@
 #include "app_config.h"
 #include "elm_response_formatter.h"
 #include "demo_drive.h"
+#include "drive_log.h"
 
 namespace m5can {
 namespace {
@@ -483,6 +484,8 @@ void SerialProtocol::handleUsbLine(const char* line) {
   uppercaseCopy(line, command, sizeof(command));
   if (!std::strcmp(command, "INFO")) {
     emitTextHello();
+  } else if (!std::strcmp(command, "DRIVELOG")) {
+    if (drive_log_ble_) driveLog().dump(monitor_,*drive_log_ble_,demoActive());
   } else if (!std::strcmp(command, "STATS")) {
     emitStats(true);
   } else if (!std::strcmp(command, "STREAM ON")) {
@@ -506,7 +509,7 @@ void SerialProtocol::handleUsbLine(const char* line) {
   } else if (!std::strcmp(command, "HELP") ||
              !std::strcmp(command, "?")) {
     Serial.println(
-        "#HELP,INFO STATS HELP STREAM ON STREAM OFF NATIVE ON; "
+        "#HELP,INFO STATS DRIVELOG HELP STREAM ON STREAM OFF NATIVE ON; "
         "BLE exposes ELM only; DEMO AUTO/ON/OFF (USB)");
   } else if (command[0]) {
     Serial.printf("#ERR,UNKNOWN_COMMAND,%s\n", command);

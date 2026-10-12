@@ -12,6 +12,9 @@ BUDGETS = {
     'm5can::DualBleElm::onLine(': 1280,
     'm5can::DualBleElm::onResult(': 2048,
     'm5can::BleElmTransport::writeTo(': 256,
+    'm5can::DriveLog::addEvent(': 192,
+    'm5can::DriveLog::outcome(': 128,
+    'm5can::DriveLog::submitted(': 128,
 }
 for env in sys.argv[1:]:
     frames = {}

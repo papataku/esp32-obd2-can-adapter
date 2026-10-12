@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include <NimBLEDevice.h>
+#include <Preferences.h>
+#include "drive_log.h"
 #include "dual_ble_elm.h"
 #include "serial_protocol.h"
 using namespace m5can;
@@ -80,6 +82,7 @@ struct Bench {
     ready=false;hold=false;demo=false;requests.clear();test_notifications.clear();
     g_test_millis=1000;
     assert(ble.begin());
+    driveLog().begin(1);
     NimBLEServer::callbacks->onConnect(NimBLEDevice::createServer(),&a);
     NimBLEServer::callbacks->onConnect(NimBLEDevice::createServer(),&b);
     dual.poll();
@@ -143,10 +146,13 @@ int main() {
 #endif
   {mode=Ecu::Full;Bench bench;bench.batchBoth();bench.drain();bench.values();
    assert(bench.groups()==2 && requests.size()==4);
+   assert(driveLog().snapshot().grouped==2 && driveLog().snapshot().group_ok==2);
+   assert(driveLog().snapshot().individual==2);
    bench.batchBoth();bench.drain();assert(bench.groups()==4 && requests.size()==8);}
   for(Ecu failure:{Ecu::Partial,Ecu::Negative,Ecu::Silent,Ecu::Split,Ecu::FirstFrame}) {
     mode=failure;Bench bench;bench.batchBoth();bench.drain();bench.values();
     assert(bench.groups()==1 && requests.size()==7);
+    assert(driveLog().snapshot().fallback==1 && driveLog().snapshot().grouped==1);
     bench.batchBoth();bench.drain();bench.values();
     assert(bench.groups()==1 && requests.size()==13);
   }
@@ -156,6 +162,7 @@ int main() {
   for(Ecu failure:{Ecu::Lease,Ecu::BusOff,Ecu::Driver}) {
     mode=failure;Bench bench;write(bench.a,"ATM5B00:010C,010D,0105");bench.drain();
     assert(requests.size()==1 && bench.groups()==1);
+   assert(driveLog().snapshot().stopped==1);
     assert(output(7).find("M5DONE\r>")!=std::string::npos);
   }
   {mode=Ecu::Full;Bench bench;hold=true;bench.batchBoth();bench.dual.poll();
@@ -166,5 +173,41 @@ int main() {
    assert(output(7).empty());assert(output(19).find("M5DONE\r>")!=std::string::npos);}
   {mode=Ecu::Full;Bench bench;demo=true;bench.batchBoth();bench.drain();
    assert(requests.empty());for(uint16_t id:{7,19}) assert(output(id).find("M5DONE\r>")!=std::string::npos);}
+  // NVS survives recorder reconstruction; writes are periodic/event-only,
+  // ring slots remain bounded and corrupt/truncated entries are rejected.
+  {
+    Bench bench;Preferences::storage.clear();Preferences::writes=0;
+    DriveLog journal;g_test_millis=1000;journal.begin(1);
+    DiagnosticRequest r{};r.length=3;r.data[0]=1;r.data[1]=0x0C;r.data[2]=0x0D;
+    DiagnosticResult result{};result.status=DiagnosticStatus::Ok;
+    result.raw_frame_count=1;result.response_count=1;
+    result.transaction_us=12000;result.tx_to_first_response_us=8000;
+    result.raw_frames[0].can_id=0x18DAF101;result.raw_frames[0].dlc=8;
+    const uint8_t bytes[]={6,0x41,0x0C,0x13,0x88,0x0D,0x50,0};
+    std::memcpy(result.raw_frames[0].data,bytes,8);
+    for(unsigned i=0;i<100;++i) {
+      journal.submitted(r);journal.outcome(DriveLog::Kind::GroupEnabled,7,result,0x18DAF101);
+      ++g_test_millis;journal.poll(bench.can,bench.ble,false);
+    }
+    assert(Preferences::writes==1);
+    assert(journal.snapshot().group_ok==100 && journal.snapshot().event_count==1);
+    g_test_millis=3000;journal.poll(bench.can,bench.ble,false);
+    assert(Preferences::writes==2);
+    DriveLog restarted;restarted.begin(9);assert(restarted.snapshot().sequence==2);
+    Preferences nvs;assert(nvs.begin("m5can_trip",true));DriveLog::Record saved{};
+    assert(nvs.getBytes("trip1",&saved,sizeof(saved))==sizeof(saved));
+    assert(saved.grouped==100 && saved.group_ok==100 && saved.event_count==1);
+    assert(saved.events[0].responder==0x18DAF101);
+    assert(std::memcmp(saved.events[0].raw[0].data,bytes,8)==0);
+    assert(saved.uptime_ms==3000);
+    assert(saved.group_time_us==1200000 && saved.group_max_us==12000);
+    assert(saved.events[0].transaction_us==12000 && saved.events[0].first_response_us==8000);
+    for(unsigned i=0;i<12;++i){DriveLog reboot;reboot.begin(1);}
+    assert(Preferences::storage.size()==DriveLog::kSlots);
+    Preferences::storage["m5can_trip/trip0"]={1,2,3};
+    DriveLog recover;recover.begin(1);assert(recover.snapshot().sequence==15);
+    journal.dump(bench.can,bench.ble,false); // Never deletes older entries.
+    assert(Preferences::storage.size()==DriveLog::kSlots);
+  }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
 }

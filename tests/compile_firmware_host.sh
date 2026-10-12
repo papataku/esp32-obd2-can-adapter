@@ -105,7 +105,7 @@ echo "PASS opt-in 244-byte unicast and exact retry payload ordering"
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
   "$ROOT/tests/test_dual_ble_adaptive.cpp" "$ROOT/src/dual_ble_elm.cpp" \
-  "$ROOT/src/ble_elm_transport.cpp" "$ROOT/src/elm_compat.cpp" \
+  "$ROOT/src/ble_elm_transport.cpp" "$ROOT/src/drive_log.cpp" "$ROOT/src/elm_compat.cpp" \
   "$ROOT/src/elm_response_formatter.cpp" "$ROOT/src/diagnostic_transaction.cpp" \
   "$ROOT/src/isotp_reassembler.cpp" "$ROOT/src/diagnostic_policy.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-adaptive-test
@@ -114,7 +114,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_ADA
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
   "$ROOT/tests/test_dual_ble_adaptive.cpp" "$ROOT/src/dual_ble_elm.cpp" \
-  "$ROOT/src/ble_elm_transport.cpp" "$ROOT/src/elm_compat.cpp" \
+  "$ROOT/src/ble_elm_transport.cpp" "$ROOT/src/drive_log.cpp" "$ROOT/src/elm_compat.cpp" \
   "$ROOT/src/elm_response_formatter.cpp" "$ROOT/src/diagnostic_transaction.cpp" \
   "$ROOT/src/isotp_reassembler.cpp" "$ROOT/src/diagnostic_policy.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-legacy-test

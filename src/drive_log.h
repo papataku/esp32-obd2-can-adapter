@@ -1,0 +1,57 @@
+#pragma once
+#include <Arduino.h>
+#include "can_monitor.h"
+#include "ble_elm_transport.h"
+
+namespace m5can {
+// Bounded post-drive journal; only Arduino loop/USB commands touch NVS.
+// BLE worker only updates the protected RAM record.
+class DriveLog {
+ public:
+  static constexpr uint32_t kMagic=0x4D354C47, kVersion=1, kSlots=8;
+  enum class Kind:uint8_t { GroupEnabled=1, GroupFallback=2, GroupStopped=3,
+                           Disconnect=4, LeaseDenied=5, CanFault=6 };
+  struct Event {
+    uint32_t uptime_ms=0, responder=0,transaction_us=0,first_response_us=0;
+    uint16_t peer=0;
+    uint8_t kind=0, status=0, responses=0, raw_count=0;
+    DiagnosticRawFrame raw[2]{};
+  };
+  struct Record {
+    uint32_t magic=kMagic,version=kVersion,size=sizeof(Record),sequence=0;
+    uint32_t reset_reason=0,uptime_ms=0,saves=0;
+    char build[32]{};
+    uint32_t grouped=0,individual=0,group_ok=0,fallback=0,stopped=0;
+    uint32_t disconnects=0,rx_overflow=0,notify_failed=0,notify_retries=0;
+    uint64_t group_time_us=0;
+    uint32_t group_max_us=0;
+    uint64_t can_rx=0,tx_attempts=0,tx_success=0,queries=0,timeouts=0;
+    uint64_t query_ok=0,no_data=0,query_failed=0,drops=0;
+    uint32_t bus_errors=0,missed=0,overrun=0,lease_ms=0;
+    uint32_t can_stack_free=0,ble_stack_free=0,heap_min=0,largest_heap=0;
+    uint16_t peers[2]{};
+    uint8_t clients=0,demo=0,fault=0,multipid=0,event_count=0;
+    uint32_t events_added=0;
+    Event events[8]{}; // Last eight state/fault events, not per-query writes.
+  };
+  void begin(uint32_t reset_reason);
+  void submitted(const DiagnosticRequest& request);
+  void outcome(Kind kind,uint16_t peer,const DiagnosticResult& result,
+               uint32_t responder);
+  void event(Kind kind,uint16_t peer);
+  void resources(uint32_t can_stack,uint32_t ble_stack,uint32_t heap_min,uint32_t largest);
+  void poll(CanMonitor& can,BleElmTransport& ble,bool demo);
+  void dump(CanMonitor& can,BleElmTransport& ble,bool demo);
+  Record snapshot() const;
+ private:
+  static bool load(unsigned slot,Record& record);
+  bool save(uint32_t now,bool forced=false);
+  void addEvent(Kind kind,uint16_t peer,const DiagnosticResult* result,
+                uint32_t responder);
+  mutable portMUX_TYPE mux_=portMUX_INITIALIZER_UNLOCKED;
+  Record record_{};
+  bool enabled_=false,urgent_=false;
+  uint32_t last_saved_ms_=0;
+};
+DriveLog& driveLog();
+} // namespace m5can
