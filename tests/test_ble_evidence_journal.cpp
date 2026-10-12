@@ -62,11 +62,31 @@ int main() {
     nrc.observeHealth(stats,ble_stats); // unchanged counters never double-count
     for(const auto& fault:nrc.snapshot().faults)if(fault.code==210)assert(fault.count==2);
   }
+  {
+    BleEvidenceJournal::Record legacy{};legacy.version=2;
+    const size_t bytes=sizeof(legacy)-8,tail=offsetof(BleEvidenceJournal::Record,events);
+    legacy.bytes=bytes;legacy.boot=40;legacy.count=1;legacy.total=1;
+    std::strcpy(legacy.build,"legacy-v2");legacy.events[0].reason=520;
+    std::vector<uint8_t> blob(bytes);
+    std::memcpy(blob.data(),&legacy,tail-8);
+    std::memcpy(blob.data()+tail-8,reinterpret_cast<const uint8_t*>(&legacy)+tail,sizeof(legacy)-tail);
+    uint32_t hash=2166136261U;for(auto b:blob)hash=(hash^b)*16777619U;
+    std::memcpy(blob.data()+offsetof(BleEvidenceJournal::Record,crc),&hash,sizeof(hash));
+    Preferences::storage["m5can_blelog/ble0"]=blob;
+    const auto old_storage=Preferences::storage;
+    CanMonitor can;BleElmTransport ble;BleEvidenceJournal reader;reader.begin(41,"reader-v3");
+    SerialStub::capture=true;SerialStub::lines.clear();reader.dump(can,ble,40);
+    assert(SerialStub::lines.find("boot=40,state=persisted,version=2")!=std::string::npos);
+    assert(SerialStub::lines.find("reason_raw=520")!=std::string::npos);
+    assert(Preferences::storage==old_storage);
+    SerialStub::capture=false;
+  }
   Preferences::storage.clear();Preferences::writes=0;
   CanMonitor can;
   BleElmTransport transport;
   BleEvidenceJournal first;
-  g_test_millis=1000;first.begin(41,"known-commit");
+  g_test_millis=1000;first.begin(41,"0123456789abcdef0123456789abcdef01234567-dirty");
+  assert(std::strlen(first.snapshot().build)==46);
   const auto connect=sample(1,BleDiagnosticEvent::Kind::Connect);
   first.append(connect,0);
   assert(first.snapshot().count==1 && first.snapshot().total==1);
@@ -188,7 +208,7 @@ int main() {
   assert(fault_dump.find("name=ISOTP_FAILURE,count=1")!=std::string::npos);
   assert(fault_dump.find("name=PID_GROUP_REJECTED,count=1")!=std::string::npos);
   assert(fault_dump.find("name=ELM_INPUT_OVERFLOW,count=1")!=std::string::npos);
-  assert(fault_dump.find("name=JOURNAL_NVS_FAILURE,count=1")!=std::string::npos);
+  assert(fault_dump.find("name=JOURNAL_STORAGE_FAILURE,count=1")!=std::string::npos);
   assert(fault_dump.find("first_detail=17,last_detail=3")!=std::string::npos);
   SerialStub::capture=false;SerialStub::lines.clear();
 

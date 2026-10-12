@@ -27,7 +27,7 @@ enum class DiagnosticError : uint16_t {
   CanArbitrationLoss=507, CanInitFailed=508,
   BleRxOverflowCounter=521, BleNotifyFailureCounter=522,
   BleSessionRejectCounter=523, BleNotifyRetryCounter=524,
-  JournalStorageFailure=901, DemoNoData=911, DemoNrc=912, DemoNoPrompt=913, FixtureEvidence=914
+  JournalStorageFailure=901, DemoNoData=911, DemoNrc=912, DemoNoPrompt=913, FixtureEvidence=914, DriveStorageFailure=915
 };
 // Stable context: [demo bit31, length bits30..24, SID, PID/DID high, DID low].
 inline uint32_t diagnosticRequestIdentity(const DiagnosticRequest& r,bool demo=false) {
@@ -79,6 +79,7 @@ inline const char* diagnosticErrorName(uint16_t raw) {
     case DiagnosticError::OwnerRequestContext:return "CAN_OWNER_REQUEST";
     case DiagnosticError::DemoNoData:return "DEMO_NO_DATA";
     case DiagnosticError::DemoNrc:return "DEMO_NRC";
+    case DiagnosticError::DriveStorageFailure:return "CAN_JOURNAL_STORAGE_FAILURE";
     case DiagnosticError::FixtureEvidence:return "SYNTHETIC_EVIDENCE";
     case DiagnosticError::DemoNoPrompt:return "DEMO_NO_PROMPT";
     case DiagnosticError::CanUnknownStatus:return "CAN_UNKNOWN_STATUS";
@@ -102,7 +103,7 @@ inline const char* diagnosticErrorName(uint16_t raw) {
     case DiagnosticError::BleNotifyFailureCounter:return "BLE_TX_FAILED";
     case DiagnosticError::BleSessionRejectCounter:return "BLE_SESSION_REJECT";
     case DiagnosticError::BleNotifyRetryCounter:return "BLE_TX_BACKPRESSURE";
-    case DiagnosticError::JournalStorageFailure:return "JOURNAL_NVS_FAILURE";
+    case DiagnosticError::JournalStorageFailure:return "JOURNAL_STORAGE_FAILURE";
     default:return "UNKNOWN_CODE";
   }
 }

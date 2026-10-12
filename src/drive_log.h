@@ -79,6 +79,7 @@ class DriveLog {
   void poll(CanMonitor& can,BleElmTransport& ble,bool demo);
   void dump(CanMonitor& can,BleElmTransport& ble,bool demo);
   Record snapshot() const;
+  uint32_t storageErrors() const {return storage_errors_;}
  private:
   static bool load(unsigned slot,Record& record);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
@@ -100,6 +101,7 @@ class DriveLog {
   CoordinatorRecord coordinator_{};
   bool coordinator_enabled_=false;
   bool enabled_=false,urgent_=false;
+  uint32_t storage_errors_=0;
   uint32_t last_saved_ms_=0;
 };
 DriveLog& driveLog();

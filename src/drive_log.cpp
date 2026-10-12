@@ -97,6 +97,7 @@ bool DriveLog::load(unsigned slot,Record& record) {
       record.size==sizeof(record) && record.sequence && record.event_count<=8;
 }
 void DriveLog::begin(uint32_t reset_reason,uint32_t rom_reset_reason) {
+  storage_errors_=0;
   uint32_t latest=0;Record previous{};
   for(unsigned slot=0;slot<kSlots;++slot)
     if(load(slot,previous) && previous.sequence>latest) latest=previous.sequence;
@@ -259,7 +260,7 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
   portENTER_CRITICAL(&mux_);if(ok)record_.saves=copy.saves;
   if(record_.events_added==copy.events_added)urgent_=false;
   portEXIT_CRITICAL(&mux_);
-  if(!ok) Serial.println("#DRIVELOG,storage_error");
+  if(!ok) {if(storage_errors_!=UINT32_MAX)++storage_errors_;Serial.println("#DRIVELOG,storage_error");}
   return ok;
 }
 void DriveLog::resources(uint32_t can_stack,uint32_t ble_stack,uint32_t heap_min,uint32_t largest) {

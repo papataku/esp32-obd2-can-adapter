@@ -191,6 +191,12 @@ void loop() {
   if (millis()-last_dual_stats>=5000) {
     last_dual_stats=millis();
     const auto stats=g_ble.stats();
+    static uint32_t seen_storage_errors=0;
+    const uint32_t storage_errors=m5can::driveLog().storageErrors();
+    if(storage_errors!=seen_storage_errors) {
+      m5can::bleEvidenceJournal().appendError(m5can::DiagnosticError::DriveStorageFailure,storage_errors);
+      seen_storage_errors=storage_errors;
+    }
     // Counter snapshots catch CAN owner and GATT failures even when an
     // individual event ring overflows; compare monotonic counters.
     m5can::bleEvidenceJournal().observeHealth(g_can.stats(),stats);

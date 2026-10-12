@@ -22,17 +22,30 @@ bool BleEvidenceJournal::load(unsigned slot,Record& target) {
   char key[12]{};
   std::snprintf(key,sizeof(key),"ble%u",slot);
   if(!prefs.begin("m5can_blelog",true))return false;
-  const bool present=prefs.getBytesLength(key)==sizeof(target) &&
-      prefs.getBytes(key,&target,sizeof(target))==sizeof(target);
+  const size_t bytes=prefs.getBytesLength(key);
+  constexpr size_t legacy_bytes=sizeof(Record)-8; // v2 used build[40]
+  if(bytes!=sizeof(Record) && bytes!=legacy_bytes){prefs.end();return false;}
+  const bool present=prefs.getBytes(key,&target,bytes)==bytes;
   prefs.end();
-  if(!present || target.magic!=kMagic || target.version!=kVersion ||
-     target.bytes!=sizeof(Record) || !target.boot ||
-     target.count>kEvents)return false;
-  const uint32_t saved_crc=target.crc;
-  target.crc=0;
-  const bool good=checksum(target)==saved_crc;
+  const bool legacy=target.version==2 && bytes==legacy_bytes;
+  if(!present || target.magic!=kMagic ||
+     (!legacy && target.version!=kVersion) || target.bytes!=bytes ||
+     !target.boot || target.count>kEvents)return false;
+  const uint32_t saved_crc=target.crc;target.crc=0;
+  uint32_t hash=2166136261U;
+  const auto* raw=reinterpret_cast<const uint8_t*>(&target);
+  for(size_t i=0;i<bytes;++i)hash=(hash^raw[i])*16777619U;
   target.crc=saved_crc;
-  return good;
+  if(hash!=saved_crc)return false;
+  if(legacy) {
+    // Read-only conversion after validating the ORIGINAL v2 bytes. Keep
+    // schema/CRC provenance; never rewrite/delete an older NVS blob.
+    const size_t tail=offsetof(Record,events);
+    auto* data=reinterpret_cast<uint8_t*>(&target);
+    std::memmove(data+tail,data+tail-8,sizeof(Record)-tail);
+    std::memset(target.build+40,0,8);
+  }
+  return true;
 }
 void BleEvidenceJournal::begin(uint32_t boot,const char* build) {
   record_=Record{};
