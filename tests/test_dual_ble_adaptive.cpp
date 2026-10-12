@@ -430,7 +430,7 @@ int main() {
       auto& f=first.raw_frames[i];
       f.can_id=ids[i];f.dlc=8;
       std::memcpy(f.data,payload,8);
-      f.rx_offset_us=656+i*137U;
+      first.raw_rx_offsets_us[i]=656+i*137U;
     }
     journal.submitted(DiagnosticRequest{
         0x18DB33F1,3,{1,0x0C,0x0D},200});
@@ -459,7 +459,7 @@ int main() {
     assert(probe.decision==0 && probe.reject_reason==0);
     for(unsigned i=0;i<5;++i) {
       assert(probe.raw[i].can_id==ids[i]);
-      assert(probe.raw[i].rx_offset_us==656+i*137U);
+      assert(probe.rx_offset_us[i]==656+i*137U);
       assert(std::memcmp(probe.raw[i].data,payload,8)==0);
     }
     nvs.end();
@@ -504,7 +504,7 @@ int main() {
     std::memcpy(one.data,payload,8);
     assert(tx.onFrame(one).event==TransactionEvent::Completed);
     assert(tx.result().raw_frame_count==1 &&
-           tx.result().raw_frames[0].rx_offset_us==656);
+           tx.result().raw_rx_offsets_us[0]==656);
   }
   { // Coordinator metrics persist independently of the v2 trip layout.
     Bench bench;Preferences::storage.clear();DriveLog journal;
