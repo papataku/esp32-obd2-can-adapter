@@ -326,7 +326,9 @@ void DualBleElm::cacheSafePartialGroup(
 
 void DualBleElm::onResult() {
   if (active_query_owner_<0) return;
-  DiagnosticResult result{};
+  // The one CAN transaction completes on this same owner task.
+  // Reuse fixed object storage rather than a large local result.
+  DiagnosticResult& result=query_result_workspace_;
   if (!can_.pollQueryResult(result)) return;
   const int index=active_query_owner_;
   const int second=active_secondary_owner_;
@@ -467,7 +469,7 @@ void DualBleElm::dispatch() {
       // A cached sample is not authorization for a fresh diagnostic read.
       // Do not report fresh values while the physical bus is fault locked.
       pid_cache_.clear();
-      cache_workspace_=DiagnosticResult{};
+      std::memset(&cache_workspace_,0,sizeof(cache_workspace_));
       cache_workspace_.status=DiagnosticStatus::LeaseRequired;
       if (s.multi_pid_pair) {
         s.multi_pid_pair=false;
