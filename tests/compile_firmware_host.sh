@@ -61,6 +61,20 @@ g++ -std=c++17 -Wall -Wextra -Werror \
   -o /tmp/m5can-diagnostic-cache-test
 /tmp/m5can-diagnostic-cache-test
 
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_diagnostic_pid_cache.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-pid-cache-test
+/tmp/m5can-pid-cache-test
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_diagnostic_batch_planner.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-batch-planner-test
+/tmp/m5can-batch-planner-test
+
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
   "$ROOT/tests/test_adaptive_multi_pid.cpp" \

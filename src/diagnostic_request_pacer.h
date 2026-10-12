@@ -30,7 +30,33 @@ class DiagnosticRequestPacer {
       const DiagnosticRequest speed = singleFromGroup(request, 0x0D);
       const uint64_t a = remainingUs(rpm, now_us);
       const uint64_t b = remainingUs(speed, now_us);
-      return a > b ? a : b;
+      if (a || b) return a > b ? a : b;
+      // Individual eligibility is insufficient when 31 of 32 slots are
+      // occupied: each new constituent PID needs its OWN throttle slot.
+      // Otherwise the second noteSuccessfulTx silently loses its history.
+      const uint64_t rpm_key=requestKey(rpm);
+      const uint64_t speed_key=requestKey(speed);
+      size_t free_slots=0;
+      bool rpm_seen=false,speed_seen=false;
+      uint64_t earliest=kMinSameParameterIntervalUs;
+      for (const Entry& entry:entries_) {
+        if (entry.valid && entry.key==rpm_key) rpm_seen=true;
+        if (entry.valid && entry.key==speed_key) speed_seen=true;
+        // An expired matching slot is still reserved for that constituent
+        // PID and must not be double-counted as capacity for the other.
+        const bool reserved=entry.valid &&
+            (entry.key==rpm_key || entry.key==speed_key);
+        if (reserved) continue;
+        if (!entry.valid || timeRemaining(entry.sent_us,now_us)==0) {
+          ++free_slots;
+        } else {
+          const uint64_t remaining=timeRemaining(entry.sent_us,now_us);
+          if (remaining<earliest) earliest=remaining;
+        }
+      }
+      const size_t needed=static_cast<size_t>(!rpm_seen)+
+                          static_cast<size_t>(!speed_seen);
+      return free_slots>=needed ? 0 : earliest;
     }
     if (!trackable(request)) return 0;
     const uint64_t key = requestKey(request);

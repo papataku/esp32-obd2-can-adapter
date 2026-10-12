@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <utility>
 #include <NimBLEDevice.h>
 #include "dual_ble_elm.h"
 #include "serial_protocol.h"
@@ -142,13 +143,46 @@ int main() {
   return 0;
 #endif
   {mode=Ecu::Full;Bench bench;bench.batchBoth();bench.drain();bench.values();
-   assert(bench.groups()==2 && requests.size()==4);
-   bench.batchBoth();bench.drain();assert(bench.groups()==4 && requests.size()==8);}
+   assert(bench.groups()==1 && requests.size()==2);
+   bench.batchBoth();bench.drain();assert(bench.groups()==2 && requests.size()==4);}
   for(Ecu failure:{Ecu::Partial,Ecu::Negative,Ecu::Silent,Ecu::Split,Ecu::FirstFrame}) {
     mode=failure;Bench bench;bench.batchBoth();bench.drain();bench.values();
-    assert(bench.groups()==1 && requests.size()==7);
+    // A single complete RPM value from a partial grouped reply is cached;
+    // only speed is retried. All other unsupported cases retry both PIDs.
+    const size_t first_count=failure==Ecu::Partial?3U:4U;
+    assert(bench.groups()==1 && requests.size()==first_count);
     bench.batchBoth();bench.drain();bench.values();
-    assert(bench.groups()==1 && requests.size()==13);
+    assert(bench.groups()==1 && requests.size()==first_count+3);
+  }
+  // Two different BLE peers independently request different PIDs. The
+  // coordinator may group them only because both were already pending;
+  // there is no synthetic extra PID fetch or cross-peer result leakage.
+  {mode=Ecu::Full;Bench bench;
+   write(bench.a,"ATM5B00:010C,0105");
+   write(bench.b,"ATM5B00:010D,0105");
+   bench.dual.poll();bench.dual.poll();bench.dual.poll();
+   assert(bench.groups()==1 && requests.size()==2);
+   assert(output(7).find("M5ITEM:00:010C\r18DAF101 04 41 0C 13 88")!=std::string::npos);
+   assert(output(7).find("M5ITEM:00:010D")==std::string::npos);
+   assert(output(19).find("M5ITEM:00:010D\r18DAF101 03 41 0D 50")!=std::string::npos);
+   assert(output(19).find("M5ITEM:00:010C")==std::string::npos);
+   // Both parameters are cached individually: reusing RPM in a different
+   // BLE session within the TTL does not generate a new CAN transaction.
+   test_notifications.clear();
+   write(bench.b,"ATM5B00:010C,0105");
+   bench.dual.poll();bench.dual.poll();
+   assert(requests.size()==2);
+   assert(output(19).find("M5ITEM:00:010C")!=std::string::npos);
+  }
+  // Matching pending requests from two peers should also fan out one
+  // individual physical CAN reply, even when grouping is ineligible.
+  {mode=Ecu::Full;Bench bench;
+   write(bench.a,"ATM5B00:0105,010D");
+   write(bench.b,"ATM5B00:0105,010D");
+   bench.dual.poll();bench.dual.poll();bench.dual.poll();
+   assert(requests.size()==2 && bench.groups()==0);
+   assert(output(7).find("M5ITEM:00:0105")!=std::string::npos);
+   assert(output(19).find("M5ITEM:00:0105")!=std::string::npos);
   }
   {mode=Ecu::Full;Bench bench;write(bench.a,"ATM5B00:010C,010D,0105");bench.drain();
    mode=Ecu::Foreign;bench.batchBoth();bench.drain();bench.values();
@@ -166,5 +200,118 @@ int main() {
    assert(output(7).empty());assert(output(19).find("M5DONE\r>")!=std::string::npos);}
   {mode=Ecu::Full;Bench bench;demo=true;bench.batchBoth();bench.drain();
    assert(requests.empty());for(uint16_t id:{7,19}) assert(output(id).find("M5DONE\r>")!=std::string::npos);}
+  // Deterministic repeated-run simulation: no growing queues, duplicate
+  // CAN requests, stale replay or peer mix-up over successive batches.
+  {mode=Ecu::Full;Bench bench;
+   for(unsigned cycle=0;cycle<250;++cycle) {
+     test_notifications.clear();
+     bench.batchBoth();bench.drain();
+     assert(bench.groups()==cycle+1);
+     assert(requests.size()==(cycle+1)*2);
+     bench.values();
+   }
+  }
+  // Disconnect the in-flight owner after a same-PID peer has joined.
+  // The surviving peer still receives the physical CAN result.
+  {mode=Ecu::Full;Bench bench;hold=true;
+   write(bench.a,"ATM5B00:0105,010D");
+   write(bench.b,"ATM5B00:0105,010D");
+   bench.dual.poll();assert(requests.size()==1);
+   NimBLEServer::callbacks->onDisconnect(
+       NimBLEDevice::createServer(),&bench.a);
+   bench.dual.poll();hold=false;bench.drain();
+   assert(requests.size()==2 && bench.groups()==0);
+   assert(output(7).empty());
+   assert(output(19).find("M5DONE\r>")!=std::string::npos);
+  }
+  // A joined secondary peer can disconnect and reuse the same connection
+  // ID with a different generation. It must NOT receive the old coolant
+  // result as its newly requested vehicle-speed result.
+  {mode=Ecu::Full;Bench bench;hold=true;
+   write(bench.a,"ATM5B00:0105,010D");
+   write(bench.b,"ATM5B00:0105,010D");
+   bench.dual.poll();assert(requests.size()==1);
+   NimBLEServer::callbacks->onDisconnect(
+       NimBLEDevice::createServer(),&bench.b);
+   bench.dual.poll();
+   NimBLEServer::callbacks->onConnect(
+       NimBLEDevice::createServer(),&bench.b);
+   bench.dual.poll();
+   // Reconnected ELM session starts with default ATS0 (no spaces); apply
+   // ATS1 again before checking the human-readable reply formatting.
+   write(bench.b,"ATS1");bench.dual.poll();
+   test_notifications.clear();
+   write(bench.b,"ATM5B00:010D,0105");
+   bench.dual.poll();hold=false;bench.drain();
+   const auto fresh=output(19);
+   assert(fresh.find("M5ITEM:00:010D")!=std::string::npos);
+   assert(fresh.find("18DAF101 03 41 0D 50")!=std::string::npos);
+   assert(fresh.find("M5DONE\r>")!=std::string::npos);
+  }
+  // Reproducible, deterministic offline interleaving matrix. Exercise
+  // the production BLE sessions with two different pending batch shapes,
+  // six CAN responder profiles and hundreds of independent boot sessions.
+  // Each generated client may receive ONLY its requested PID item labels.
+  {
+    constexpr const char* patterns[]={
+        "ATM5B00:010C,0105",
+        "ATM5B00:010D,0105",
+        "ATM5B00:010C,010D"
+    };
+    constexpr const char* first[]={
+        "M5ITEM:00:010C","M5ITEM:00:010D","M5ITEM:00:010C"
+    };
+    constexpr const char* second[]={
+        "M5ITEM:00:0105","M5ITEM:00:0105","M5ITEM:00:010D"
+    };
+    constexpr Ecu modes[]={
+        Ecu::Full,Ecu::Partial,Ecu::Negative,
+        Ecu::Silent,Ecu::Split,Ecu::FirstFrame
+    };
+    uint32_t seed=0x4d354341U;
+    for(unsigned scenario=0;scenario<540;++scenario) {
+      // Fixed LCG seed makes any failing scenario reproducible.
+      seed=seed*1664525U+1013904223U;
+      const unsigned a=(seed>>8)%3;
+      seed=seed*1664525U+1013904223U;
+      const unsigned b=(seed>>8)%3;
+      mode=modes[scenario%6];
+      Bench bench;
+      write(bench.a,patterns[a]);write(bench.b,patterns[b]);
+      bench.drain();
+      for(const auto& peer_case : {std::pair<uint16_t,unsigned>{7,a},
+                                   std::pair<uint16_t,unsigned>{19,b}}) {
+        const std::string got=output(peer_case.first);
+        const unsigned idx=peer_case.second;
+        if (got.find(first[idx])==std::string::npos ||
+            got.find(second[idx])==std::string::npos ||
+            got.find("M5DONE\r>")==std::string::npos) {
+          std::cerr<<"MATRIX_FAIL "<<scenario
+                   <<" case="<<idx<<" peer="<<peer_case.first
+                   <<" mode="<<static_cast<int>(mode)
+                   <<" output="<<got<<"\\n";
+          assert(false);
+        }
+      }
+      // The host backend enforces at most one CAN query in flight.
+      assert(requests.size()<=6);
+    }
+  }
+  // USB and BLE remain different ELM sessions but physically serialize
+  // through the SAME CanMonitor query-in-flight gate. No second CAN TX
+  // may start while the USB read owns the transaction slot.
+  {mode=Ecu::Full;Bench bench;
+   DiagnosticRequest usb{};
+   usb.can_id=0x18DB33F1U;usb.length=2;
+   usb.data[0]=0x01;usb.data[1]=0x05;
+   assert(bench.can.acquireLease(5000));
+   assert(bench.can.submitQuery(usb));
+   bench.batchBoth();bench.dual.poll();
+   assert(requests.size()==1 && bench.groups()==0);
+   DiagnosticResult usb_done{};
+   assert(bench.can.pollQueryResult(usb_done));
+   bench.drain();bench.values();
+   assert(bench.groups()==1 && requests.size()==3);
+  }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
 }

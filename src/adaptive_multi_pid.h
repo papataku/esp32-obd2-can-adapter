@@ -15,6 +15,11 @@ class AdaptiveMultiPid {
   enum class Decision : uint8_t { UseGrouped, RetryLegacy, Stop };
 
   Support support() const { return support_; }
+  // Inspect provenance even after the profile has been disabled. A reply
+  // from a different functional ECU must never fill this profile's cache.
+  bool responderMatchesLearnedEcu(uint32_t can_id) const {
+    return responder_can_id_ == 0 || can_id == responder_can_id_;
+  }
   void markSupported(uint32_t responder) {
     support_ = Support::Supported;
     responder_can_id_ = responder;
@@ -74,7 +79,11 @@ class AdaptiveMultiPid {
   bool decode(const DiagnosticResult& result,
               DiagnosticRawFrame output[2],
               uint32_t& responder) const {
-    if (result.status != DiagnosticStatus::Ok) return false;
+    // Reject any ambiguous extra ECU reply, even when ONE message contains
+    // a fully valid pair. A functional request may have multiple responders.
+    // Picking the first valid one could mix an unexpected ECU's samples.
+    if (result.status != DiagnosticStatus::Ok ||
+        result.response_count != 1) return false;
     for (uint8_t i = 0; i < result.response_count; ++i) {
       const DiagnosticMessage& m = result.responses[i];
       if ((m.can_id & 0x1FFFFF00U) != 0x18DAF100U ||

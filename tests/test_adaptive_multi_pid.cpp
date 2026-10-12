@@ -149,6 +149,19 @@ int main() {
     assert(probe.evaluate(two_ecus,frames,responder)==
            AdaptiveMultiPid::Decision::RetryLegacy);
   }
+  // A FULL valid pair from ECU01 accompanied by another ECU's valid
+  // partial response is STILL ambiguous. Never select the first result.
+  {
+    AdaptiveMultiPid probe;
+    auto mixed=good;
+    mixed.responses[1]=reply(
+        0x18DAF102U,{0x41,0x0D,0x50}).responses[0];
+    mixed.response_count=2;
+    assert(!probe.decode(mixed,frames,responder));
+    assert(probe.evaluate(mixed,frames,responder)==
+           AdaptiveMultiPid::Decision::RetryLegacy);
+    assert(!probe.eligible(rpm,speed));
+  }
   // Reject a response with an unexpected extra PID, not only truncation.
   assert(!fresh.decode(reply(0x18DAF101U,
       {0x41,0x0C,0x12,0x34,0x0D,0x60,0x05,0x44}),frames,responder));

@@ -58,7 +58,11 @@ class DiagnosticResultCache {
     if (!chosen) chosen = oldest;
     chosen->request = request;
     chosen->result = result;
-    chosen->completed_us = completed_us;
+    // Compatibility for callers building an older timestamp-less result.
+    // Once captured here the same acquisition stamp is returned unchanged.
+    chosen->result.completed_at_us =
+        result.completed_at_us ? result.completed_at_us : completed_us;
+    chosen->completed_us = chosen->result.completed_at_us;
     chosen->valid = true;
   }
 
