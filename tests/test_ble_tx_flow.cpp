@@ -57,10 +57,10 @@ int main() {
   test_msys_free=12;
   assert(ble.stats().targeted_notifications==before+1);
   // Exercise the same queue/controller predicate as the real NimBLE snapshot.
-  test_host_queued=1;
+  test_host_queued=2;
   assert(ble.queueTo(7,ea.generation,bytes,1)==1);
   ble.pollTx(); // A small preloaded pipeline is allowed.
-  test_host_queued=2;
+  test_host_queued=3;
   assert(ble.queueTo(7,ea.generation,bytes,1)==1);
   const auto queue_before=ble.stats().targeted_notifications;
   ble.pollTx();assert(ble.stats().targeted_notifications==queue_before);

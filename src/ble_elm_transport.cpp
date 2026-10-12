@@ -579,7 +579,7 @@ static bool notifyCredit(uint16_t id,uint16_t& pending,uint16_t& queued) {
   // An empty-only host queue loses throughput because the application task
   // cannot refill it within a radio event. Bound both peer ownership and
   // shared free capacity instead of removing all host staging.
-  return present && queued<2 && pending<8;
+  return present && queued<3 && pending<8;
 }
 
 bool BleElmTransport::responseReady(uint16_t id,uint32_t gen) const {
@@ -641,74 +641,71 @@ void BleElmTransport::pollTx() {
   tx_round_robin_=(tx_round_robin_+1)%kMaxClients;
   for(unsigned scan=0;scan<kMaxClients;++scan) {
     const unsigned slot=(first+scan)%kMaxClients;
-    for(unsigned burst=0;burst<3;++burst) {
-      uint16_t id=0,chunk=0;
-      uint32_t gen=0;
-      uint8_t data[M5CAN_DUAL_NOTIFY_CHUNK_BYTES]{};
-      portENTER_CRITICAL(&mux_);
-      auto& peer=clients_[slot];
-      if(peer.active && !peer.tx_aborted && peer.pending_size) {
-        id=peer.connection_id;gen=peer.generation;
-        chunk=std::min<uint16_t>(peer.pending_size,
-            std::min<uint16_t>(sizeof(data),peer.mtu-3));
-        for(unsigned n=0;n<chunk;++n)data[n]=peer.pending[(peer.pending_head+n)%sizeof(peer.pending)];
-      }
-      portEXIT_CRITICAL(&mux_);
-      if(!chunk)break;
-      uint16_t host_pending=0,host_queued=0;
-      const int free_blocks=os_msys_num_free();
-      const bool credit=notifyCredit(id,host_pending,host_queued);
-      portENTER_CRITICAL(&mux_);
-      stats_.msys_min_free=std::min<uint16_t>(stats_.msys_min_free,std::max(0,free_blocks));
-      stats_.host_pending_peak=std::max(stats_.host_pending_peak,host_pending);
-      stats_.host_queue_peak=std::max(stats_.host_queue_peak,host_queued);
-      if(!credit || free_blocks<6)++stats_.credit_waits;
-      portEXIT_CRITICAL(&mux_);
-      int result=BLE_HS_EAGAIN;
-      bool attempted=false,allocated=false;
-      if(credit && free_blocks>=6 && isClientConnected(id,gen)) {
-        attempted=true;
-        os_mbuf* packet=ble_hs_mbuf_from_flat(data,chunk);
-        allocated=packet!=nullptr;
-        result=packet?ble_gattc_notify_custom(id,tx_characteristic_->getHandle(),packet):BLE_HS_ENOMEM;
-      }
-      bool disconnect=false;
-      portENTER_CRITICAL(&mux_);
-      if(peer.active && peer.connection_id==id && peer.generation==gen) {
-        if(attempted && result==0) {
-          peer.pending_head=(peer.pending_head+chunk)%sizeof(peer.pending);
-          peer.pending_size-=chunk;peer.progress_ms=millis();peer.stalled_reported=false;
-          peer.traffic.tx_bytes+=chunk;++peer.traffic.notifications;
-          peer.traffic.last_tx_ms=millis();stats_.tx_bytes+=chunk;++stats_.targeted_notifications;
-        } else {
-          if(attempted) {
-            ++stats_.notify_retries;++peer.traffic.notify_retries;
-            if(!allocated)++stats_.mbuf_alloc_failures;else ++stats_.notify_api_failures;
-            stats_.memory_error_ms=millis();stats_.memory_error_conn=id;stats_.memory_error_code=result;
-            if(!peer.stalled_reported) {
-              pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
-                  static_cast<uint16_t>(DiagnosticError::BleNotifyBackpressure),1);
-              peer.stalled_reported=true;
-            }
-          }
-          const bool permanent=attempted && result!=BLE_HS_ENOMEM &&
-              result!=BLE_HS_EAGAIN && result!=BLE_HS_EBUSY;
-          // Liveness bound is per-peer lack of progress, not time spent sending
-          // an entire response. Recovery always resumes the same unsent bytes.
-          if(permanent || static_cast<uint32_t>(millis()-peer.progress_ms)>=5000) {
-            ++stats_.notify_failures;++peer.traffic.notify_failures;
-            if(!permanent)++stats_.tx_stalls;
+    uint16_t id=0,chunk=0;
+    uint32_t gen=0;
+    uint8_t data[M5CAN_DUAL_NOTIFY_CHUNK_BYTES]{};
+    portENTER_CRITICAL(&mux_);
+    auto& peer=clients_[slot];
+    if(peer.active && !peer.tx_aborted && peer.pending_size) {
+      id=peer.connection_id;gen=peer.generation;
+      chunk=std::min<uint16_t>(peer.pending_size,
+          std::min<uint16_t>(sizeof(data),peer.mtu-3));
+      for(unsigned n=0;n<chunk;++n)data[n]=peer.pending[(peer.pending_head+n)%sizeof(peer.pending)];
+    }
+    portEXIT_CRITICAL(&mux_);
+    if(!chunk)continue;
+    uint16_t host_pending=0,host_queued=0;
+    const int free_blocks=os_msys_num_free();
+    const bool credit=notifyCredit(id,host_pending,host_queued);
+    portENTER_CRITICAL(&mux_);
+    stats_.msys_min_free=std::min<uint16_t>(stats_.msys_min_free,std::max(0,free_blocks));
+    stats_.host_pending_peak=std::max(stats_.host_pending_peak,host_pending);
+    stats_.host_queue_peak=std::max(stats_.host_queue_peak,host_queued);
+    if(!credit || free_blocks<6)++stats_.credit_waits;
+    portEXIT_CRITICAL(&mux_);
+    int result=BLE_HS_EAGAIN;
+    bool attempted=false,allocated=false;
+    if(credit && free_blocks>=6 && isClientConnected(id,gen)) {
+      attempted=true;
+      os_mbuf* packet=ble_hs_mbuf_from_flat(data,chunk);
+      allocated=packet!=nullptr;
+      result=packet?ble_gattc_notify_custom(id,tx_characteristic_->getHandle(),packet):BLE_HS_ENOMEM;
+    }
+    bool disconnect=false;
+    portENTER_CRITICAL(&mux_);
+    if(peer.active && peer.connection_id==id && peer.generation==gen) {
+      if(attempted && result==0) {
+        peer.pending_head=(peer.pending_head+chunk)%sizeof(peer.pending);
+        peer.pending_size-=chunk;peer.progress_ms=millis();peer.stalled_reported=false;
+        peer.traffic.tx_bytes+=chunk;++peer.traffic.notifications;
+        peer.traffic.last_tx_ms=millis();stats_.tx_bytes+=chunk;++stats_.targeted_notifications;
+      } else {
+        if(attempted) {
+          ++stats_.notify_retries;++peer.traffic.notify_retries;
+          if(!allocated)++stats_.mbuf_alloc_failures;else ++stats_.notify_api_failures;
+          stats_.memory_error_ms=millis();stats_.memory_error_conn=id;stats_.memory_error_code=result;
+          if(!peer.stalled_reported) {
             pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
-                static_cast<uint16_t>(DiagnosticError::BleNotifySendFailed),
-                permanent?static_cast<uint32_t>(result):0x20000U);
-            peer.pending_size=0;peer.tx_aborted=true;disconnect=true;
+                static_cast<uint16_t>(DiagnosticError::BleNotifyBackpressure),1);
+            peer.stalled_reported=true;
           }
         }
+        const bool permanent=attempted && result!=BLE_HS_ENOMEM &&
+            result!=BLE_HS_EAGAIN && result!=BLE_HS_EBUSY;
+        // Liveness bound is per-peer lack of progress, not time spent sending
+        // an entire response. Recovery always resumes the same unsent bytes.
+        if(permanent || static_cast<uint32_t>(millis()-peer.progress_ms)>=5000) {
+          ++stats_.notify_failures;++peer.traffic.notify_failures;
+          if(!permanent)++stats_.tx_stalls;
+          pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
+              static_cast<uint16_t>(DiagnosticError::BleNotifySendFailed),
+              permanent?static_cast<uint32_t>(result):0x20000U);
+          peer.pending_size=0;peer.tx_aborted=true;disconnect=true;
+        }
       }
-      portEXIT_CRITICAL(&mux_);
-      if(disconnect && isClientConnected(id,gen))server_->disconnect(id);
-      if(!attempted || result!=0)break;
     }
+    portEXIT_CRITICAL(&mux_);
+    if(disconnect && isClientConnected(id,gen))server_->disconnect(id);
   }
 }
 
