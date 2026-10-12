@@ -570,9 +570,10 @@ static bool notifyCredit(uint16_t id,uint16_t& pending) {
       ++pending;
     }
     // The verified controller has 12 ACL slots shared by two peers.
-    // Six per peer avoids reducing high-rate throughput; the no-host-queue
-    // rule independently prevents growth in the separate shared MSYS pool.
-    ready=!queued && pending<6;
+    // Allow a response burst while leaving at least four controller slots
+    // for the other peer. The no-host-queue rule independently bounds MSYS
+    // ownership to one queued notification per peer.
+    ready=!queued && pending<8;
   }
   ble_hs_unlock();
   return ready;

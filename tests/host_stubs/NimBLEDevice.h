@@ -21,7 +21,7 @@ inline uint16_t test_busy_conn=UINT16_MAX;
 inline int test_msys_free=12,test_alloc_failures=0;
 inline int os_msys_num_free(){return test_msys_free;}
 inline uint16_t test_blocked_conn=UINT16_MAX;
-inline bool test_notify_credit(uint16_t conn,uint16_t& pending){pending=conn==test_blocked_conn?6:0;return pending<6;}
+inline bool test_notify_credit(uint16_t conn,uint16_t& pending){pending=conn==test_blocked_conn?8:0;return pending<8;}
 inline std::vector<uint16_t> test_disconnect_requests;
 inline constexpr int BLE_HS_ENOMEM=6, BLE_HS_EAGAIN=1, BLE_HS_EBUSY=15;
 inline os_mbuf* ble_hs_mbuf_from_flat(const void* data,size_t length) {
