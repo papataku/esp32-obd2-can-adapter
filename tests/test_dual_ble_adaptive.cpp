@@ -411,6 +411,89 @@ int main() {
     journal.dump(bench.can,bench.ble,false); // Never deletes older entries.
     assert(Preferences::storage.size()==DriveLog::kSlots);
   }
+  // First multi-ECU CAN probe must survive reboot even when the regular
+  // eight-event ring rolls over from unrelated BLE disconnects. Not just a
+  // USB printf: persist all original accepted diagnostic frames in NVS.
+  {
+    Bench bench;Preferences::storage.clear();Preferences::writes=0;
+    g_test_millis=1000;
+    DriveLog journal;journal.begin(1,21);
+    DiagnosticResult first{};
+    first.status=DiagnosticStatus::Ok;
+    first.response_count=5;first.raw_frame_count=5;
+    first.transaction_us=16317;first.tx_to_first_response_us=656;
+    const uint32_t ids[]={0x18DAF1EF,0x18DAF10E,0x18DAF101,
+                          0x18DAF102,0x18DAF103};
+    const uint8_t payload[]={6,0x41,0x0C,0,0,0x0D,0,0};
+    for(unsigned i=0;i<5;++i) {
+      auto& f=first.raw_frames[i];
+      f.can_id=ids[i];f.dlc=8;
+      std::memcpy(f.data,payload,8);
+      f.rx_offset_us=656+i*137U;
+    }
+    journal.submitted(DiagnosticRequest{
+        0x18DB33F1,3,{1,0x0C,0x0D},200});
+    journal.recordFirstProbe(7,first,0x18DAF101,0,0);
+    assert(!journal.probeSaved());
+    // An in-flight CAN owner transaction must block flash writes.
+    hold=true;write(bench.a,"ATM5B00:010C,010D,0105");bench.dual.poll();
+    assert(bench.can.queryPending());
+    journal.poll(bench.can,bench.ble,false);
+    assert(!journal.probeSaved());
+    hold=false;bench.drain();
+    ++g_test_millis;
+    journal.poll(bench.can,bench.ble,false);
+    assert(journal.probeSaved());
+    for(unsigned i=0;i<12;++i)
+      journal.event(DriveLog::Kind::Disconnect,7);
+    g_test_millis+=3000;
+    journal.poll(bench.can,bench.ble,false);
+    assert(journal.snapshot().event_count==8);
+    Preferences nvs;assert(nvs.begin("m5can_trip",true));
+    DriveLog::ProbeRecord probe{};
+    assert(nvs.getBytes("probe1",&probe,sizeof(probe))==sizeof(probe));
+    assert(probe.sequence==1 && probe.version==1 &&
+           probe.responses==5);
+    assert(probe.raw_count==5 && probe.raw_saved==5 && !probe.truncated);
+    assert(probe.decision==0 && probe.reject_reason==0);
+    for(unsigned i=0;i<5;++i) {
+      assert(probe.raw[i].can_id==ids[i]);
+      assert(probe.raw[i].rx_offset_us==656+i*137U);
+      assert(std::memcmp(probe.raw[i].data,payload,8)==0);
+    }
+    nvs.end();
+    DriveLog after_reboot;after_reboot.begin(9,21);
+    assert(after_reboot.snapshot().sequence==2);
+    // Original full first-probe evidence from the prior boot is intact.
+    Preferences reload;assert(reload.begin("m5can_trip",true));
+    DriveLog::ProbeRecord saved{};
+    assert(reload.getBytes("probe1",&saved,sizeof(saved))==sizeof(saved));
+    assert(saved.sequence==1 && saved.raw_saved==5);
+    assert(saved.raw[4].can_id==0x18DAF103);
+    // A corrupted NVS record must not be mistaken for valid evidence.
+    auto& bytes=Preferences::storage["m5can_trip/probe1"];
+    bytes[sizeof(saved)-1]^=0x80;
+    after_reboot.dump(bench.can,bench.ble,false);
+    assert(bytes[sizeof(saved)-1]!=(reinterpret_cast<uint8_t*>(&saved))[sizeof(saved)-1]);
+    reload.end();
+  }
+  // Check the true ISO-TP reception-time evidence propagation, rather
+  // than only synthetic manually populated timestamps.
+  {
+    DiagnosticTransaction tx;
+    DiagnosticRequest rq{};
+    rq.can_id=0x18DB33F1;rq.length=3;
+    rq.data[0]=1;rq.data[1]=0x0C;rq.data[2]=0x0D;
+    tx.begin(rq,1000000);
+    TransactionFrame one{};
+    one.extended=true;one.can_id=0x18DAF10E;one.dlc=8;
+    one.timestamp_us=1000656;
+    const uint8_t payload[]={6,0x41,0x0C,0,0,0x0D,0,0};
+    std::memcpy(one.data,payload,8);
+    assert(tx.onFrame(one).event==TransactionEvent::Completed);
+    assert(tx.result().raw_frame_count==1 &&
+           tx.result().raw_frames[0].rx_offset_us==656);
+  }
   { // Coordinator metrics persist independently of the v2 trip layout.
     Bench bench;Preferences::storage.clear();DriveLog journal;
     g_test_millis=1000;journal.begin(1,21);
