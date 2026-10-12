@@ -44,13 +44,15 @@ void BleEvidenceJournal::begin(uint32_t boot,const char* build) {
   last_attempt_ms_=last_success_ms_=0;
   last_can_=CanStats{};last_ble_=BleStats{};health_initialized_=false;
 }
-void BleEvidenceJournal::recordFault(uint16_t code,uint32_t detail,uint32_t at_ms) {
+void BleEvidenceJournal::recordFault(uint16_t code,uint32_t detail,uint32_t at_ms,
+                                     uint32_t occurrences) {
   if(!code || !started_)return;
   for(unsigned i=0;i<kFaultBuckets;++i) {
     auto& b=record_.faults[i];
     if(!b.code || b.code==code) {
-      if(!b.code) {b.code=code;b.first_ms=at_ms;}
-      if(b.count!=UINT32_MAX)++b.count;
+      if(!b.code) {b.code=code;b.first_ms=at_ms;b.first_detail=detail;}
+      b.count=UINT32_MAX-b.count<occurrences ?
+          UINT32_MAX:b.count+occurrences;
       b.last_ms=at_ms;b.last_detail=detail;
       dirty_=urgent_=true;
       return;
@@ -72,7 +74,8 @@ void BleEvidenceJournal::observeHealth(const CanStats& can,const BleStats& ble) 
   auto recordDelta=[&](uint64_t newer,uint64_t old,DiagnosticError code) {
     if(newer>old)
       recordFault(static_cast<uint16_t>(code),
-          static_cast<uint32_t>(newer-old>UINT32_MAX?UINT32_MAX:newer-old),now);
+          static_cast<uint32_t>(newer-old>UINT32_MAX?UINT32_MAX:newer-old),
+          now,static_cast<uint32_t>(newer-old>UINT32_MAX?UINT32_MAX:newer-old));
   };
   recordDelta(can.query_timeout,last_can_.query_timeout,DiagnosticError::CanQueryTimeout);
   recordDelta(can.query_failed,last_can_.query_failed,DiagnosticError::CanFailedCounter);
@@ -189,12 +192,13 @@ void BleEvidenceJournal::print(const Record& r,bool persisted) {
       static_cast<unsigned long>(r.storage_errors),
       static_cast<unsigned long>(r.unknown_faults),r.overflow);
   for(const auto& fault:r.faults)if(fault.code) {
-    Serial.printf("#BLELOG,FAULT,boot=%lu,code=%u,name=%s,count=%lu,first_ms=%lu,last_ms=%lu,last_detail=%lu\n",
+    Serial.printf("#BLELOG,FAULT,boot=%lu,code=%u,name=%s,count=%lu,first_ms=%lu,last_ms=%lu,first_detail=%lu,last_detail=%lu\n",
         static_cast<unsigned long>(r.boot),fault.code,
         diagnosticErrorName(fault.code),
         static_cast<unsigned long>(fault.count),
         static_cast<unsigned long>(fault.first_ms),
         static_cast<unsigned long>(fault.last_ms),
+        static_cast<unsigned long>(fault.first_detail),
         static_cast<unsigned long>(fault.last_detail));
   }
   for(unsigned i=0;i<r.count;++i) {
