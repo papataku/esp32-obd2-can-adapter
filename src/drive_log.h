@@ -61,6 +61,9 @@ class DriveLog {
   };
   void recordFirstProbe(uint16_t peer,const DiagnosticResult& result,
                         uint32_t responder,uint8_t decision,uint8_t reject_reason);
+  // If a learned ECU later fails, independently retain its FIRST failure.
+  void recordFirstFailure(uint16_t peer,const DiagnosticResult& result,
+                          uint32_t responder,uint8_t decision,uint8_t reject_reason);
   bool probeSaved() const;
 #endif
   void coordinator(uint32_t hits,uint32_t misses,uint32_t joins,
@@ -78,9 +81,13 @@ class DriveLog {
   static bool load(unsigned slot,Record& record);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   static uint32_t probeChecksum(const ProbeRecord& record);
-  static bool loadProbe(unsigned slot,ProbeRecord& record);
-  ProbeRecord probe_{};
+  static bool loadProbe(unsigned slot,ProbeRecord& record,
+                        const char* prefix="probe");
+  void populateEvidence(ProbeRecord& record,const DiagnosticResult& result,
+                        uint32_t responder,uint8_t decision,uint8_t reason);
+  ProbeRecord probe_{},failure_{};
   bool probe_present_=false,probe_dirty_=false,probe_saved_=false;
+  bool failure_present_=false,failure_dirty_=false,failure_saved_=false;
   uint32_t probe_last_attempt_ms_=0;
 #endif
   bool save(uint32_t now,bool forced=false,CanMonitor* can=nullptr);
