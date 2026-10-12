@@ -8,7 +8,7 @@ namespace m5can {
 // BLE worker only updates the protected RAM record.
 class DriveLog {
  public:
-  static constexpr uint32_t kMagic=0x4D354C47, kVersion=1, kSlots=8;
+  static constexpr uint32_t kMagic=0x4D354C47, kVersion=2, kSlots=8;
   enum class Kind:uint8_t { GroupEnabled=1, GroupFallback=2, GroupStopped=3,
                            Disconnect=4, LeaseDenied=5, CanFault=6 };
   struct Event {
@@ -19,7 +19,7 @@ class DriveLog {
   };
   struct Record {
     uint32_t magic=kMagic,version=kVersion,size=sizeof(Record),sequence=0;
-    uint32_t reset_reason=0,uptime_ms=0,saves=0;
+    uint32_t reset_reason=0,rom_reset_reason=0,uptime_ms=0,saves=0;
     char build[32]{};
     uint32_t grouped=0,individual=0,group_ok=0,fallback=0,stopped=0;
     uint32_t disconnects=0,rx_overflow=0,notify_failed=0,notify_retries=0;
@@ -34,7 +34,7 @@ class DriveLog {
     uint32_t events_added=0;
     Event events[8]{}; // Last eight state/fault events, not per-query writes.
   };
-  void begin(uint32_t reset_reason);
+  void begin(uint32_t reset_reason,uint32_t rom_reset_reason=0);
   void submitted(const DiagnosticRequest& request);
   void outcome(Kind kind,uint16_t peer,const DiagnosticResult& result,
                uint32_t responder);
@@ -45,7 +45,7 @@ class DriveLog {
   Record snapshot() const;
  private:
   static bool load(unsigned slot,Record& record);
-  bool save(uint32_t now,bool forced=false);
+  bool save(uint32_t now,bool forced=false,CanMonitor* can=nullptr);
   void addEvent(Kind kind,uint16_t peer,const DiagnosticResult* result,
                 uint32_t responder);
   mutable portMUX_TYPE mux_=portMUX_INITIALIZER_UNLOCKED;

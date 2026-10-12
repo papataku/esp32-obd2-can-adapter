@@ -3,6 +3,7 @@
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_heap_caps.h>
 #include <esp_system.h>
+#include <rom/rtc.h>
 #endif
 
 #include "ble_elm_transport.h"
@@ -51,7 +52,8 @@ void setup() {
   g_ui.begin();
   g_serial.begin();
 #if defined(ARDUINO_ARCH_ESP32)
-  m5can::driveLog().begin(static_cast<uint32_t>(esp_reset_reason()));
+  m5can::driveLog().begin(static_cast<uint32_t>(esp_reset_reason()),
+      static_cast<uint32_t>(rtc_get_reset_reason(0)));
 #else
   m5can::driveLog().begin(0);
 #endif
