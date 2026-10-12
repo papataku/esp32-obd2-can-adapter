@@ -1,6 +1,7 @@
 #include <cassert>
 #include <NimBLEDevice.h>
 #include "ble_elm_transport.h"
+#include "diagnostic_error_catalog.h"
 #ifndef M5CAN_DUAL_NOTIFY_CHUNK_BYTES
 #define M5CAN_DUAL_NOTIFY_CHUNK_BYTES 20
 #endif
@@ -71,6 +72,11 @@ int main() {
   m5can::BleDiagnosticEvent diag;
   assert(transport.pollDiagnostic(diag) && diag.connection_id==7);
   assert(transport.pollDiagnostic(diag) && diag.connection_id==19);
+  assert(transport.pollDiagnostic(diag));
+  assert(diag.kind==m5can::BleDiagnosticEvent::Kind::Error);
+  assert(diag.error_code==static_cast<uint16_t>(
+      m5can::DiagnosticError::BleNotifyBackpressure));
+  assert(diag.error_detail==3 && diag.generation==ea.generation);
   assert(!transport.pollDiagnostic(diag));
   ble_gap_event drop;
   drop.disconnect.conn=a; drop.disconnect.reason=0x208;
@@ -103,7 +109,17 @@ int main() {
   assert(after_reconnect.peers[0].generation!=ea.generation);
   assert(after_reconnect.peers[0].rx_bytes==0);
   assert(after_reconnect.peers[0].tx_bytes==0);
-  assert(transport.writeTo(7,ea.generation,data,1)==0);  while(transport.pollDiagnostic(diag)) {}
+  assert(transport.writeTo(7,ea.generation,data,1)==0);
+  bool saw_stale=false;
+  while(transport.pollDiagnostic(diag)) {
+    if(diag.error_code==static_cast<uint16_t>(
+        m5can::DiagnosticError::BlePeerGenerationStale)) {
+      assert(diag.generation==ea.generation);
+      assert(diag.address_suffix==0); // never attribute to reused peer
+      saw_stale=true;
+    }
+  }
+  assert(saw_stale);
   // Diagnostic overflow stays bounded and never touches protocol events.
   for(unsigned n=0;n<70;++n) NimBLEDevice::gap_handler(&drop,nullptr);
   assert(transport.diagnosticDrops()==7);
