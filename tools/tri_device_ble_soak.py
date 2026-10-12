@@ -48,6 +48,8 @@ def capture(args):
                         if '#DEMO,' in text:latest['demo']=fields(text)
                         if text.startswith('#DRIVELOG,boot='):latest['trip']=fields(text)
                         if '#DRIVELOG,END' in text:latest['trip_complete']=True
+                        if text.startswith('#BLE_DUAL,'):latest['dual']=fields(text)
+                        if text.startswith('#BLELOG,END'):latest['blelog_complete']=True
         except Exception as exc:
             with lock:errors.append(name+': '+repr(exc))
         finally:raw.close()
@@ -105,13 +107,33 @@ def capture(args):
             send('ring','c')
             manifest['order']='iPad DEMO verified, then SmartRing connect command'
             (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
+        if args.require_two_meters:
+            if 'jc' not in links or args.isolate_jc:raise RuntimeError('two-meter gate requires active JC')
+            send('adapter','STATS');send('ring','i');send('jc','i')
+            deadline=time.monotonic()+20
+            while time.monotonic()<deadline and latest.get('dual',{}).get('clients')!='2':time.sleep(.1)
+            if latest.get('dual',{}).get('clients')!='2':raise RuntimeError('two actual BLE peers not confirmed')
+            started=time.monotonic();manifest['measurement_start_monotonic']=started
+            manifest['measurement_start_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat()
+            (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
         end=started+args.seconds;next_status=0
         while time.monotonic()<end:
             if errors:raise RuntimeError(str(errors))
             if time.monotonic()>=next_status:
                 send('adapter','STATS');send('ring','i')
+                if 'jc' in links and not args.isolate_jc:send('jc','i')
                 next_status=time.monotonic()+10
             time.sleep(.2)
+        manifest['measurement_end_monotonic']=time.monotonic()
+        manifest['measurement_end_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat()
+        (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
+        if args.export_evidence:
+            # Stop both consumers before any synchronous post-test USB dump.
+            send('ring','x')
+            if 'jc' in links:send('jc','x')
+            time.sleep(8) # bounded logger's urgent checkpoint floor
+            for command in ['LOGCAP','BLELOG INDEX','BLELOG','DRIVELOG']:
+                send('adapter',command);time.sleep(3)
     except BaseException as exc:
         errors.append(repr(exc))
     finally:
@@ -126,7 +148,7 @@ def capture(args):
         completed=subprocess.run(copy,capture_output=True,text=True,timeout=35)
         (output/'ipad-copy.log').write_text(completed.stdout+completed.stderr)
         if completed.returncode:errors.append('iPad evidence export failed')
-    measured=[r for r in rows if r['monotonic']>=manifest.get('measurement_start_monotonic',float('inf'))]
+    measured=[r for r in rows if manifest.get('measurement_start_monotonic',float('inf'))<=r['monotonic']<=manifest.get('measurement_end_monotonic',float('inf'))]
     metrics=analyze(measured);metrics['capture_errors']=errors
     (output/'metrics.json').write_text(json.dumps(metrics,indent=2))
     with (output/'aligned_timeline.csv').open('w') as f:
@@ -151,6 +173,7 @@ def analyze(rows):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ['adapter','ring','output']:p.add_argument('--'+name,required=True)
+    p.add_argument('--require-two-meters',action='store_true');p.add_argument('--export-evidence',action='store_true')
     p.add_argument('--ipad-delay-ms',type=float,default=200);p.add_argument('--ipad-positive-repeats',type=int,default=1)
     p.add_argument('--ipad-device');p.add_argument('--ipad-scenario',choices=['idle','single','batch','no-data','faults'],default='batch');p.add_argument('--ipad-seconds',type=float,default=1800)
     p.add_argument('--jc');p.add_argument('--seconds',type=float,default=60)

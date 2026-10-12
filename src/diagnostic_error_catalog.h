@@ -16,18 +16,25 @@ enum class DiagnosticError : uint16_t {
   CanNoData=201, CanBusy=202, CanLeaseRequired=203,
   CanInvalidRequest=204, CanRateLimited=205, CanDriverError=206,
   CanBusOff=207, CanModeError=208, CanIsoTpError=209,
-  CanUnknownStatus=299,
+  CanNegativeResponse=210, CanUnknownStatus=299,
   GroupRejected=301, GroupStopped=302, GroupPeerGone=303,
   ElmBusy=401, ElmInputOverflow=402, ElmInvalidCommand=403,
   AppPeerGone=404, AppTaskCreateFailed=405,
+  RequestContext=410, ResponseSource=411, OwnerRequestContext=412,
   CanQueryTimeout=501, CanFailedCounter=502,
   CanRxQueueDrop=503, CanDriverMissed=504,
   CanDriverOverrun=505, CanBusErrorCounter=506,
   CanArbitrationLoss=507, CanInitFailed=508,
   BleRxOverflowCounter=521, BleNotifyFailureCounter=522,
   BleSessionRejectCounter=523, BleNotifyRetryCounter=524,
-  JournalStorageFailure=901
+  JournalStorageFailure=901, DemoNoData=911, DemoNrc=912, DemoNoPrompt=913, FixtureEvidence=914
 };
+// Stable context: [demo bit31, length bits30..24, SID, PID/DID high, DID low].
+inline uint32_t diagnosticRequestIdentity(const DiagnosticRequest& r,bool demo=false) {
+  return (demo?0x80000000U:0) | (static_cast<uint32_t>(r.length&0x7F)<<24) |
+      (static_cast<uint32_t>(r.data[0])<<16) |
+      (static_cast<uint32_t>(r.data[1])<<8) | r.data[2];
+}
 // Exhaustively translate the CAN owner's result status to journal codes.
 // No implicit enum-order arithmetic; adding a new DiagnosticStatus must be
 // accompanied by a catalog/test update to prevent silent misclassification.
@@ -66,6 +73,14 @@ inline const char* diagnosticErrorName(uint16_t raw) {
     case DiagnosticError::CanBusOff:return "CAN_BUS_OFF";
     case DiagnosticError::CanModeError:return "CAN_MODE_FAILURE";
     case DiagnosticError::CanIsoTpError:return "ISOTP_FAILURE";
+    case DiagnosticError::CanNegativeResponse:return "CAN_NRC";
+    case DiagnosticError::RequestContext:return "REQUEST_CONTEXT";
+    case DiagnosticError::ResponseSource:return "RESPONSE_ECU";
+    case DiagnosticError::OwnerRequestContext:return "CAN_OWNER_REQUEST";
+    case DiagnosticError::DemoNoData:return "DEMO_NO_DATA";
+    case DiagnosticError::DemoNrc:return "DEMO_NRC";
+    case DiagnosticError::FixtureEvidence:return "SYNTHETIC_EVIDENCE";
+    case DiagnosticError::DemoNoPrompt:return "DEMO_NO_PROMPT";
     case DiagnosticError::CanUnknownStatus:return "CAN_UNKNOWN_STATUS";
     case DiagnosticError::GroupRejected:return "PID_GROUP_REJECTED";
     case DiagnosticError::GroupStopped:return "PID_GROUP_STOPPED";

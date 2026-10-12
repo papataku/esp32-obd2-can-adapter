@@ -60,10 +60,12 @@ class DriveLog {
     uint32_t rx_offset_us[kDiagnosticMaxRawFrames]{};
   };
   void recordFirstProbe(uint16_t peer,const DiagnosticResult& result,
-                        uint32_t responder,uint8_t decision,uint8_t reject_reason);
+                        uint32_t responder,uint8_t decision,uint8_t reject_reason,
+                        bool fixture=false);
   // If a learned ECU later fails, independently retain its FIRST failure.
   void recordFirstFailure(uint16_t peer,const DiagnosticResult& result,
-                          uint32_t responder,uint8_t decision,uint8_t reject_reason);
+                          uint32_t responder,uint8_t decision,uint8_t reject_reason,
+                        bool fixture=false);
   bool probeSaved() const;
 #endif
   void coordinator(uint32_t hits,uint32_t misses,uint32_t joins,
@@ -84,7 +86,7 @@ class DriveLog {
   static bool loadProbe(unsigned slot,ProbeRecord& record,
                         const char* prefix="probe");
   void populateEvidence(ProbeRecord& record,const DiagnosticResult& result,
-                        uint32_t responder,uint8_t decision,uint8_t reason);
+                        uint32_t responder,uint8_t decision,uint8_t reason,bool fixture=false);
   ProbeRecord probe_{},failure_{};
   bool probe_present_=false,probe_dirty_=false,probe_saved_=false;
   bool failure_present_=false,failure_dirty_=false,failure_saved_=false;

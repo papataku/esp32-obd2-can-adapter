@@ -1,5 +1,6 @@
 #include "drive_log.h"
 #include <Preferences.h>
+#include "evidence_preferences.h"
 #include <cstdio>
 #include <cstring>
 
@@ -16,7 +17,7 @@ uint32_t DriveLog::probeChecksum(const ProbeRecord& r) {
 }
 bool DriveLog::loadProbe(unsigned slot,ProbeRecord& record,
                          const char* prefix) {
-  Preferences nvs;char key[12]{};
+  EvidencePreferences nvs;char key[12]{};
   std::snprintf(key,sizeof(key),"%s%u",prefix,slot);
   if(!nvs.begin("m5can_trip",true))return false;
   const bool ok=nvs.getBytesLength(key)==sizeof(record) &&
@@ -34,13 +35,13 @@ bool DriveLog::loadProbe(unsigned slot,ProbeRecord& record,
 }
 void DriveLog::populateEvidence(
     ProbeRecord& target,const DiagnosticResult& result,
-    uint32_t responder,uint8_t decision,uint8_t reject_reason) {
+    uint32_t responder,uint8_t decision,uint8_t reject_reason,bool fixture) {
   target=ProbeRecord{};
   target.sequence=record_.sequence;
   target.uptime_ms=millis();
   target.responder=responder;
   target.status=static_cast<uint8_t>(result.status);
-  target.decision=decision;target.reject_reason=reject_reason;
+  target.decision=decision;target.reject_reason=reject_reason;target.reserved=fixture?1:0;
   target.responses=result.response_count;
   target.transaction_us=result.transaction_us;
   target.first_response_us=result.tx_to_first_response_us;
@@ -55,12 +56,12 @@ void DriveLog::populateEvidence(
 }
 void DriveLog::recordFirstProbe(uint16_t peer,const DiagnosticResult& result,
                                 uint32_t responder,uint8_t decision,
-                                uint8_t reject_reason) {
+                                uint8_t reject_reason,bool fixture) {
   (void)peer; // Peer attribution remains in the event journal.
   if(!enabled_)return;
   portENTER_CRITICAL(&mux_);
   if(!probe_present_) {
-    populateEvidence(probe_,result,responder,decision,reject_reason);
+    populateEvidence(probe_,result,responder,decision,reject_reason,fixture);
     probe_present_=true;probe_dirty_=true;probe_saved_=false;
     probe_last_attempt_ms_=0;
   }
@@ -68,12 +69,12 @@ void DriveLog::recordFirstProbe(uint16_t peer,const DiagnosticResult& result,
 }
 void DriveLog::recordFirstFailure(uint16_t peer,const DiagnosticResult& result,
                                   uint32_t responder,uint8_t decision,
-                                  uint8_t reject_reason) {
+                                  uint8_t reject_reason,bool fixture) {
   (void)peer;
   if(!enabled_)return;
   portENTER_CRITICAL(&mux_);
   if(!failure_present_) {
-    populateEvidence(failure_,result,responder,decision,reject_reason);
+    populateEvidence(failure_,result,responder,decision,reject_reason,fixture);
     failure_present_=true;failure_dirty_=true;failure_saved_=false;
     probe_last_attempt_ms_=0;
   }
@@ -210,11 +211,13 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
       ok=nvs.putBytes(key,&coord,sizeof(coord))==sizeof(coord);
     }
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    EvidencePreferences evidence;
+    evidence.begin("m5can_trip",false);
     // Persist the first probe only once, never overwrite with each 30s
     // checkpoint. Rotating probe slots are keyed to the same boot sequence.
     if(write_probe && ok) {
       std::snprintf(key,sizeof(key),"probe%u",static_cast<unsigned>(copy.sequence%kSlots));
-      const bool stored=nvs.putBytes(key,&probe_copy,sizeof(probe_copy))==sizeof(probe_copy);
+      const bool stored=evidence.putBytes(key,&probe_copy,sizeof(probe_copy))==sizeof(probe_copy);
       ProbeRecord readback{};
       const bool verified=stored && loadProbe(copy.sequence%kSlots,readback) &&
           readback.sequence==copy.sequence;
@@ -231,7 +234,7 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
     }
     if(write_failure && ok) {
       std::snprintf(key,sizeof(key),"fail%u",static_cast<unsigned>(copy.sequence%kSlots));
-      const bool stored=nvs.putBytes(key,&failure_copy,sizeof(failure_copy))==sizeof(failure_copy);
+      const bool stored=evidence.putBytes(key,&failure_copy,sizeof(failure_copy))==sizeof(failure_copy);
       ProbeRecord readback{};
       const bool verified=stored &&
           loadProbe(copy.sequence%kSlots,readback,"fail") &&
@@ -359,7 +362,7 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
       persisted=has_probe;
     }
     if(has_probe) {
-      Serial.printf("#DRIVELOG,PROBE,boot=%lu,state=%s,ms=%lu,decision=%u,reason=%u,status=%u,ecu=%08lX,responses=%u,raw_count=%u,raw_saved=%u,truncated=%u,transaction_us=%lu,first_response_us=%lu,rx_time=tx_offset_us\n",
+      Serial.printf("#DRIVELOG,PROBE,boot=%lu,state=%s,ms=%lu,decision=%u,reason=%u,status=%u,ecu=%08lX,responses=%u,raw_count=%u,raw_saved=%u,truncated=%u,transaction_us=%lu,first_response_us=%lu,rx_time=tx_offset_us,origin=%s\n",
           static_cast<unsigned long>(seq),persisted?"persisted":"RAM_ONLY",
           static_cast<unsigned long>(probe_record.uptime_ms),
           probe_record.decision,probe_record.reject_reason,probe_record.status,
@@ -367,7 +370,7 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
           probe_record.responses,probe_record.raw_count,
           probe_record.raw_saved,probe_record.truncated,
           static_cast<unsigned long>(probe_record.transaction_us),
-          static_cast<unsigned long>(probe_record.first_response_us));
+          static_cast<unsigned long>(probe_record.first_response_us),probe_record.reserved?"SYNTHETIC":"CAN");
       for(unsigned i=0;i<probe_record.raw_saved;++i) {
         const auto& f=probe_record.raw[i];
         Serial.printf("#DRIVELOG,PROBE_RAW,boot=%lu,index=%u,id=%08lX,dlc=%u,rx_tx_us=%lu,data=",
@@ -397,7 +400,7 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
       failure_persisted=has_failure;
     }
     if(has_failure) {
-      Serial.printf("#DRIVELOG,GROUPFAIL,boot=%lu,state=%s,ms=%lu,decision=%u,reason=%u,status=%u,ecu=%08lX,responses=%u,raw_count=%u,raw_saved=%u,truncated=%u,transaction_us=%lu,first_response_us=%lu,rx_time=tx_offset_us\n",
+      Serial.printf("#DRIVELOG,GROUPFAIL,boot=%lu,state=%s,ms=%lu,decision=%u,reason=%u,status=%u,ecu=%08lX,responses=%u,raw_count=%u,raw_saved=%u,truncated=%u,transaction_us=%lu,first_response_us=%lu,rx_time=tx_offset_us,origin=%s\n",
           static_cast<unsigned long>(seq),failure_persisted?"persisted":"RAM_ONLY",
           static_cast<unsigned long>(failure_record.uptime_ms),
           failure_record.decision,failure_record.reject_reason,
@@ -405,7 +408,7 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
           failure_record.responses,failure_record.raw_count,
           failure_record.raw_saved,failure_record.truncated,
           static_cast<unsigned long>(failure_record.transaction_us),
-          static_cast<unsigned long>(failure_record.first_response_us));
+          static_cast<unsigned long>(failure_record.first_response_us),failure_record.reserved?"SYNTHETIC":"CAN");
       for(unsigned i=0;i<failure_record.raw_saved;++i) {
         const auto& f=failure_record.raw[i];
         Serial.printf("#DRIVELOG,GROUPFAIL_RAW,boot=%lu,index=%u,id=%08lX,dlc=%u,rx_tx_us=%lu,data=",

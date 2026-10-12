@@ -284,9 +284,16 @@ void DualBleElm::onLine(Session& s,const char* line) {
         // Explicit TX-disabled bench only. No CAN ownership/query changes.
         if (s.request.length==3 && s.request.data[0]==0x22) {
           const uint16_t did=(static_cast<uint16_t>(s.request.data[1])<<8)|s.request.data[2];
-          if (did==0xFFFE) { prompt_now=false; break; } // no bytes/prompt
-          if (did==0xFFFD) { emitLine(s,"18DAF101037F2231"); break; }
-          if (did==0xFFFC) { emitLine(s,"18DAF101037F2233"); break; }
+          if (did==0xFFFE) {
+            ble_.recordDiagnosticError(s.conn_id,s.generation,
+                static_cast<uint16_t>(DiagnosticError::DemoNoPrompt),diagnosticRequestIdentity(s.request,true));
+            prompt_now=false;break;
+          } // no bytes/prompt
+          if (did==0xFFFD || did==0xFFFC) {
+            ble_.recordDiagnosticError(s.conn_id,s.generation,
+                static_cast<uint16_t>(DiagnosticError::DemoNrc),diagnosticRequestIdentity(s.request,true));
+            emitLine(s,did==0xFFFD?"18DAF101037F2231":"18DAF101037F2233");break;
+          }
           if (did==0x2012) {
             emitLine(s,"18DAF101100A622012AABBCC");
             emitLine(s,"BUFFER FULL"); break;
@@ -296,7 +303,11 @@ void DualBleElm::onLine(Session& s,const char* line) {
         DiagnosticRawFrame frames[2]{};
         const uint8_t n=parsed.request.length==2 && parsed.request.data[0]==0x01
             ? DemoDrive::frames(parsed.request.data[1],millis(),frames):0;
-        if (!n) emitLine(s,"NO DATA");
+        if (!n) {
+          ble_.recordDiagnosticError(s.conn_id,s.generation,
+              static_cast<uint16_t>(DiagnosticError::DemoNoData),diagnosticRequestIdentity(s.request,true));
+          emitLine(s,"NO DATA");
+        }
         for(uint8_t i=0;i<n;++i) appendFrame(s,frames[i]);
       } else if (can_.faultLocked()) {
         ble_.recordDiagnosticError(s.conn_id,s.generation,
@@ -393,6 +404,22 @@ void DualBleElm::onResult() {
     if(original>=0 && original<2)
       ble_.recordDiagnosticError(sessions_[original].conn_id,
            sessions_[original].generation,error,result.transaction_us);
+    if(original>=0 && original<2)
+      ble_.recordDiagnosticError(sessions_[original].conn_id,
+          sessions_[original].generation,static_cast<uint16_t>(DiagnosticError::RequestContext),
+          diagnosticRequestIdentity(sessions_[original].request));
+  }
+  if(active_query_owner_>=0 && active_query_owner_<2) {
+    const auto& owner=sessions_[active_query_owner_];
+    for(unsigned i=0;i<result.response_count && i<kDiagnosticMaxResponses;++i) {
+      const auto& message=result.responses[i];
+      if(message.length>=3 && message.data[0]==0x7F && message.data[1]==owner.request.data[0]) {
+        ble_.recordDiagnosticError(owner.conn_id,owner.generation,
+            static_cast<uint16_t>(DiagnosticError::RequestContext),diagnosticRequestIdentity(owner.request));
+        ble_.recordDiagnosticError(owner.conn_id,owner.generation,
+            static_cast<uint16_t>(DiagnosticError::ResponseSource),message.can_id);
+      }
+    }
   }
   const int index=active_query_owner_;
   const int second=active_secondary_owner_;
@@ -429,6 +456,7 @@ void DualBleElm::onResult() {
     uint32_t responder=0;
     const bool first_success=
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
+    (void)first_success; // consumed only by the grouped-profile sidecar
     auto decision=
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
     const bool s_rpm=s.request.data[1]==0x0C;
@@ -448,15 +476,10 @@ void DualBleElm::onResult() {
       ble_.recordDiagnosticError(s.conn_id,s.generation,
           static_cast<uint16_t>(decision==AdaptiveMultiPid::Decision::Stop ?
               DiagnosticError::GroupStopped:DiagnosticError::GroupRejected),
+          (static_cast<uint32_t>(adaptive_multi_pid_.lastRejectReason())<<24) |
           (static_cast<uint32_t>(result.status)<<16) |
           (static_cast<uint32_t>(result.response_count)<<8) |
           static_cast<uint32_t>(result.raw_frame_count));
-    if (decision!=AdaptiveMultiPid::Decision::UseGrouped)
-      Serial.printf("#MULTIPID,disabled,status=%u,reason=%u,responses=%u,ecu=%08lX\n",
-                    static_cast<unsigned>(result.status),
-                    static_cast<unsigned>(adaptive_multi_pid_.lastRejectReason()),
-                    static_cast<unsigned>(result.response_count),
-                    static_cast<unsigned long>(responder));
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     if(first_success)
       driveLog().recordFirstProbe(
@@ -479,9 +502,6 @@ void DualBleElm::onResult() {
       appendFrame(*other,virtual_frames[s_rpm?1:0]);
       s.pending=false;
       other->pending=false;
-      if (first_success)
-        Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
-                      static_cast<unsigned long>(responder));
       if (s.batch) {
         ++s.batch_next;
         advanceBatch(s);
@@ -521,6 +541,7 @@ void DualBleElm::onResult() {
     uint32_t responder=0;
     const bool first_success=
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
+    (void)first_success; // consumed only by the grouped-profile sidecar
     auto decision=
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
@@ -537,6 +558,7 @@ void DualBleElm::onResult() {
       ble_.recordDiagnosticError(s.conn_id,s.generation,
           static_cast<uint16_t>(decision==AdaptiveMultiPid::Decision::Stop ?
               DiagnosticError::GroupStopped:DiagnosticError::GroupRejected),
+          (static_cast<uint32_t>(adaptive_multi_pid_.lastRejectReason())<<24) |
           (static_cast<uint32_t>(result.status)<<16) |
           (static_cast<uint32_t>(result.response_count)<<8) |
           static_cast<uint32_t>(result.raw_frame_count));
@@ -561,15 +583,7 @@ void DualBleElm::onResult() {
       emitLine(s,"M5ITEM:00:010D");
       appendFrame(s,virtual_frames[1]);
       s.batch_next=static_cast<uint8_t>(s.batch_next+2);
-      if (first_success)
-        Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
-                      static_cast<unsigned long>(responder));
     } else {
-      Serial.printf("#MULTIPID,disabled,status=%u,reason=%u,responses=%u,ecu=%08lX\n",
-                    static_cast<unsigned>(result.status),
-                    static_cast<unsigned>(adaptive_multi_pid_.lastRejectReason()),
-                    static_cast<unsigned>(result.response_count),
-                    static_cast<unsigned long>(responder));
       if (decision==AdaptiveMultiPid::Decision::Stop) {
         emitLine(s,"M5ITEM:00:010C");
         appendResult(s,result);

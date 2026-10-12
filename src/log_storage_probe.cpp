@@ -1,5 +1,6 @@
 #include "log_storage_probe.h"
 #include "drive_log.h"
+#include "evidence_store.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "ble_evidence_journal.h"
 #endif
@@ -74,10 +75,24 @@ void reportLogStorageCapacity() {
   const bool impossible=est.projected_min_bytes>partition->size;
   // Even if this minimum fits, available entry COUNT alone cannot prove
   // enough contiguous space or reserve for wear-levelled blob updates.
-  Serial.printf("#LOGCAP,VERDICT,combined_PR25_PR27=%s,bytes_shortfall=%llu,write_approved=NO,method=READ_ONLY\n",
+  Serial.printf("#LOGCAP,VERDICT,NVS_only_PR25_PR27=%s,bytes_shortfall=%llu,write_approved=NO,method=READ_ONLY\n",
       impossible?"INSUFFICIENT":"UNPROVEN",
       static_cast<unsigned long long>(impossible ?
           est.projected_min_bytes-partition->size : 0));
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  const auto& durable=evidenceStore().status();
+  Serial.printf("#LOGCAP,DURABLE,ready=%u,foreign=%u,sectors=%lu,protected_keys=%lu,commits=%lu,errors=%lu,corrupt=%lu,uncommitted=%lu\n",
+      durable.ready?1U:0U,durable.foreign?1U:0U,
+      static_cast<unsigned long>(durable.sectors),
+      static_cast<unsigned long>(EvidenceStore::kKeys),
+      static_cast<unsigned long>(durable.commits),
+      static_cast<unsigned long>(durable.errors),
+      static_cast<unsigned long>(durable.corrupt),
+      static_cast<unsigned long>(durable.uncommitted));
+  Serial.printf("#LOGCAP,LAYOUT,legacy_NVS_payload=%llu,evidence_partition=spiffs,table_changed=NO,filesystem_mounted=NO,method=READ_ONLY\n",
+      static_cast<unsigned long long>(est.legacy_trip_bytes+est.legacy_coordinator_bytes));
+#endif
+
 #else
   Serial.println("#LOGCAP,UNAVAILABLE,requires=ESP32,method=READ_ONLY");
 #endif

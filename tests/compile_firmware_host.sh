@@ -156,3 +156,18 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_CAN
   "$ROOT/src/isotp_reassembler.cpp" "$ROOT/src/diagnostic_policy.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-fault-test
 /tmp/m5can-dual-fault-test
+
+# Real flash backend tests; existing Preferences tests retain legacy ABI coverage.
+g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_evidence_store.cpp" "$ROOT/src/evidence_store.cpp" \
+  -o /tmp/m5can-evidence-store-test
+/tmp/m5can-evidence-store-test
+g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -DM5CAN_EVIDENCE_FLASH_TEST=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_combined_evidence.cpp" "$ROOT/src/drive_log.cpp" \
+  "$ROOT/src/ble_evidence_journal.cpp" "$ROOT/src/evidence_store.cpp" \
+  "$ROOT/src/ble_elm_transport.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-combined-evidence-test
+/tmp/m5can-combined-evidence-test

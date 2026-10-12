@@ -1,3 +1,4 @@
+#include "diagnostic_error_catalog.h"
 #include "can_monitor.h"
 #include "adaptive_multi_pid.h"
 
@@ -203,6 +204,24 @@ void CanMonitor::rxTask() {
       const unsigned status_index=static_cast<unsigned>(result.status);
       if(status_index<10 && stats_.result_status_count[status_index]!=UINT32_MAX)
         ++stats_.result_status_count[status_index];
+      if(result.status!=DiagnosticStatus::Ok || positive_ecu==0) {
+        stats_.last_failed_request=diagnosticRequestIdentity(request);
+        stats_.last_failed_ms=millis();
+      }
+      for(unsigned i=0;i<result.response_count && i<kDiagnosticMaxResponses;++i) {
+        const auto& message=result.responses[i];
+        if(message.length<3 || message.data[0]!=0x7F ||
+           message.data[1]!=request.data[0])continue;
+        const uint32_t detail=(static_cast<uint32_t>(message.data[1])<<24) |
+            (static_cast<uint32_t>(message.data[2])<<16) | (message.can_id&0xFFFFU);
+        if(!stats_.nrc_count) {
+          stats_.first_nrc_detail=detail;stats_.first_nrc_ms=millis();
+          stats_.first_nrc_request=diagnosticRequestIdentity(request);
+        }
+        if(stats_.nrc_count!=UINT32_MAX)++stats_.nrc_count;
+        stats_.last_nrc_detail=detail;stats_.last_nrc_ms=millis();
+        stats_.last_nrc_request=diagnosticRequestIdentity(request);
+      }
       if (from_cache) ++stats_.query_cache_hits;
       if (result.status==DiagnosticStatus::Ok && positive_ecu!=0) {
         ++stats_.query_ok;

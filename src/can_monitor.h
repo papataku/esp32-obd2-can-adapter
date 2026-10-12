@@ -37,6 +37,9 @@ struct CanStats {
   // CAN owner classifications, including USB-originated requests that
   // never pass through DualBleElm. Index is DiagnosticStatus raw enum.
   uint32_t result_status_count[10]{};
+  uint32_t last_failed_request=0,last_failed_ms=0;
+  uint32_t nrc_count=0,first_nrc_detail=0,last_nrc_detail=0;
+  uint32_t first_nrc_request=0,last_nrc_request=0,first_nrc_ms=0,last_nrc_ms=0;
   uint32_t last_response_can_id = 0; // Actual responder, not ambient CAN RX
   bool query_active = false;
   uint32_t driver_rx_missed = 0;

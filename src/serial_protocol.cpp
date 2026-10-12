@@ -491,6 +491,27 @@ void SerialProtocol::handleUsbLine(const char* line) {
     emitTextHello();
   } else if (!std::strcmp(command, "DRIVELOG")) {
     if (drive_log_ble_) driveLog().dump(monitor_,*drive_log_ble_,demoActive());
+#if defined(M5CAN_DEMO_FAULT_FIXTURE) && defined(M5CAN_CAN_MODE_DRY_RUN) && defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  } else if (!std::strcmp(command,"LOGTEST")) {
+    if(!demoActive() || monitor_.queryPending() ||
+       (drive_log_ble_ && drive_log_ble_->connectedClientCount())) {
+      Serial.println("#LOGTEST,ERR,requires=TX_DISABLED_DEMO_AND_NO_PEERS");return;
+    }
+    static DiagnosticResult fixture; // fixed test-only storage, never task stack
+    fixture.status=DiagnosticStatus::Ok;fixture.response_count=5;
+    fixture.raw_frame_count=kDiagnosticMaxRawFrames;
+    fixture.transaction_us=10000;fixture.tx_to_first_response_us=100;
+    for(unsigned i=0;i<kDiagnosticMaxRawFrames;++i) {
+      auto& f=fixture.raw_frames[i];f.can_id=0x18DAF101U+(i%5);f.dlc=8;
+      for(unsigned b=0;b<8;++b)f.data[b]=static_cast<uint8_t>(i+b);
+      fixture.raw_rx_offsets_us[i]=100+i*137;
+    }
+    driveLog().recordFirstProbe(0,fixture,0x18DAF101U,0,0,true);
+    fixture.status=DiagnosticStatus::NoData;
+    driveLog().recordFirstFailure(0,fixture,0x18DAF101U,1,5,true);
+    bleEvidenceJournal().appendError(DiagnosticError::FixtureEvidence,48);
+    Serial.println("#LOGTEST,QUEUED,origin=SYNTHETIC,raw_per_record=48,physical_TX=COMPILED_OUT");
+#endif
   } else if (!std::strcmp(command, "LOGCAP")) {
     // An operator explicitly asks for NVS capacity diagnostics. Never
     // spend serial/NVS inspection time during any active vehicle traffic.

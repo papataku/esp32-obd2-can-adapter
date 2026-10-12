@@ -40,6 +40,28 @@ int main() {
     if(sample.second)
       assert(std::string(diagnosticErrorName(sample.second))!="UNKNOWN_CODE");
   }
+  {
+    BleEvidenceJournal nrc;g_test_millis=1000;nrc.begin(99,"nrc-test");
+    CanStats stats{};BleStats ble_stats{};
+    stats.nrc_count=2;stats.first_nrc_ms=500;stats.last_nrc_ms=700;
+    stats.first_nrc_detail=0x2231F101U;stats.last_nrc_detail=0x2233F102U;
+    stats.first_nrc_request=0x032220FFU;stats.last_nrc_request=0x0322FE08U;
+    nrc.observeHealth(stats,ble_stats);
+    bool found=false,context=false;
+    for(const auto& fault:nrc.snapshot().faults) {
+      if(fault.code==210) {
+        found=true;assert(fault.first_ms==500 && fault.last_ms==700 && fault.count==2 && fault.first_detail==stats.first_nrc_detail &&
+                          fault.last_detail==stats.last_nrc_detail);
+      }
+      if(fault.code==412) {
+        context=true;assert(fault.count==2 && fault.first_detail==stats.first_nrc_request &&
+                            fault.last_detail==stats.last_nrc_request);
+      }
+    }
+    assert(found && context);
+    nrc.observeHealth(stats,ble_stats); // unchanged counters never double-count
+    for(const auto& fault:nrc.snapshot().faults)if(fault.code==210)assert(fault.count==2);
+  }
   Preferences::storage.clear();Preferences::writes=0;
   CanMonitor can;
   BleElmTransport transport;

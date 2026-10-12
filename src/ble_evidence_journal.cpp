@@ -1,6 +1,6 @@
 #include "ble_evidence_journal.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
-#include <Preferences.h>
+#include "evidence_preferences.h"
 #include <cstdio>
 #include <cstring>
 
@@ -18,7 +18,7 @@ uint32_t BleEvidenceJournal::checksum(const Record& record) {
   return hash;
 }
 bool BleEvidenceJournal::load(unsigned slot,Record& target) {
-  Preferences prefs;
+  EvidencePreferences prefs;
   char key[12]{};
   std::snprintf(key,sizeof(key),"ble%u",slot);
   if(!prefs.begin("m5can_blelog",true))return false;
@@ -88,6 +88,24 @@ void BleEvidenceJournal::observeHealth(const CanStats& can,const BleStats& ble) 
   recordDelta(ble.notify_failures,last_ble_.notify_failures,DiagnosticError::BleNotifyFailureCounter);
   recordDelta(ble.notify_retries,last_ble_.notify_retries,DiagnosticError::BleNotifyRetryCounter);
   recordDelta(ble.session_rejections,last_ble_.session_rejections,DiagnosticError::BleSessionRejectCounter);
+  if(can.nrc_count>last_can_.nrc_count) {
+    const uint32_t delta=can.nrc_count-last_can_.nrc_count;
+    const auto nrc=static_cast<uint16_t>(DiagnosticError::CanNegativeResponse);
+    const auto context=static_cast<uint16_t>(DiagnosticError::OwnerRequestContext);
+    if(!last_can_.nrc_count) {
+      recordFault(nrc,can.first_nrc_detail,can.first_nrc_ms);
+      recordFault(context,can.first_nrc_request,can.first_nrc_ms);
+      if(delta>1) {
+        recordFault(nrc,can.last_nrc_detail,can.last_nrc_ms,delta-1);
+        recordFault(context,can.last_nrc_request,can.last_nrc_ms,delta-1);
+      }
+    } else {
+      recordFault(nrc,can.last_nrc_detail,can.last_nrc_ms,delta);
+      recordFault(context,can.last_nrc_request,can.last_nrc_ms,delta);
+    }
+  } else if(can.query_failed>last_can_.query_failed || can.query_no_data>last_can_.query_no_data) {
+    recordFault(static_cast<uint16_t>(DiagnosticError::OwnerRequestContext),can.last_failed_request,can.last_failed_ms);
+  }
   // Exact CAN owner outcome histogram, including requests made over USB
   // or results lost after a BLE peer disconnect.
   for(unsigned i=0;i<10;++i) {
@@ -189,7 +207,7 @@ bool BleEvidenceJournal::poll(CanMonitor& can) {
   scratch_.saves=record_.saves+1;
   scratch_.crc=0;
   scratch_.crc=checksum(scratch_);
-  Preferences prefs;
+  EvidencePreferences prefs;
   char key[12]{};
   std::snprintf(key,sizeof(key),"ble%u",record_.boot%kBootSlots);
   bool wrote=false;
@@ -241,8 +259,8 @@ void BleEvidenceJournal::print(const Record& r,bool persisted) {
   for(unsigned status=0;status<10;++status)if(r.can_result_status[status]) {
     Serial.printf("#BLELOG,CAN_STATUS,boot=%lu,status=%u,code=%u,name=%s,count=%lu\n",
         static_cast<unsigned long>(r.boot),status,
-        status?static_cast<unsigned>(200+status):0U,
-        diagnosticErrorName(status?static_cast<uint16_t>(200+status):0),
+        static_cast<unsigned>(diagnosticStatusErrorCode(static_cast<DiagnosticStatus>(status))),
+        diagnosticErrorName(diagnosticStatusErrorCode(static_cast<DiagnosticStatus>(status))),
         static_cast<unsigned long>(r.can_result_status[status]));
   }
   Serial.printf("#BLELOG,PEER_SUMMARY,boot=%lu,overflow=%lu\n",

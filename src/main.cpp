@@ -1,3 +1,4 @@
+#include "evidence_store.h"
 #include <Arduino.h>
 #include <atomic>
 #if defined(ARDUINO_ARCH_ESP32)
@@ -62,6 +63,10 @@ void setup() {
   m5can::driveLog().begin(0);
 #endif
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  const bool log_store_ready=m5can::initializeEvidenceStore();
+  Serial.printf("#LOGSTORE,ready=%u,sectors=%lu,foreign=%u\n",log_store_ready?1U:0U,
+      static_cast<unsigned long>(m5can::evidenceStore().status().sectors),
+      m5can::evidenceStore().status().foreign?1U:0U);
   m5can::bleEvidenceJournal().begin(m5can::driveLog().snapshot().sequence,
                                     M5CAN_BUILD_SHA);
 #endif

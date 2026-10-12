@@ -42,9 +42,10 @@ class M5CanBleServerCallbacks final : public NimBLEServerCallbacks {
     if (d) owner_.onPeerMtu(d->conn_handle, mtu);
   }
  private:
-  inline static BleElmTransport* gap_owner_ = nullptr;
+  static BleElmTransport* gap_owner_;
   BleElmTransport& owner_;
 };
+BleElmTransport* M5CanBleServerCallbacks::gap_owner_=nullptr;
 class M5CanBleRxCallbacks final : public NimBLECharacteristicCallbacks {
  public:
   explicit M5CanBleRxCallbacks(BleElmTransport& owner) : owner_(owner) {}
