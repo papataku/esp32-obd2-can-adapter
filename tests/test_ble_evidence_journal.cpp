@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <vector>
+#include <utility>
 #include <Preferences.h>
 #include "ble_evidence_journal.h"
 
@@ -26,6 +28,18 @@ uint8_t BleElmTransport::connectedClientCount() const {return active_peers;}
 }
 
 int main() {
+  // Every CAN result status is explicitly mapped. If the policy enum
+  // changes, this table must be deliberately extended.
+  for(const auto& sample:std::vector<std::pair<DiagnosticStatus,uint16_t>>{
+      {DiagnosticStatus::Ok,0},{DiagnosticStatus::NoData,201},
+      {DiagnosticStatus::Busy,202},{DiagnosticStatus::LeaseRequired,203},
+      {DiagnosticStatus::InvalidRequest,204},{DiagnosticStatus::RateLimited,205},
+      {DiagnosticStatus::DriverError,206},{DiagnosticStatus::BusOff,207},
+      {DiagnosticStatus::ModeError,208},{DiagnosticStatus::IsoTpError,209}}) {
+    assert(diagnosticStatusErrorCode(sample.first)==sample.second);
+    if(sample.second)
+      assert(std::string(diagnosticErrorName(sample.second))!="UNKNOWN_CODE");
+  }
   Preferences::storage.clear();Preferences::writes=0;
   CanMonitor can;
   BleElmTransport transport;
