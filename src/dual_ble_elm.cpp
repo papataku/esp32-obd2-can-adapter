@@ -469,7 +469,7 @@ void DualBleElm::dispatch() {
       // A cached sample is not authorization for a fresh diagnostic read.
       // Do not report fresh values while the physical bus is fault locked.
       pid_cache_.clear();
-      std::memset(&cache_workspace_,0,sizeof(cache_workspace_));
+      std::memset(static_cast<void*>(&cache_workspace_),0,sizeof(cache_workspace_));
       cache_workspace_.status=DiagnosticStatus::LeaseRequired;
       if (s.multi_pid_pair) {
         s.multi_pid_pair=false;
