@@ -49,10 +49,10 @@ void DualBleElm::event(const BleClientEvent& event) {
     // classified safely. Avoid a second speculative probe this boot.
     if (s->multi_pid_pair ||
         (active_cross_group_ &&
-         (active_query_owner_ >= 0 &&
-          &sessions_[active_query_owner_] == s ||
-          active_secondary_owner_ >= 0 &&
-          &sessions_[active_secondary_owner_] == s)))
+         ((active_query_owner_ >= 0 &&
+           &sessions_[active_query_owner_] == s) ||
+          (active_secondary_owner_ >= 0 &&
+           &sessions_[active_secondary_owner_] == s))))
       adaptive_multi_pid_.disable();
     s->multi_pid_pair = false;
     s->active = false;
@@ -438,10 +438,9 @@ void DualBleElm::dispatch() {
       if (!s.pending) continue;
     }
     const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
-    DiagnosticResult cached{};
     if (!s.multi_pid_pair &&
-        pid_cache_.lookup(s.request,now_us,cached)) {
-      finishSingle(s,cached);
+        pid_cache_.lookup(s.request,now_us,cache_workspace_)) {
+      finishSingle(s,cache_workspace_);
       // Another device may now be able to use that same PID value.
       continue;
     }
@@ -454,12 +453,12 @@ void DualBleElm::dispatch() {
     const bool other_pending=peer.active && peer.pending &&
         !peer.multi_pid_pair &&
         ble_.isClientConnected(peer.conn_id,peer.generation);
-    const bool can_pair=other_pending && !s.multi_pid_pair &&
-        !pid_cache_.hasFresh(peer.request,now_us);
     bool cross=false;
     bool shared=false;
     DiagnosticRequest outgoing=s.request;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    const bool can_pair=other_pending && !s.multi_pid_pair &&
+        !pid_cache_.hasFresh(peer.request,now_us);
     if (can_pair) {
       const DiagnosticRequest* rpm=nullptr;
       const DiagnosticRequest* speed=nullptr;
