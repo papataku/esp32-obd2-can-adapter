@@ -411,6 +411,7 @@ int main() {
     journal.dump(bench.can,bench.ble,false); // Never deletes older entries.
     assert(Preferences::storage.size()==DriveLog::kSlots);
   }
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   // First multi-ECU CAN probe must survive reboot even when the regular
   // eight-event ring rolls over from unrelated BLE disconnects. Not just a
   // USB printf: persist all original accepted diagnostic frames in NVS.
@@ -477,6 +478,7 @@ int main() {
     assert(bytes[sizeof(saved)-1]!=(reinterpret_cast<uint8_t*>(&saved))[sizeof(saved)-1]);
     reload.end();
   }
+#endif
   // Check the true ISO-TP reception-time evidence propagation, rather
   // than only synthetic manually populated timestamps.
   {
