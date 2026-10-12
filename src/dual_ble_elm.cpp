@@ -387,10 +387,7 @@ void DualBleElm::onResult() {
   DiagnosticResult& result=query_result_workspace_;
   if (!can_.pollQueryResult(result)) return;
   if(result.status!=DiagnosticStatus::Ok) {
-    const uint16_t error=static_cast<uint16_t>(
-        static_cast<uint16_t>(DiagnosticError::CanNoData) +
-        static_cast<uint8_t>(result.status) - 1);
-    // Numeric codes follow DiagnosticStatus: NoData=1 ... IsoTpError=9.
+    const uint16_t error=diagnosticStatusErrorCode(result.status);
     const int original=active_query_owner_;
     if(original>=0 && original<2)
       ble_.recordDiagnosticError(sessions_[original].conn_id,
