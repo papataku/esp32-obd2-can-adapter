@@ -82,6 +82,10 @@ int main() {
   const std::string exported=SerialStub::lines;
   assert(exported.find("#BLELOG,BOOT,boot=41,state=persisted")!=std::string::npos);
   assert(exported.find("queue_drops=2")!=std::string::npos);
+  // The original raw disconnect reason survives even after the event
+  // itself was evicted by unrelated connects.
+  assert(exported.find("name=BLE_DISCONNECT,count=1")!=std::string::npos);
+  assert(exported.find("first_detail=520,last_detail=520")!=std::string::npos);
   assert(exported.find("seq_gaps=1")!=std::string::npos);
   assert(exported.find("total=36,kept=12,evicted=24")!=std::string::npos);
   assert(exported.find("seq=37")!=std::string::npos);
