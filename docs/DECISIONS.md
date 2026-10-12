@@ -237,3 +237,15 @@ without holding a spinlock through flash IO. Defer a checkpoint while a query
 is active and reject/retry new submissions until it finishes. This avoids
 inserting an observed USB flash-write stall into a CAN response window. SDK
 reset=unknown on USB reset is supplemented by the raw ROM reason (schema 2).
+
+
+## D022 - Observe the deployed NimBLE peer path for disconnect forensics
+
+Issue21's original Bluedroid/global-session investigation predates the accepted
+dual-peer build. Diagnostic comparisons must keep the actual NimBLE20-byte
+unicast/generation isolation/CAN policy. Use a bounded raw GAP event observer
+for reasons (onDisconnect lacks the reason in NimBLE1.4) and main-loop output.
+Do not tear down protocol state in a diagnostics callback or silently map host
+reason integers to8-bit HCI codes. Preserve raw namespace/sequence/drop data.
+USB startup resets and intended client disconnects are separate from failures.
+See docs/issue21_tri_device/README.md; physical fixes require separate evidence.

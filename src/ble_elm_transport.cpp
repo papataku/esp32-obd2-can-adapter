@@ -18,12 +18,18 @@ namespace m5can {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 class M5CanBleServerCallbacks final : public NimBLEServerCallbacks {
  public:
-  explicit M5CanBleServerCallbacks(BleElmTransport& owner) : owner_(owner) {}
+  explicit M5CanBleServerCallbacks(BleElmTransport& owner) : owner_(owner) {
+    gap_owner_ = &owner;
+  }
+  static int gapEvent(ble_gap_event* event, void*) {
+    if (gap_owner_ && event && event->type == BLE_GAP_EVENT_DISCONNECT) {
+      const auto& d = event->disconnect.conn;
+      gap_owner_->recordGapDisconnect(d.conn_handle, event->disconnect.reason,
+          d.conn_itvl, d.conn_latency, d.supervision_timeout);
+    }
+    return 0; // observer only: never consume or alter GAP/session state
+  }
   void onConnect(NimBLEServer*, ble_gap_conn_desc* d) override {
-    Serial.printf("#CORE,task=nimble-host-callback,core=%d,name=%s,priority=%u,stack_free_bytes=%u\n",
-        xPortGetCoreID(),pcTaskGetName(nullptr),
-        static_cast<unsigned>(uxTaskPriorityGet(nullptr)),
-        static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     if (d) owner_.onPeerConnect(d->conn_handle,
         static_cast<uint16_t>((static_cast<uint16_t>(d->peer_ota_addr.val[1]) << 8) |
                                d->peer_ota_addr.val[0]));
@@ -35,6 +41,7 @@ class M5CanBleServerCallbacks final : public NimBLEServerCallbacks {
     if (d) owner_.onPeerMtu(d->conn_handle, mtu);
   }
  private:
+  inline static BleElmTransport* gap_owner_ = nullptr;
   BleElmTransport& owner_;
 };
 class M5CanBleRxCallbacks final : public NimBLECharacteristicCallbacks {
@@ -94,6 +101,7 @@ bool BleElmTransport::begin() {
   if (!server) { setError("NimBLE server failed"); return false; }
   server_=server;
   server->setCallbacks(new M5CanBleServerCallbacks(*this));
+  NimBLEDevice::setCustomGapHandler(M5CanBleServerCallbacks::gapEvent);
   NimBLEService* service=server->createService(cfg::kBleServiceUuid);
   if (!service) { setError("NimBLE service failed"); return false; }
   NimBLECharacteristic* rx=service->createCharacteristic(
@@ -273,11 +281,15 @@ void BleElmTransport::onPeerConnect(uint16_t id, uint16_t address_suffix) {
       peer.traffic.address_suffix = address_suffix;
       connected_ = true;
       pushEvent(BleClientEvent::Type::Connect,id,peer.generation,0);
+      pushDiagnostic(BleDiagnosticEvent::Kind::Connect,id);
       accepted = true;
       break;
     }
   }
-  if (!accepted) ++stats_.session_rejections;
+  if (!accepted) {
+    ++stats_.session_rejections;
+    pushDiagnostic(BleDiagnosticEvent::Kind::Reject,id);
+  }
   portEXIT_CRITICAL(&mux_);
   if (!accepted && server_) {
     server_->disconnect(id);
@@ -301,6 +313,47 @@ void BleElmTransport::onPeerDisconnect(uint16_t id) {
   for (const auto& peer : clients_) if (peer.active) connected_ = true;
   portEXIT_CRITICAL(&mux_);
   restartAdvertising();
+}
+
+// Caller holds mux_: callbacks enqueue bounded POD only, main loop prints.
+void BleElmTransport::pushDiagnostic(BleDiagnosticEvent::Kind kind, uint16_t id,
+    int reason, bool known, uint16_t interval, uint16_t latency,
+    uint16_t supervision) {
+  const uint32_t seq = ++diagnostic_seq_;
+  const size_t next = (diagnostic_head_ + 1) % kDiagnosticSlots;
+  if (next == diagnostic_tail_) { ++diagnostic_drops_; return; }
+  auto& e = diagnostics_[diagnostic_head_];
+  e = BleDiagnosticEvent{};
+  e.kind=kind; e.sequence=seq; e.uptime_ms=millis();
+  e.connection_id=id; e.reason=reason; e.reason_known=known;
+  e.interval=interval; e.latency=latency; e.supervision=supervision;
+  for (const auto& p : clients_) if (p.connection_id==id && p.generation) {
+    e.generation=p.generation; e.address_suffix=p.traffic.address_suffix;
+    e.mtu=p.mtu; e.rx_bytes=p.traffic.rx_bytes; e.tx_bytes=p.traffic.tx_bytes;
+    e.retries=p.traffic.notify_retries; e.failed=p.traffic.notify_failures;
+    break;
+  }
+  diagnostic_head_=next;
+}
+void BleElmTransport::recordGapDisconnect(uint16_t id, int reason,
+    uint16_t interval, uint16_t latency, uint16_t supervision) {
+  portENTER_CRITICAL(&mux_);
+  pushDiagnostic(BleDiagnosticEvent::Kind::Disconnect,id,reason,true,
+                 interval,latency,supervision);
+  portEXIT_CRITICAL(&mux_);
+}
+bool BleElmTransport::pollDiagnostic(BleDiagnosticEvent& event) {
+  portENTER_CRITICAL(&mux_);
+  if (diagnostic_head_==diagnostic_tail_) {
+    portEXIT_CRITICAL(&mux_); return false;
+  }
+  event=diagnostics_[diagnostic_tail_];
+  diagnostic_tail_=(diagnostic_tail_+1)%kDiagnosticSlots;
+  portEXIT_CRITICAL(&mux_); return true;
+}
+uint32_t BleElmTransport::diagnosticDrops() const {
+  portENTER_CRITICAL(&mux_); const auto drops=diagnostic_drops_;
+  portEXIT_CRITICAL(&mux_); return drops;
 }
 
 void BleElmTransport::onPeerMtu(uint16_t id, uint16_t mtu) {

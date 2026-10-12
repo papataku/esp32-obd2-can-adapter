@@ -10,6 +10,9 @@
 #include "can_monitor.h"
 #include "serial_protocol.h"
 #include "ui.h"
+#ifndef M5CAN_BUILD_SHA
+#define M5CAN_BUILD_SHA "unknown"
+#endif
 #include "drive_log.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "dual_ble_elm.h"
@@ -59,6 +62,11 @@ void setup() {
 #endif
 
   g_ble_ok = g_ble.begin();
+#if defined(ARDUINO_ARCH_ESP32)
+  Serial.printf("#BOOT,git=%s,reset=%u,rom_reset=%u,stack=NimBLE_dual_if_enabled\n",
+      M5CAN_BUILD_SHA, static_cast<unsigned>(esp_reset_reason()),
+      static_cast<unsigned>(rtc_get_reset_reason(0)));
+#endif
   if (!g_ble_ok) {
     Serial.printf("#WARN,BLE_INIT,%s\n", g_ble.lastError());
   } else {
@@ -88,6 +96,19 @@ void setup() {
 
 void loop() {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  m5can::BleDiagnosticEvent event{};
+  for (unsigned n=0;n<8 && g_ble.pollDiagnostic(event);++n) {
+    const char* kind=event.kind==m5can::BleDiagnosticEvent::Kind::Connect ? "CONNECT"
+        : event.kind==m5can::BleDiagnosticEvent::Kind::Disconnect ? "DISCONNECT" : "REJECT";
+    Serial.printf("#BLE_EVENT,kind=%s,seq=%lu,ms=%lu,id=%u,gen=%lu,addr=%04X,reason_known=%u,reason=%d,mtu=%u,interval=%u,latency=%u,supervision=%u,rx=%llu,tx=%llu,retries=%lu,failed=%lu,drops=%lu\n",
+        kind,static_cast<unsigned long>(event.sequence),static_cast<unsigned long>(event.uptime_ms),
+        event.connection_id,static_cast<unsigned long>(event.generation),event.address_suffix,
+        event.reason_known?1U:0U,event.reason,event.mtu,event.interval,event.latency,event.supervision,
+        static_cast<unsigned long long>(event.rx_bytes),static_cast<unsigned long long>(event.tx_bytes),
+        static_cast<unsigned long>(event.retries),static_cast<unsigned long>(event.failed),
+        static_cast<unsigned long>(g_ble.diagnosticDrops()));
+  }
+
   static uint32_t last_loop_us=0,loop_peak_us=0;
   const uint32_t loop_now=micros();
   if (last_loop_us && loop_now-last_loop_us>loop_peak_us)

@@ -6,6 +6,7 @@ cd "$ROOT"
 bash ./tests/run_sanitized_coordinator.sh
 python3 tests/static_safety_check.py
 python3 tests/test_capture_parser.py
+python3 tests/test_tri_device_soak.py
 PYTHONPATH=tools python3 tools/test_protocol.py
 PYTHONPATH=tools python3 tests/test_validate_capture.py
 python3 -m compileall -q tools tests

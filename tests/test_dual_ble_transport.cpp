@@ -68,6 +68,20 @@ int main() {
   assert(transport.stats().notify_failures==0);
   for(const auto& n:test_notifications) {assert(n.conn==7); assert(n.length<=limit);}
   test_notifications.clear();
+  m5can::BleDiagnosticEvent diag;
+  assert(transport.pollDiagnostic(diag) && diag.connection_id==7);
+  assert(transport.pollDiagnostic(diag) && diag.connection_id==19);
+  assert(!transport.pollDiagnostic(diag));
+  ble_gap_event drop;
+  drop.disconnect.conn=a; drop.disconnect.reason=0x208;
+  assert(NimBLEDevice::gap_handler(&drop,nullptr)==0);
+  assert(transport.pollDiagnostic(diag));
+  assert(diag.kind==m5can::BleDiagnosticEvent::Kind::Disconnect);
+  assert(diag.connection_id==7 && diag.generation==ea.generation);
+  assert(diag.reason_known && diag.reason==0x208 && diag.mtu==247);
+  assert(diag.retries==3 && diag.tx_bytes==sizeof(data)+21);
+  // Logging a raw GAP observation cannot tear down a session itself.
+  assert(transport.connectedClientCount()==2);
   NimBLEServer::callbacks->onDisconnect(server,&a);
   assert(transport.connectedClientCount()==1);
   assert(!transport.peerTraffic().peers[0].connected);
@@ -89,5 +103,12 @@ int main() {
   assert(after_reconnect.peers[0].generation!=ea.generation);
   assert(after_reconnect.peers[0].rx_bytes==0);
   assert(after_reconnect.peers[0].tx_bytes==0);
-  assert(transport.writeTo(7,ea.generation,data,1)==0);
+  assert(transport.writeTo(7,ea.generation,data,1)==0);  while(transport.pollDiagnostic(diag)) {}
+  // Diagnostic overflow stays bounded and never touches protocol events.
+  for(unsigned n=0;n<70;++n) NimBLEDevice::gap_handler(&drop,nullptr);
+  assert(transport.diagnosticDrops()==7);
+  unsigned logged=0;
+  while(transport.pollDiagnostic(diag))++logged;
+  assert(logged==63 && transport.connectedClientCount()==2);
+
 }

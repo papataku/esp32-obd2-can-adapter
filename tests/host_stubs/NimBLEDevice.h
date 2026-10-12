@@ -5,7 +5,13 @@
 #include <vector>
 struct ble_gap_conn_desc {
   uint16_t conn_handle = 0;
+  uint16_t conn_itvl=24, conn_latency=0, supervision_timeout=200;
   struct { uint8_t val[6]{}; } peer_ota_addr{};
+};
+inline constexpr int BLE_GAP_EVENT_DISCONNECT=1;
+struct ble_gap_event {
+  int type=BLE_GAP_EVENT_DISCONNECT;
+  struct { int reason=0; ble_gap_conn_desc conn; } disconnect;
 };
 struct os_mbuf { size_t length=0; std::vector<uint8_t> data; };
 struct TestNotify {uint16_t conn; size_t length;std::vector<uint8_t> data;};
@@ -73,6 +79,10 @@ class NimBLEServer {
 };
 class NimBLEDevice {
  public:
+  inline static int (*gap_handler)(ble_gap_event*,void*) = nullptr;
+  static void setCustomGapHandler(int (*handler)(ble_gap_event*,void*)) {
+    gap_handler=handler;
+  }
   static void init(const char*) {}
   static int setMTU(uint16_t){return 0;}
   static NimBLEServer* createServer() {

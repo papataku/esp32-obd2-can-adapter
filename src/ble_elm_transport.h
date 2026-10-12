@@ -52,6 +52,18 @@ struct BlePeersSnapshot {
   BlePeerTraffic peers[2]{};
 };
 
+struct BleDiagnosticEvent {
+  enum class Kind : uint8_t { Connect, Disconnect, Reject };
+  Kind kind = Kind::Connect;
+  uint32_t sequence = 0, uptime_ms = 0, generation = 0;
+  uint16_t connection_id = 0, address_suffix = 0, mtu = 23;
+  uint16_t interval = 0, latency = 0, supervision = 0;
+  int reason = 0;
+  bool reason_known = false;
+  uint32_t retries = 0, failed = 0;
+  uint64_t rx_bytes = 0, tx_bytes = 0;
+};
+
 struct BleClientEvent {
   enum class Type : uint8_t { Connect, Disconnect, Byte };
   Type type = Type::Byte;
@@ -76,6 +88,8 @@ class BleElmTransport {
                  const uint8_t* data, size_t length);
   uint8_t connectedClientCount() const;
   BlePeersSnapshot peerTraffic() const;
+  bool pollDiagnostic(BleDiagnosticEvent& event);
+  uint32_t diagnosticDrops() const;
 #endif
   BleStats stats() const;
   const char* lastError() const { return last_error_; }
@@ -93,6 +107,13 @@ class BleElmTransport {
   void onPeerDisconnect(uint16_t connection_id);
   void onPeerWrite(uint16_t connection_id, const uint8_t* data, size_t length);
   void onPeerMtu(uint16_t connection_id, uint16_t mtu);
+  void recordGapDisconnect(uint16_t connection_id, int reason,
+                           uint16_t interval, uint16_t latency,
+                           uint16_t supervision);
+  void pushDiagnostic(BleDiagnosticEvent::Kind kind, uint16_t connection_id,
+                      int reason = 0, bool known = false,
+                      uint16_t interval = 0, uint16_t latency = 0,
+                      uint16_t supervision = 0);
   void pushEvent(BleClientEvent::Type type, uint16_t connection_id,
                  uint32_t generation, uint8_t byte);
   struct Client {
@@ -109,6 +130,10 @@ class BleElmTransport {
   size_t event_head_ = 0;
   size_t event_tail_ = 0;
   uint32_t next_generation_ = 0;
+  static constexpr size_t kDiagnosticSlots = 64;
+  BleDiagnosticEvent diagnostics_[kDiagnosticSlots]{};
+  size_t diagnostic_head_ = 0, diagnostic_tail_ = 0;
+  uint32_t diagnostic_seq_ = 0, diagnostic_drops_ = 0;
   NimBLEServer* server_ = nullptr;
 #endif
   void setError(const char* message);
