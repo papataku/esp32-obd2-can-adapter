@@ -569,7 +569,7 @@ bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
   // Reserve the single in-flight slot atomically across USB and BLE callers.
   // IMPORTANT: never call FreeRTOS queues while holding an ESP spinlock.
   portENTER_CRITICAL(&query_mux_);
-  const bool accepted = !fault_locked_ && !query_in_flight_;
+  const bool accepted = !fault_locked_ && !query_in_flight_ && !log_checkpoint_active_;
   if (accepted) query_in_flight_ = true;
   portEXIT_CRITICAL(&query_mux_);
   if (!accepted) return false;

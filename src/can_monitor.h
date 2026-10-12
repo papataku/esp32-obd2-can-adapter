@@ -60,6 +60,20 @@ class CanMonitor {
   uint32_t ownerStackFreeBytes() const {
     return rx_task_ ? static_cast<uint32_t>(uxTaskGetStackHighWaterMark(rx_task_)) : 0;
   }
+  // Share the same reservation as submitQuery: NVS writes must not overlap
+  // an active diagnostic transaction. Do not hold a spinlock during flash IO.
+  bool tryBeginLogCheckpoint() {
+    portENTER_CRITICAL(&query_mux_);
+    const bool accepted=!query_in_flight_ && !log_checkpoint_active_;
+    if(accepted)log_checkpoint_active_=true;
+    portEXIT_CRITICAL(&query_mux_);
+    return accepted;
+  }
+  void endLogCheckpoint() {
+    portENTER_CRITICAL(&query_mux_);
+    log_checkpoint_active_=false;
+    portEXIT_CRITICAL(&query_mux_);
+  }
   bool submitQuery(const DiagnosticRequest& request);
   bool pollQueryResult(DiagnosticResult& result);
   bool queryPending() const { return query_in_flight_; }
@@ -103,6 +117,7 @@ class CanMonitor {
   volatile bool running_ = false;
   volatile bool fault_locked_ = false;
   volatile bool query_in_flight_ = false;
+  bool log_checkpoint_active_ = false;
   uint64_t last_status_poll_us_ = 0;
   DiagnosticRequestPacer diagnostic_pacer_{};
   DiagnosticResultCache result_cache_{};

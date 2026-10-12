@@ -14,11 +14,11 @@ bool DriveLog::load(unsigned slot,Record& record) {
   return loaded && record.magic==kMagic && record.version==kVersion &&
       record.size==sizeof(record) && record.sequence && record.event_count<=8;
 }
-void DriveLog::begin(uint32_t reset_reason) {
+void DriveLog::begin(uint32_t reset_reason,uint32_t rom_reset_reason) {
   uint32_t latest=0;Record previous{};
   for(unsigned slot=0;slot<kSlots;++slot)
     if(load(slot,previous) && previous.sequence>latest) latest=previous.sequence;
-  record_=Record{};record_.sequence=latest+1;record_.reset_reason=reset_reason;
+  record_=Record{};record_.sequence=latest+1;record_.reset_reason=reset_reason;record_.rom_reset_reason=rom_reset_reason;
   std::snprintf(record_.build,sizeof(record_.build),"%s %s",__DATE__,__TIME__);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   record_.multipid=1;
@@ -68,12 +68,13 @@ void DriveLog::outcome(Kind kind,uint16_t peer,const DiagnosticResult& result,ui
   if(kind!=Kind::GroupEnabled || first) addEvent(kind,peer,&result,responder);
 }
 void DriveLog::event(Kind kind,uint16_t peer){addEvent(kind,peer,nullptr,0);}
-bool DriveLog::save(uint32_t now,bool forced) {
+bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
   if(!enabled_) return false;
   bool urgent;
   portENTER_CRITICAL(&mux_);urgent=urgent_;portEXIT_CRITICAL(&mux_);
   const uint32_t elapsed=now-last_saved_ms_;
   if(!forced && elapsed<30000 && !(urgent && elapsed>=2000))return false;
+  if(can && !can->tryBeginLogCheckpoint())return false;
   Record copy=snapshot();copy.uptime_ms=now;++copy.saves;
   Preferences nvs;char key[12]{};
   std::snprintf(key,sizeof(key),"trip%u",static_cast<unsigned>(copy.sequence%kSlots));
@@ -81,6 +82,7 @@ bool DriveLog::save(uint32_t now,bool forced) {
   if(nvs.begin("m5can_trip",false)) {
     ok=nvs.putBytes(key,&copy,sizeof(copy))==sizeof(copy);nvs.end();
   }
+  if(can)can->endLogCheckpoint();
   // Rate-limit failed storage too. RAM evidence stays available on failure.
   last_saved_ms_=now;
   portENTER_CRITICAL(&mux_);if(ok)record_.saves=copy.saves;
@@ -122,19 +124,19 @@ void DriveLog::poll(CanMonitor& can,BleElmTransport& ble,bool demo) {
 #endif
   portEXIT_CRITICAL(&mux_);
   if(new_fault)event(Kind::CanFault,0);
-  save(millis());
+  save(millis(),false,&can);
 }
 void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
-  poll(can,ble,demo);save(millis(),true);
-  Serial.println("#DRIVELOG,BEGIN,version=1,kind=1:enabled/2:fallback/3:stopped/4:disconnect/5:lease_denied/6:can_fault");
+  poll(can,ble,demo);save(millis(),true,&can);
+  Serial.println("#DRIVELOG,BEGIN,version=2,kind=1:enabled/2:fallback/3:stopped/4:disconnect/5:lease_denied/6:can_fault");
   // Ascending sequence, with the current RAM snapshot last; dump never clears.
   const Record current=snapshot();const uint32_t first=current.sequence>kSlots?current.sequence-kSlots+1:1;
   for(uint32_t seq=first;seq<=current.sequence;++seq) {
     Record r{};
     if(seq==current.sequence)r=current;
     else if(!load(seq%kSlots,r) || r.sequence!=seq)continue;
-    Serial.printf("#DRIVELOG,boot=%lu,reset=%lu,build=%s,multipid=%u,uptime_ms=%lu,saves=%lu,grouped=%lu,individual=%lu,group_ok=%lu,fallback=%lu,stopped=%lu,disconnects=%lu,demo=%u,clients=%u,peers=%04X/%04X,fault=%u,lease_ms=%lu\n",
-      static_cast<unsigned long>(r.sequence),static_cast<unsigned long>(r.reset_reason),r.build,r.multipid,
+    Serial.printf("#DRIVELOG,boot=%lu,reset=%lu,rom_reset=%lu,build=%s,multipid=%u,uptime_ms=%lu,saves=%lu,grouped=%lu,individual=%lu,group_ok=%lu,fallback=%lu,stopped=%lu,disconnects=%lu,demo=%u,clients=%u,peers=%04X/%04X,fault=%u,lease_ms=%lu\n",
+      static_cast<unsigned long>(r.sequence),static_cast<unsigned long>(r.reset_reason),static_cast<unsigned long>(r.rom_reset_reason),r.build,r.multipid,
       static_cast<unsigned long>(r.uptime_ms),static_cast<unsigned long>(r.saves),
       static_cast<unsigned long>(r.grouped),static_cast<unsigned long>(r.individual),static_cast<unsigned long>(r.group_ok),
       static_cast<unsigned long>(r.fallback),static_cast<unsigned long>(r.stopped),static_cast<unsigned long>(r.disconnects),

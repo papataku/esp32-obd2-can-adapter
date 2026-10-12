@@ -125,6 +125,7 @@ uint32_t CanMonitor::leaseRemainingMs() const {
 }
 CanStats CanMonitor::stats() const {return stats_;}
 bool CanMonitor::submitQuery(const DiagnosticRequest& r) {
+  if(log_checkpoint_active_)return false;
   assert(!query_in_flight_); assert(leaseRemainingMs());
   assert(DiagnosticPolicy::allowedReadRequest(r));
   requests.push_back(r);queued=r;query_in_flight_=true;ready=true;return true;
@@ -177,7 +178,7 @@ int main() {
   // ring slots remain bounded and corrupt/truncated entries are rejected.
   {
     Bench bench;Preferences::storage.clear();Preferences::writes=0;
-    DriveLog journal;g_test_millis=1000;journal.begin(1);
+    DriveLog journal;g_test_millis=1000;journal.begin(1,21);
     DiagnosticRequest r{};r.length=3;r.data[0]=1;r.data[1]=0x0C;r.data[2]=0x0D;
     DiagnosticResult result{};result.status=DiagnosticStatus::Ok;
     result.raw_frame_count=1;result.response_count=1;
@@ -191,7 +192,15 @@ int main() {
     }
     assert(Preferences::writes==1);
     assert(journal.snapshot().group_ok==100 && journal.snapshot().event_count==1);
-    g_test_millis=3000;journal.poll(bench.can,bench.ble,false);
+    g_test_millis=3000;
+    hold=true;write(bench.a,"ATM5B00:010C,010D,0105");bench.dual.poll();
+    assert(bench.can.queryPending());
+    assert(!bench.can.tryBeginLogCheckpoint());
+    journal.poll(bench.can,bench.ble,false);assert(Preferences::writes==1);
+    hold=false;bench.drain();
+    assert(bench.can.tryBeginLogCheckpoint());
+    assert(!bench.can.submitQuery(r));bench.can.endLogCheckpoint();
+    g_test_millis=6000;journal.poll(bench.can,bench.ble,false);
     assert(Preferences::writes==2);
     DriveLog restarted;restarted.begin(9);assert(restarted.snapshot().sequence==2);
     Preferences nvs;assert(nvs.begin("m5can_trip",true));DriveLog::Record saved{};
@@ -199,13 +208,17 @@ int main() {
     assert(saved.grouped==100 && saved.group_ok==100 && saved.event_count==1);
     assert(saved.events[0].responder==0x18DAF101);
     assert(std::memcmp(saved.events[0].raw[0].data,bytes,8)==0);
-    assert(saved.uptime_ms==3000);
+    assert(saved.uptime_ms==6000 && saved.rom_reset_reason==21);
     assert(saved.group_time_us==1200000 && saved.group_max_us==12000);
     assert(saved.events[0].transaction_us==12000 && saved.events[0].first_response_us==8000);
     for(unsigned i=0;i<12;++i){DriveLog reboot;reboot.begin(1);}
     assert(Preferences::storage.size()==DriveLog::kSlots);
     Preferences::storage["m5can_trip/trip0"]={1,2,3};
     DriveLog recover;recover.begin(1);assert(recover.snapshot().sequence==15);
+    saved.version=1;saved.sequence=9999;
+    Preferences::storage["m5can_trip/trip0"].resize(sizeof(saved));
+    std::memcpy(Preferences::storage["m5can_trip/trip0"].data(),&saved,sizeof(saved));
+    DriveLog version_recover;version_recover.begin(1);assert(version_recover.snapshot().sequence==16);
     journal.dump(bench.can,bench.ble,false); // Never deletes older entries.
     assert(Preferences::storage.size()==DriveLog::kSlots);
   }

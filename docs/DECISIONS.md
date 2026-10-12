@@ -231,3 +231,9 @@ success/fallback/fault decisions, counters and reset/build metadata. USB DRIVELO
 retrieves history without clearing it. Continuous RAW CAN still belongs on the
 host. Pending data can be lost on power cut between checkpoints; report this
 limit and storage failures explicitly. See `docs/drive_log.md`.
+
+Checkpoint writes reserve the same in-flight slot as diagnostic submissions,
+without holding a spinlock through flash IO. Defer a checkpoint while a query
+is active and reject/retry new submissions until it finishes. This avoids
+inserting an observed USB flash-write stall into a CAN response window. SDK
+reset=unknown on USB reset is supplemented by the raw ROM reason (schema 2).
