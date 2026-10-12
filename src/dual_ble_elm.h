@@ -5,6 +5,7 @@
 #include "elm_compat.h"
 #include "demo_drive.h"
 #include "adaptive_multi_pid.h"
+#include "diagnostic_pid_cache.h"
 
 namespace m5can {
 class SerialProtocol;
@@ -50,16 +51,23 @@ class DualBleElm {
   void advanceBatch(Session& session);
   void dispatch();
   void onResult();
+  void finishSingle(Session& session, const DiagnosticResult& result);
+  void abortBatch(Session& session, const DiagnosticResult& result);
   Session* find(uint16_t conn_id, uint32_t generation);
   static DiagnosticRequest requestOf(const ElmVehicleRequest& item,
                                      const ElmCompat& elm);
 
   AdaptiveMultiPid adaptive_multi_pid_{};
+  // Shared across both BLE sessions, independent of the CAN grouping policy.
+  DiagnosticPidCache pid_cache_{};
   CanMonitor& can_;
   BleElmTransport& ble_;
   SerialProtocol& demo_source_;
   Session sessions_[2]{};
   int active_query_owner_ = -1;
+  // A second pending request may join the same physical CAN transaction.
+  int active_secondary_owner_ = -1;
+  bool active_cross_group_ = false;
   uint32_t active_query_generation_ = 0;
   uint8_t round_robin_ = 0;
 };
