@@ -32,7 +32,7 @@ struct BleStats {
   uint32_t notify_failures = 0;
   uint32_t mbuf_alloc_failures=0,notify_api_failures=0;
   uint32_t credit_waits=0,tx_queue_overflows=0,tx_stalls=0;
-  uint16_t tx_queue_peak=0,host_pending_peak=0;
+  uint16_t tx_queue_peak=0,host_pending_peak=0,host_queue_peak=0;
   uint32_t memory_error_ms=0;
   uint16_t memory_error_conn=0,msys_min_free=UINT16_MAX;
   int32_t memory_error_code=0;

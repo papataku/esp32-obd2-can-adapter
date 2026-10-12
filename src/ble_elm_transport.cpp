@@ -556,30 +556,30 @@ static_assert(M5CAN_DUAL_NOTIFY_CHUNK_BYTES >= 20 &&
 // producer bound, a slow peer can consume the shared mbuf pool despite every
 // previous notify returning zero. Read its real controller/host backlog under
 // the host lock; do not hold the application spinlock across NimBLE calls.
-static bool notifyCredit(uint16_t id,uint16_t& pending) {
+static bool notifyCredit(uint16_t id,uint16_t& pending,uint16_t& queued) {
+  bool present=false;
 #if defined(ARDUINO_ARCH_ESP32)
   ble_hs_lock();
   const auto* conn=ble_hs_conn_find(id);
-  bool ready=false;
   if(conn) {
+    present=true;
     pending=conn->bhc_outstanding_pkts;
-    const bool queued=!STAILQ_EMPTY(&conn->bhc_tx_q);
     const os_mbuf_pkthdr* entry;
     STAILQ_FOREACH(entry,&conn->bhc_tx_q,omp_next) {
-      if(pending>=64)break;
-      ++pending;
+      if(queued>=64)break;
+      ++queued;
     }
-    // The verified controller has 12 ACL slots shared by two peers.
-    // Allow a response burst while leaving at least four controller slots
-    // for the other peer. The no-host-queue rule independently bounds MSYS
-    // ownership to one queued notification per peer.
-    ready=!queued && pending<8;
+    pending+=queued;
   }
   ble_hs_unlock();
-  return ready;
 #else
-  return test_notify_credit(id,pending);
+  present=test_notify_snapshot(id,pending,queued);
 #endif
+  // Keep a small pipeline preloaded for controller-completion processing.
+  // An empty-only host queue loses throughput because the application task
+  // cannot refill it within a radio event. Bound both peer ownership and
+  // shared free capacity instead of removing all host staging.
+  return present && queued<3 && pending<8;
 }
 
 bool BleElmTransport::responseReady(uint16_t id,uint32_t gen) const {
@@ -654,17 +654,18 @@ void BleElmTransport::pollTx() {
     }
     portEXIT_CRITICAL(&mux_);
     if(!chunk)continue;
-    uint16_t host_pending=0;
+    uint16_t host_pending=0,host_queued=0;
     const int free_blocks=os_msys_num_free();
-    const bool credit=notifyCredit(id,host_pending);
+    const bool credit=notifyCredit(id,host_pending,host_queued);
     portENTER_CRITICAL(&mux_);
     stats_.msys_min_free=std::min<uint16_t>(stats_.msys_min_free,std::max(0,free_blocks));
     stats_.host_pending_peak=std::max(stats_.host_pending_peak,host_pending);
-    if(!credit || free_blocks<4)++stats_.credit_waits;
+    stats_.host_queue_peak=std::max(stats_.host_queue_peak,host_queued);
+    if(!credit || free_blocks<6)++stats_.credit_waits;
     portEXIT_CRITICAL(&mux_);
     int result=BLE_HS_EAGAIN;
     bool attempted=false,allocated=false;
-    if(credit && free_blocks>=4 && isClientConnected(id,gen)) {
+    if(credit && free_blocks>=6 && isClientConnected(id,gen)) {
       attempted=true;
       os_mbuf* packet=ble_hs_mbuf_from_flat(data,chunk);
       allocated=packet!=nullptr;
@@ -752,14 +753,15 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
     // os_mbuf ownership transfers to NimBLE whether or not the controller
     // ultimately transmits the notification. The first argument is the
     // destination connection handle, never a broadcast list.
-    uint16_t host_pending=0;
-    notifyCredit(id,host_pending);
+    uint16_t host_pending=0,host_queued=0;
+    notifyCredit(id,host_pending,host_queued);
     const int pool_free=os_msys_num_free();
     os_mbuf* packet = ble_hs_mbuf_from_flat(data + sent, chunk);
     const int result=packet ? ble_gattc_notify_custom(
         id,tx_characteristic_->getHandle(),packet) : BLE_HS_ENOMEM;
     portENTER_CRITICAL(&mux_);
     stats_.host_pending_peak=std::max(stats_.host_pending_peak,host_pending);
+    stats_.host_queue_peak=std::max(stats_.host_queue_peak,host_queued);
     stats_.msys_min_free=std::min<uint16_t>(stats_.msys_min_free,
         static_cast<uint16_t>(std::max(0,pool_free)));
     if(result!=0) {

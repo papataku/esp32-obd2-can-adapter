@@ -59,13 +59,14 @@ def analyze(root):
         for tag, pattern, counter_keys, range_keys in [
             ('#BLE_MEMORY,', r'#BLE_MEMORY,alloc_failed=\d+,api_failed=\d+,min_free=\d+,last_ms=\d+,last_conn=\d+,last_rc=-?\d+',
              ['alloc_failed', 'api_failed'], ['min_free']),
-            ('#BLE_FLOW,', r'#BLE_FLOW,waits=\d+,queue_peak=\d+,host_peak=\d+,overflow=\d+,stalls=\d+',
-             ['waits', 'overflow', 'stalls'], ['queue_peak', 'host_peak'])]:
+            ('#BLE_FLOW,', r'#BLE_FLOW,waits=\d+,queue_peak=\d+,host_peak=\d+(?:,host_queue_peak=\d+)?,overflow=\d+,stalls=\d+',
+             ['waits', 'overflow', 'stalls'], ['queue_peak', 'host_peak', 'host_queue_peak'])]:
             if line.startswith(tag):
                 if re.fullmatch(pattern, line):
                     for k in counter_keys:
                         counters.setdefault('adapter:'+k, []).append((row['monotonic'], int(d[k])))
                     for k in range_keys:
+                        if k not in d: continue
                         series.setdefault('adapter:'+k, []).append(int(d[k]))
                 else: invalid(tag[1:-1])
         if line.startswith('POLL '):

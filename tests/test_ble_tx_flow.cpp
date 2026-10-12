@@ -51,8 +51,23 @@ int main() {
   assert(ble.queueTo(7,ea.generation,bytes,1)==1);
   const auto before=ble.stats().targeted_notifications;
   ble.pollTx();assert(ble.stats().targeted_notifications==before);
-  test_msys_free=12;ble.pollTx();
+  test_msys_free=5;ble.pollTx();
+  assert(ble.stats().targeted_notifications==before);
+  test_msys_free=6;ble.pollTx();
+  test_msys_free=12;
   assert(ble.stats().targeted_notifications==before+1);
+  // Exercise the same queue/controller predicate as the real NimBLE snapshot.
+  test_host_queued=2;
+  assert(ble.queueTo(7,ea.generation,bytes,1)==1);
+  ble.pollTx(); // A small preloaded pipeline is allowed.
+  test_host_queued=3;
+  assert(ble.queueTo(7,ea.generation,bytes,1)==1);
+  const auto queue_before=ble.stats().targeted_notifications;
+  ble.pollTx();assert(ble.stats().targeted_notifications==queue_before);
+  test_host_queued=0;test_host_controller=8;
+  ble.pollTx();assert(ble.stats().targeted_notifications==queue_before);
+  test_host_controller=0;ble.pollTx();
+  assert(ble.stats().targeted_notifications==queue_before+1);
   // A competing host allocation can still win after the pool sample.
   test_alloc_failures=2;
   assert(ble.queueTo(7,ea.generation,bytes,1)==1);
