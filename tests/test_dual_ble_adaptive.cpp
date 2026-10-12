@@ -14,7 +14,8 @@
 using namespace m5can;
 namespace {
 enum class Ecu { Full, Partial, Negative, Silent, Split, FirstFrame, Foreign,
-                 Lease, BusOff, Driver };
+                 Lease, BusOff, Driver, MultiAgree, MultiConflict, MultiPartial,
+                 PinnedOther };
 Ecu mode=Ecu::Full;
 bool demo=false, hold=false, ready=false;
 DiagnosticRequest queued{};
@@ -41,6 +42,23 @@ DiagnosticResult ecuReply(const DiagnosticRequest& r) {
   if(r.length==3 && r.data[0]==1) {
     switch(mode) {
       case Ecu::Full: feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50}); break;
+      case Ecu::MultiAgree:
+        // Five simulated complete responses, in non-CAN-ID order.
+        feed(tx,0x18DAF105,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF102,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF108,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF107,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        break;
+      case Ecu::MultiConflict:
+      case Ecu::PinnedOther:
+        feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF102,{0x41,0x0C,0x13,0x89,0x0D,0x50});
+        break;
+      case Ecu::MultiPartial:
+        feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF102,{0x41,0x0D,0x50});
+        break;
       case Ecu::Foreign: feed(tx,0x18DAF102,{0x41,0x0C,0x13,0x88,0x0D,0x50}); break;
       case Ecu::Partial: feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88}); break;
       case Ecu::Negative: feed(tx,0x18DAF101,{0x7F,1,0x12}); break;
@@ -171,6 +189,30 @@ int main() {
    assert(driveLog().snapshot().grouped==1 && driveLog().snapshot().group_ok==1);
    assert(driveLog().snapshot().individual==1);
    bench.batchBoth();bench.drain();assert(bench.groups()==2 && requests.size()==4);}
+  // Real dual-BLE routing of a five-ECU agreement: selected ECU is
+  // deterministic; both client envelopes are intact, without extra CAN TX.
+  {mode=Ecu::MultiAgree;Bench bench;bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==1 && requests.size()==2);
+   assert(driveLog().snapshot().group_ok==1 && driveLog().snapshot().fallback==0);
+   bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==2);
+  }
+  // An initial disagreeing or incomplete ECU rejects grouped probing once.
+  // Each BLE peer subsequently obtains only its independently requested data.
+  for(Ecu initial:{Ecu::MultiConflict,Ecu::MultiPartial}) {
+    mode=initial;Bench bench;bench.batchBoth();bench.drain();bench.values();
+    assert(bench.groups()==1 && driveLog().snapshot().fallback==1);
+    bench.batchBoth();bench.drain();assert(bench.groups()==1);
+  }
+  // After one successful probe, an extraneous ECU with different values is
+  // harmless; the learned ECU alone determines both cache entries.
+  {mode=Ecu::Full;Bench bench;bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==1 && driveLog().snapshot().group_ok==1);
+   g_test_millis+=150;test_notifications.clear();
+   mode=Ecu::PinnedOther;bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==2 && driveLog().snapshot().group_ok==2);
+   assert(driveLog().snapshot().fallback==0);
+  }
   for(Ecu failure:{Ecu::Partial,Ecu::Negative,Ecu::Silent,Ecu::Split,Ecu::FirstFrame}) {
     mode=failure;Bench bench;bench.batchBoth();bench.drain();bench.values();
     // A single complete RPM value from a partial grouped reply is cached;
@@ -388,6 +430,115 @@ int main() {
     DriveLog version_recover;version_recover.begin(1);assert(version_recover.snapshot().sequence==16);
     journal.dump(bench.can,bench.ble,false); // Never deletes older entries.
     assert(Preferences::storage.size()==DriveLog::kSlots);
+  }
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  // First multi-ECU CAN probe must survive reboot even when the regular
+  // eight-event ring rolls over from unrelated BLE disconnects. Not just a
+  // USB printf: persist all original accepted diagnostic frames in NVS.
+  {
+    Bench bench;Preferences::storage.clear();Preferences::writes=0;
+    g_test_millis=1000;
+    DriveLog journal;journal.begin(1,21);
+    DiagnosticResult first{};
+    first.status=DiagnosticStatus::Ok;
+    first.response_count=5;first.raw_frame_count=5;
+    first.transaction_us=16317;first.tx_to_first_response_us=656;
+    const uint32_t ids[]={0x18DAF1EF,0x18DAF10E,0x18DAF101,
+                          0x18DAF102,0x18DAF103};
+    const uint8_t payload[]={6,0x41,0x0C,0,0,0x0D,0,0};
+    for(unsigned i=0;i<5;++i) {
+      auto& f=first.raw_frames[i];
+      f.can_id=ids[i];f.dlc=8;
+      std::memcpy(f.data,payload,8);
+      first.raw_rx_offsets_us[i]=656+i*137U;
+    }
+    journal.submitted(DiagnosticRequest{
+        0x18DB33F1,3,{1,0x0C,0x0D},200});
+    journal.recordFirstProbe(7,first,0x18DAF101,0,0);
+    assert(!journal.probeSaved());
+    // An in-flight CAN owner transaction must block flash writes.
+    hold=true;write(bench.a,"ATM5B00:010C,010D,0105");bench.dual.poll();
+    assert(bench.can.queryPending());
+    journal.poll(bench.can,bench.ble,false);
+    assert(!journal.probeSaved());
+    hold=false;bench.drain();
+    ++g_test_millis;
+    journal.poll(bench.can,bench.ble,false);
+    assert(journal.probeSaved());
+    // A later grouped fallback has its OWN CRC-protected evidence slot.
+    // The original successful probe must remain unchanged.
+    DiagnosticResult later=first;
+    later.raw_frames[1].data[4]=0x01; // Synthetic conflicting ECU value
+    journal.recordFirstFailure(7,later,0,1,5);
+    journal.outcome(DriveLog::Kind::GroupFallback,7,later,0);
+    journal.poll(bench.can,bench.ble,false);
+    for(unsigned i=0;i<12;++i)
+      journal.event(DriveLog::Kind::Disconnect,7);
+    g_test_millis+=3000;
+    journal.poll(bench.can,bench.ble,false);
+    assert(journal.snapshot().event_count==8);
+    Preferences nvs;assert(nvs.begin("m5can_trip",true));
+    DriveLog::ProbeRecord probe{};
+    assert(nvs.getBytes("probe1",&probe,sizeof(probe))==sizeof(probe));
+    assert(probe.sequence==1 && probe.version==1 &&
+           probe.responses==5);
+    assert(probe.raw_count==5 && probe.raw_saved==5 && !probe.truncated);
+    assert(probe.decision==0 && probe.reject_reason==0);
+    DriveLog::ProbeRecord failure{};
+    assert(nvs.getBytes("fail1",&failure,sizeof(failure))==sizeof(failure));
+    assert(failure.sequence==1 && failure.raw_saved==5 &&
+           failure.decision==1 && failure.reject_reason==5);
+    assert(failure.raw[1].data[4]==0x01);
+    for(unsigned i=0;i<5;++i) {
+      assert(probe.raw[i].can_id==ids[i]);
+      assert(probe.rx_offset_us[i]==656+i*137U);
+      assert(std::memcmp(probe.raw[i].data,payload,8)==0);
+    }
+    nvs.end();
+    DriveLog after_reboot;after_reboot.begin(9,21);
+    assert(after_reboot.snapshot().sequence==2);
+    // Original full first-probe evidence from the prior boot is intact.
+    Preferences reload;assert(reload.begin("m5can_trip",true));
+    DriveLog::ProbeRecord saved{};
+    assert(reload.getBytes("probe1",&saved,sizeof(saved))==sizeof(saved));
+    assert(saved.sequence==1 && saved.raw_saved==5);
+    assert(saved.raw[4].can_id==0x18DAF103);
+    SerialStub::capture=true;SerialStub::captured.clear();
+    after_reboot.dump(bench.can,bench.ble,false);
+    const std::string valid_dump=SerialStub::captured;
+    assert(valid_dump.find("#DRIVELOG,PROBE,boot=1,state=persisted")!=std::string::npos);
+    assert(valid_dump.find("#DRIVELOG,PROBE_RAW,boot=1,index=4,id=18DAF103")!=std::string::npos);
+    assert(valid_dump.find("rx_tx_us=1204")!=std::string::npos);
+    assert(valid_dump.find("#DRIVELOG,GROUPFAIL,boot=1,state=persisted")!=std::string::npos);
+    assert(valid_dump.find("#DRIVELOG,GROUPFAIL_RAW,boot=1,index=4,id=18DAF103")!=std::string::npos);
+    // A corrupted NVS record must be rejected visibly rather than
+    // presenting incomplete evidence as valid after a future restart.
+    auto& bytes=Preferences::storage["m5can_trip/probe1"];
+    bytes[sizeof(saved)-1]^=0x80;
+    SerialStub::captured.clear();
+    after_reboot.dump(bench.can,bench.ble,false);
+    assert(SerialStub::captured.find("#DRIVELOG,PROBE,boot=1,state=MISSING")!=std::string::npos);
+    assert(SerialStub::captured.find("#DRIVELOG,PROBE_RAW,boot=1")==std::string::npos);
+    SerialStub::capture=false;SerialStub::captured.clear();
+    reload.end();
+  }
+#endif
+  // Check the true ISO-TP reception-time evidence propagation, rather
+  // than only synthetic manually populated timestamps.
+  {
+    DiagnosticTransaction tx;
+    DiagnosticRequest rq{};
+    rq.can_id=0x18DB33F1;rq.length=3;
+    rq.data[0]=1;rq.data[1]=0x0C;rq.data[2]=0x0D;
+    tx.begin(rq,1000000);
+    TransactionFrame one{};
+    one.extended=true;one.can_id=0x18DAF10E;one.dlc=8;
+    one.timestamp_us=1000656;
+    const uint8_t payload[]={6,0x41,0x0C,0,0,0x0D,0,0};
+    std::memcpy(one.data,payload,8);
+    assert(tx.onFrame(one).event==TransactionEvent::Completed);
+    assert(tx.result().raw_frame_count==1 &&
+           tx.result().raw_rx_offsets_us[0]==656);
   }
   { // Coordinator metrics persist independently of the v2 trip layout.
     Bench bench;Preferences::storage.clear();DriveLog journal;

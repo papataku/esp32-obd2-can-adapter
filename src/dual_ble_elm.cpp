@@ -26,6 +26,7 @@ void upperNoSpaces(const char* source, char* dest, size_t capacity) {
   }
   dest[n] = 0;
 }
+
 }
 
 DualBleElm::Session* DualBleElm::find(uint16_t conn_id, uint32_t generation) {
@@ -439,7 +440,7 @@ void DualBleElm::onResult() {
             rpm,speed,virtual_frames,acquired_us)) {
       // A previously identified ECU differs from this grouped responder.
       // Do not send or cache ambiguous signals as successful readings.
-      adaptive_multi_pid_.disable();
+      adaptive_multi_pid_.rejectCacheEcuConflict();
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
 #endif
@@ -450,6 +451,22 @@ void DualBleElm::onResult() {
           (static_cast<uint32_t>(result.status)<<16) |
           (static_cast<uint32_t>(result.response_count)<<8) |
           static_cast<uint32_t>(result.raw_frame_count));
+    if (decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      Serial.printf("#MULTIPID,disabled,status=%u,reason=%u,responses=%u,ecu=%08lX\n",
+                    static_cast<unsigned>(result.status),
+                    static_cast<unsigned>(adaptive_multi_pid_.lastRejectReason()),
+                    static_cast<unsigned>(result.response_count),
+                    static_cast<unsigned long>(responder));
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    if(first_success)
+      driveLog().recordFirstProbe(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
+    else if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      driveLog().recordFirstFailure(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
+#endif
     driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
         ? DriveLog::Kind::GroupEnabled
         : decision==AdaptiveMultiPid::Decision::RetryLegacy
@@ -512,7 +529,7 @@ void DualBleElm::onResult() {
     if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
         !pid_cache_.rememberApprovedPair(
             rpm,speed,virtual_frames,acquired_us)) {
-      adaptive_multi_pid_.disable();
+      adaptive_multi_pid_.rejectCacheEcuConflict();
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
 #endif
@@ -523,6 +540,16 @@ void DualBleElm::onResult() {
           (static_cast<uint32_t>(result.status)<<16) |
           (static_cast<uint32_t>(result.response_count)<<8) |
           static_cast<uint32_t>(result.raw_frame_count));
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    if(first_success)
+      driveLog().recordFirstProbe(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
+    else if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      driveLog().recordFirstFailure(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
+#endif
     driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
         ? DriveLog::Kind::GroupEnabled
         : decision==AdaptiveMultiPid::Decision::RetryLegacy
@@ -538,8 +565,10 @@ void DualBleElm::onResult() {
         Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
                       static_cast<unsigned long>(responder));
     } else {
-      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\n",
+      Serial.printf("#MULTIPID,disabled,status=%u,reason=%u,responses=%u,ecu=%08lX\n",
                     static_cast<unsigned>(result.status),
+                    static_cast<unsigned>(adaptive_multi_pid_.lastRejectReason()),
+                    static_cast<unsigned>(result.response_count),
                     static_cast<unsigned long>(responder));
       if (decision==AdaptiveMultiPid::Decision::Stop) {
         emitLine(s,"M5ITEM:00:010C");

@@ -36,6 +36,7 @@ inline unsigned uxTaskGetStackHighWaterMark(TaskHandle_t){return 4096;}
 struct SerialStub {
   inline static bool capture=false;
   inline static std::string lines{};
+  inline static std::string& captured=lines;
   void begin(uint32_t){}
   int printf(const char* fmt,...) {
     if(!capture)return 0;
