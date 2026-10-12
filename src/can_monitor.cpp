@@ -199,6 +199,9 @@ void CanMonitor::rxTask() {
         }
       }
       portENTER_CRITICAL(&stats_mux_);
+      const unsigned status_index=static_cast<unsigned>(result.status);
+      if(status_index<10 && stats_.result_status_count[status_index]!=UINT32_MAX)
+        ++stats_.result_status_count[status_index];
       if (from_cache) ++stats_.query_cache_hits;
       if (result.status==DiagnosticStatus::Ok && positive_ecu!=0) {
         ++stats_.query_ok;
