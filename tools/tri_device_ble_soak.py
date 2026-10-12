@@ -74,7 +74,7 @@ def capture(args):
         # SmartRing defers runtime init ~6s: never silently drop isolation commands.
         time.sleep(8)
         if args.isolate_jc and 'jc' in links:send('jc','x')
-        if args.isolate_ring:send('ring','x')
+        if args.isolate_ring or args.ring_after_ipad:send('ring','x')
         time.sleep(2)
         started=time.monotonic();manifest['measurement_start_monotonic']=started
         (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
@@ -86,6 +86,24 @@ def capture(args):
             completed=subprocess.run(launch,capture_output=True,text=True,timeout=20)
             (output/'ipad-launch.log').write_text(completed.stdout+completed.stderr)
             if completed.returncode:raise RuntimeError('iPad launch blocked; inspect ipad-launch.log and request required unlock/approval')
+        if args.ring_after_ipad:
+            deadline=time.monotonic()+20
+            confirmed=False
+            while time.monotonic()<deadline:
+                copy=['xcrun','devicectl','device','copy','from','--device',args.ipad_device,
+                      '--domain-type','appDataContainer','--domain-identifier','com.papataku.HondaAnalyzer',
+                      '--source','Documents/BLESoak/'+output.name+'.jsonl',
+                      '--destination',str(output/'ipad-ready.jsonl'),'--timeout','5']
+                got=subprocess.run(copy,capture_output=True,text=True,timeout=8)
+                if got.returncode==0 and '"kind":"DEMO_VERIFIED"' in (output/'ipad-ready.jsonl').read_text().replace(' ',''):
+                    confirmed=True;break
+                time.sleep(1)
+            if not confirmed:raise RuntimeError('iPad-first DEMO verification missing; do not reconnect Ring')
+            # Startup restores exactly ONE saved verified M5CAN candidate.
+            # c resumes it without an ambient scan/selection of another ELM.
+            send('ring','c')
+            manifest['order']='iPad DEMO verified, then SmartRing connect command'
+            (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
         end=started+args.seconds;next_status=0
         while time.monotonic()<end:
             if errors:raise RuntimeError(str(errors))
@@ -135,9 +153,10 @@ def main():
     p.add_argument('--ipad-device');p.add_argument('--ipad-scenario',choices=['idle','single','batch'],default='batch');p.add_argument('--ipad-seconds',type=float,default=1800)
     p.add_argument('--jc');p.add_argument('--seconds',type=float,default=60)
     p.add_argument('--scenario',default='smoke');p.add_argument('--fw-sha',default='unknown');p.add_argument('--app-sha',default='unknown')
-    p.add_argument('--demo-auto',action='store_true');p.add_argument('--isolate-jc',action='store_true');p.add_argument('--isolate-ring',action='store_true')
+    p.add_argument('--ring-after-ipad',action='store_true');p.add_argument('--demo-auto',action='store_true');p.add_argument('--isolate-jc',action='store_true');p.add_argument('--isolate-ring',action='store_true')
     a=p.parse_args()
     if not 1<=a.seconds<=10800:p.error('seconds must be in 1..10800')
     if not 1<=a.ipad_seconds<=3600:p.error('iPad duration must be in1..3600')
+    if a.ring_after_ipad and not a.ipad_device:p.error('--ring-after-ipad requires --ipad-device')
     capture(a)
 if __name__=='__main__':main()

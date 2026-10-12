@@ -136,3 +136,24 @@ python tools/analyze_tri_device_soak.py --capture RUN_DIR \
 This reports the measured window, latency percentiles, resets/disconnects,
 per-PID updates/age and per-peer throughput. Missing coverage remains unknown;
 the script does not issue a blanket physical PASS.
+
+## Interpreting the deployed status and connection order
+
+In dual mode the USB SerialProtocol intentionally has a null legacy BLE
+transport. Consequently #STATS,ble=WAIT can coexist with2 active clients; use
+#BLE_DUAL/#BLE_PEER and the meter BLE state as link evidence, not that legacy
+USB field. The adapter display uses the actual aggregate transport.
+
+Connection order is distinct from handle/slot. In the Ring-first comparison,
+JC initially used handle1 and was explicitly disconnected; SmartRing kept
+handle2/generation2, while the later iPad reused handle1/generation3. A
+"handle2 always fails" theory cannot be equated with"later peer fails".
+For the reverse order use --ring-after-ipad together with --ipad-device: start
+with Ring isolated, verify the iPad's DEMO-capability event, then c resumes
+Ring's one saved verified M5CAN candidate. No ambient scan or alternate ELM
+selection is performed. Verify actual CONNECT rows and fresh samples; launch
+order alone is insufficient. Compare the same firmware, rates and window.
+
+Public reports list5 review angles performed by the author, not fictitious
+independent reviewers: BLE APIs/routing, RTOS/resource bounds, CAN safety,
+SQLite/RAW persistence, and test/clock/UX reliability.
