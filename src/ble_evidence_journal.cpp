@@ -89,6 +89,9 @@ void BleEvidenceJournal::observeHealth(const CanStats& can,const BleStats& ble) 
 }
 void BleEvidenceJournal::observeQueueDrops(uint32_t drops) {
   if(!started_ || drops==record_.queue_drops)return;
+  if(drops>record_.queue_drops)
+    recordFault(static_cast<uint16_t>(DiagnosticError::BleDiagnosticRingOverflow),
+                drops-record_.queue_drops,millis());
   record_.queue_drops=drops;
   dirty_=urgent_=true;
 }
