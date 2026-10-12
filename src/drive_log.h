@@ -51,6 +51,7 @@ class DriveLog {
     uint8_t status=0,decision=0,reject_reason=0,responses=0;
     uint8_t raw_count=0,raw_saved=0,truncated=0,reserved=0;
     DiagnosticRawFrame raw[kDiagnosticMaxRawFrames]{};
+    uint32_t rx_offset_us[kDiagnosticMaxRawFrames]{};
   };
   void recordFirstProbe(uint16_t peer,const DiagnosticResult& result,
                         uint32_t responder,uint8_t decision,uint8_t reject_reason);
