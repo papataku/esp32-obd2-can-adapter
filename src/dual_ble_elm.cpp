@@ -13,6 +13,7 @@
 #include "elm_response_formatter.h"
 #include "serial_protocol.h"
 #include "drive_log.h"
+#include "diagnostic_error_catalog.h"
 
 namespace m5can {
 namespace {
@@ -71,6 +72,9 @@ void DualBleElm::event(const BleClientEvent& event) {
   }
   if (event.byte == '\r' || event.byte == '\n') {
     if (s->input_overflow) {
+      ble_.recordDiagnosticError(s->conn_id,s->generation,
+          static_cast<uint16_t>(DiagnosticError::ElmInputOverflow),
+          static_cast<uint32_t>(s->input_size));
       emitLine(*s, "?");
       prompt(*s);
     } else if (s->input_size) {
@@ -220,6 +224,8 @@ void DualBleElm::advanceBatch(Session& s) {
 
 void DualBleElm::onLine(Session& s,const char* line) {
   if (s.pending || s.batch) {
+    ble_.recordDiagnosticError(s.conn_id,s.generation,
+        static_cast<uint16_t>(DiagnosticError::ElmBusy));
     // Exactly one outstanding command per BLE client; the other client's
     // independent ELM session remains free to enqueue a request.
     static const uint8_t busy[]={'B','U','S','Y','\r','>'};
@@ -246,7 +252,11 @@ void DualBleElm::onLine(Session& s,const char* line) {
       }
       break;
     case ElmAction::BatchRead:
-      if (can_.faultLocked()) emitLine(s,"M5CAN TX LOCKED");
+      if (can_.faultLocked()) {
+        ble_.recordDiagnosticError(s.conn_id,s.generation,
+            static_cast<uint16_t>(DiagnosticError::CanModeError));
+        emitLine(s,"M5CAN TX LOCKED");
+      }
       else {
         s.batch_count=parsed.batch_count;
         s.batch_next=0;
@@ -258,7 +268,12 @@ void DualBleElm::onLine(Session& s,const char* line) {
       break;
     case ElmAction::VehicleRead:
       s.request=requestOf(parsed.request,s.elm);
-      if (!DiagnosticPolicy::allowedReadRequest(s.request)) emitLine(s,"?");
+      if (!DiagnosticPolicy::allowedReadRequest(s.request)) {
+        ble_.recordDiagnosticError(s.conn_id,s.generation,
+            static_cast<uint16_t>(DiagnosticError::CanInvalidRequest),
+            s.request.can_id);
+        emitLine(s,"?");
+      }
       else if (demo_source_.demoActive()) {
 #if defined(M5CAN_DEMO_FAULT_FIXTURE)
         // Explicit TX-disabled bench only. No CAN ownership/query changes.
@@ -278,15 +293,23 @@ void DualBleElm::onLine(Session& s,const char* line) {
             ? DemoDrive::frames(parsed.request.data[1],millis(),frames):0;
         if (!n) emitLine(s,"NO DATA");
         for(uint8_t i=0;i<n;++i) appendFrame(s,frames[i]);
-      } else if (can_.faultLocked()) emitLine(s,"M5CAN TX LOCKED");
+      } else if (can_.faultLocked()) {
+        ble_.recordDiagnosticError(s.conn_id,s.generation,
+            static_cast<uint16_t>(DiagnosticError::CanModeError));
+        emitLine(s,"M5CAN TX LOCKED");
+      }
       else {
         s.pending=true;
         prompt_now=false;
       }
       break;
-    case ElmAction::LeaseAcquire:
-      emitLine(s,can_.acquireLease(cfg::kTxLeaseDefaultMs)?"OK":"CAN ERROR");
+    case ElmAction::LeaseAcquire: {
+      const bool granted=can_.acquireLease(cfg::kTxLeaseDefaultMs);
+      if(!granted)ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::CanLeaseRequired));
+      emitLine(s,granted?"OK":"CAN ERROR");
       break;
+    }
     case ElmAction::LeaseRevoke:
       can_.revokeLease();
       emitLine(s,"OK");
@@ -359,6 +382,16 @@ void DualBleElm::onResult() {
   // Reuse fixed object storage rather than a large local result.
   DiagnosticResult& result=query_result_workspace_;
   if (!can_.pollQueryResult(result)) return;
+  if(result.status!=DiagnosticStatus::Ok) {
+    const uint16_t error=static_cast<uint16_t>(
+        static_cast<uint16_t>(DiagnosticError::CanNoData) +
+        static_cast<uint8_t>(result.status) - 1);
+    // Numeric codes follow DiagnosticStatus: NoData=1 ... IsoTpError=9.
+    const int original=active_query_owner_;
+    if(original>=0 && original<2)
+      ble_.recordDiagnosticError(sessions_[original].conn_id,
+           sessions_[original].generation,error,result.transaction_us);
+  }
   const int index=active_query_owner_;
   const int second=active_secondary_owner_;
   const uint32_t secondary_generation=active_secondary_generation_;
@@ -383,6 +416,8 @@ void DualBleElm::onResult() {
     // Losing one peer invalidates the speculative support decision. The
     // other peer retains its individual pending request for normal retry.
     if (!primary_live || !other_live) {
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::GroupPeerGone));
       adaptive_multi_pid_.disable();
       return;
     }
@@ -405,6 +440,11 @@ void DualBleElm::onResult() {
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
 #endif
+    if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(decision==AdaptiveMultiPid::Decision::Stop ?
+              DiagnosticError::GroupStopped:DiagnosticError::GroupRejected),
+          static_cast<uint32_t>(result.status));
     driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
         ? DriveLog::Kind::GroupEnabled
         : decision==AdaptiveMultiPid::Decision::RetryLegacy
@@ -468,6 +508,11 @@ void DualBleElm::onResult() {
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
 #endif
+    if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(decision==AdaptiveMultiPid::Decision::Stop ?
+              DiagnosticError::GroupStopped:DiagnosticError::GroupRejected),
+          static_cast<uint32_t>(result.status));
     driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
         ? DriveLog::Kind::GroupEnabled
         : decision==AdaptiveMultiPid::Decision::RetryLegacy
