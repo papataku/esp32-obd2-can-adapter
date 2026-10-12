@@ -199,5 +199,29 @@ int main() {
    assert(output(7).empty());assert(output(19).find("M5DONE\r>")!=std::string::npos);}
   {mode=Ecu::Full;Bench bench;demo=true;bench.batchBoth();bench.drain();
    assert(requests.empty());for(uint16_t id:{7,19}) assert(output(id).find("M5DONE\r>")!=std::string::npos);}
+  // Deterministic repeated-run simulation: no growing queues, duplicate
+  // CAN requests, stale replay or peer mix-up over successive batches.
+  {mode=Ecu::Full;Bench bench;
+   for(unsigned cycle=0;cycle<250;++cycle) {
+     test_notifications.clear();
+     bench.batchBoth();bench.drain();
+     assert(bench.groups()==cycle+1);
+     assert(requests.size()==(cycle+1)*2);
+     bench.values();
+   }
+  }
+  // Disconnect the in-flight owner after a same-PID peer has joined.
+  // The surviving peer still receives the physical CAN result.
+  {mode=Ecu::Full;Bench bench;hold=true;
+   write(bench.a,"ATM5B00:0105,010D");
+   write(bench.b,"ATM5B00:0105,010D");
+   bench.dual.poll();assert(requests.size()==1);
+   NimBLEServer::callbacks->onDisconnect(
+       NimBLEDevice::createServer(),&bench.a);
+   bench.dual.poll();hold=false;bench.drain();
+   assert(requests.size()==2 && bench.groups()==0);
+   assert(output(7).empty());
+   assert(output(19).find("M5DONE\\r>")!=std::string::npos);
+  }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
 }
