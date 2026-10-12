@@ -110,7 +110,7 @@ void loop() {
     const auto coordinator=g_dual.coordinatorStats();
     // These are logical coordinator submissions; physical TX is separately
     // counted by CanMonitor::stats(). Do not label these as CAN frames.
-    Serial.printf("#PID_COORD,cache_hit=%lu,cache_miss=%lu,join=%lu,group_submit=%lu,cross_group=%lu,single_submit=%lu\\n",
+    Serial.printf("#PID_COORD,cache_hit=%lu,cache_miss=%lu,join=%lu,group_submit=%lu,cross_group=%lu,single_submit=%lu\n",
         static_cast<unsigned long>(coordinator.cache_hits),
         static_cast<unsigned long>(coordinator.cache_misses),
         static_cast<unsigned long>(coordinator.joins),
