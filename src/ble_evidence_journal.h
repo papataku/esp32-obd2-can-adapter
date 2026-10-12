@@ -40,6 +40,7 @@ class BleEvidenceJournal {
     uint32_t crc=0,boot=0,saves=0,total=0,evicted=0,queue_drops=0;
     uint32_t first_seq=0,last_seq=0,seq_gaps=0;
     uint32_t unknown_faults=0,storage_errors=0;
+    uint32_t can_result_status[10]{}; // owner-observed, includes USB requests
     uint8_t count=0,overflow=0;
     uint16_t reserved=0;
     char build[40]{};
