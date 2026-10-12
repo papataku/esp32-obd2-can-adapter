@@ -53,6 +53,10 @@ class DualBleElm {
   void onResult();
   void finishSingle(Session& session, const DiagnosticResult& result);
   void abortBatch(Session& session, const DiagnosticResult& result);
+  void cacheSafePartialGroup(const DiagnosticResult& result,
+                             const DiagnosticRequest& rpm,
+                             const DiagnosticRequest& speed,
+                             uint64_t timestamp_us);
   Session* find(uint16_t conn_id, uint32_t generation);
   static DiagnosticRequest requestOf(const ElmVehicleRequest& item,
                                      const ElmCompat& elm);
