@@ -5,6 +5,67 @@
 
 namespace m5can {
 DriveLog& driveLog(){static DriveLog log;return log;}
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+uint32_t DriveLog::probeChecksum(const ProbeRecord& r) {
+  // FNV-1a over the fixed-size, fully zero-initialized binary record.
+  // Caller zeroes crc first; catch torn/corrupt NVS records at readback.
+  const auto* bytes=reinterpret_cast<const uint8_t*>(&r);
+  uint32_t hash=2166136261U;
+  for(size_t i=0;i<sizeof(r);++i) hash=(hash^bytes[i])*16777619U;
+  return hash;
+}
+bool DriveLog::loadProbe(unsigned slot,ProbeRecord& record) {
+  Preferences nvs;char key[12]{};
+  std::snprintf(key,sizeof(key),"probe%u",slot);
+  if(!nvs.begin("m5can_trip",true))return false;
+  const bool ok=nvs.getBytesLength(key)==sizeof(record) &&
+      nvs.getBytes(key,&record,sizeof(record))==sizeof(record);
+  nvs.end();
+  if(!ok || record.magic!=0x4D355052U || record.version!=1 ||
+     record.size!=sizeof(record) ||
+     record.raw_saved>kDiagnosticMaxRawFrames ||
+     record.raw_count<record.raw_saved || !record.sequence) return false;
+  const uint32_t stored=record.crc;
+  record.crc=0;
+  const bool valid=probeChecksum(record)==stored;
+  record.crc=stored;
+  return valid;
+}
+void DriveLog::recordFirstProbe(uint16_t peer,const DiagnosticResult& result,
+                                uint32_t responder,uint8_t decision,
+                                uint8_t reject_reason) {
+  (void)peer; // Complete BLE-peer attribution remains in the event journal.
+  if(!enabled_)return;
+  portENTER_CRITICAL(&mux_);
+  if(!probe_present_) {
+    probe_=ProbeRecord{};
+    probe_.sequence=record_.sequence;
+    probe_.uptime_ms=millis();
+    probe_.responder=responder;
+    probe_.status=static_cast<uint8_t>(result.status);
+    probe_.decision=decision;probe_.reject_reason=reject_reason;
+    probe_.responses=result.response_count;
+    probe_.transaction_us=result.transaction_us;
+    probe_.first_response_us=result.tx_to_first_response_us;
+    probe_.raw_count=result.raw_frame_count;
+    probe_.raw_saved=result.raw_frame_count<kDiagnosticMaxRawFrames ?
+        result.raw_frame_count : kDiagnosticMaxRawFrames;
+    probe_.truncated=result.raw_frame_count>=kDiagnosticMaxRawFrames;
+    for(unsigned i=0;i<probe_.raw_saved;++i)
+      probe_.raw[i]=result.raw_frames[i];
+    probe_present_=true;probe_dirty_=true;probe_saved_=false;
+    // Permit the next idle Arduino-loop checkpoint immediately.
+    probe_last_attempt_ms_=0;
+  }
+  portEXIT_CRITICAL(&mux_);
+}
+bool DriveLog::probeSaved() const {
+  portENTER_CRITICAL(&mux_);
+  const bool saved=probe_present_ && probe_saved_ && !probe_dirty_;
+  portEXIT_CRITICAL(&mux_);
+  return saved;
+}
+#endif
 bool DriveLog::load(unsigned slot,Record& record) {
   Preferences nvs;char key[12]{};std::snprintf(key,sizeof(key),"trip%u",slot);
   if(!nvs.begin("m5can_trip",true)) return false;
@@ -19,6 +80,11 @@ void DriveLog::begin(uint32_t reset_reason,uint32_t rom_reset_reason) {
   for(unsigned slot=0;slot<kSlots;++slot)
     if(load(slot,previous) && previous.sequence>latest) latest=previous.sequence;
   coordinator_=CoordinatorRecord{};coordinator_enabled_=false;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  probe_=ProbeRecord{};
+  probe_present_=probe_dirty_=probe_saved_=false;
+  probe_last_attempt_ms_=0;
+#endif
   record_=Record{};record_.sequence=latest+1;record_.reset_reason=reset_reason;record_.rom_reset_reason=rom_reset_reason;
   std::snprintf(record_.build,sizeof(record_.build),"%s %s",__DATE__,__TIME__);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
@@ -82,12 +148,34 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
   bool urgent;
   portENTER_CRITICAL(&mux_);urgent=urgent_;portEXIT_CRITICAL(&mux_);
   const uint32_t elapsed=now-last_saved_ms_;
-  if(!forced && elapsed<30000 && !(urgent && elapsed>=2000))return false;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  const bool probe_due=probe_dirty_ &&
+      (!probe_last_attempt_ms_ || now-probe_last_attempt_ms_>=2000);
+#else
+  const bool probe_due=false;
+#endif
+  if(!forced && !probe_due && elapsed<30000 &&
+     !(urgent && elapsed>=2000))return false;
   if(can && !can->tryBeginLogCheckpoint())return false;
   Record copy=snapshot();copy.uptime_ms=now;++copy.saves;
   CoordinatorRecord coord{};bool coord_enabled;
   portENTER_CRITICAL(&mux_);coord=coordinator_;coord_enabled=coordinator_enabled_;portEXIT_CRITICAL(&mux_);
   coord.sequence=copy.sequence;coord.uptime_ms=now;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  // BLE worker only mutates immutable first-probe RAM once. The Arduino
+  // loop alone can commit the sidecar when CAN is quiescent.
+  ProbeRecord probe_copy{};
+  bool write_probe=false;
+  portENTER_CRITICAL(&mux_);
+  write_probe=probe_dirty_;
+  if(write_probe)probe_copy=probe_;
+  portEXIT_CRITICAL(&mux_);
+  if(write_probe) {
+    probe_copy.crc=0;
+    probe_copy.crc=probeChecksum(probe_copy);
+    probe_last_attempt_ms_=now;
+  }
+#endif
   Preferences nvs;char key[12]{};
   std::snprintf(key,sizeof(key),"trip%u",static_cast<unsigned>(copy.sequence%kSlots));
   bool ok=false;
@@ -97,6 +185,27 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
       std::snprintf(key,sizeof(key),"coord%u",static_cast<unsigned>(copy.sequence%kSlots));
       ok=nvs.putBytes(key,&coord,sizeof(coord))==sizeof(coord);
     }
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    // Persist the first probe only once, never overwrite with each 30s
+    // checkpoint. Rotating probe slots are keyed to the same boot sequence.
+    if(write_probe && ok) {
+      std::snprintf(key,sizeof(key),"probe%u",static_cast<unsigned>(copy.sequence%kSlots));
+      const bool stored=nvs.putBytes(key,&probe_copy,sizeof(probe_copy))==sizeof(probe_copy);
+      ProbeRecord readback{};
+      const bool verified=stored && loadProbe(copy.sequence%kSlots,readback) &&
+          readback.sequence==copy.sequence;
+      if(verified) {
+        portENTER_CRITICAL(&mux_);
+        if(probe_present_ && probe_.sequence==probe_copy.sequence) {
+          probe_dirty_=false;probe_saved_=true;
+        }
+        portEXIT_CRITICAL(&mux_);
+      } else {
+        Serial.println("#DRIVELOG,probe_storage_error");
+        ok=false;
+      }
+    }
+#endif
     nvs.end();
   }
   if(can)can->endLogCheckpoint();
@@ -193,6 +302,44 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
         static_cast<unsigned long>(coord.cross),static_cast<unsigned long>(coord.singles),
         static_cast<unsigned long long>(coord.owner_cache_hits));
     }
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    ProbeRecord probe_record{};
+    bool has_probe=false,persisted=false;
+    if(seq==current.sequence) {
+      portENTER_CRITICAL(&mux_);
+      has_probe=probe_present_ && probe_.sequence==seq;
+      if(has_probe)probe_record=probe_;
+      persisted=probe_saved_ && !probe_dirty_;
+      portEXIT_CRITICAL(&mux_);
+    } else {
+      has_probe=loadProbe(seq%kSlots,probe_record) &&
+          probe_record.sequence==seq;
+      persisted=has_probe;
+    }
+    if(has_probe) {
+      Serial.printf("#DRIVELOG,PROBE,boot=%lu,state=%s,ms=%lu,decision=%u,reason=%u,status=%u,ecu=%08lX,responses=%u,raw_count=%u,raw_saved=%u,truncated=%u,transaction_us=%lu,first_response_us=%lu,rx_time=tx_offset_us\n",
+          static_cast<unsigned long>(seq),persisted?"persisted":"RAM_ONLY",
+          static_cast<unsigned long>(probe_record.uptime_ms),
+          probe_record.decision,probe_record.reject_reason,probe_record.status,
+          static_cast<unsigned long>(probe_record.responder),
+          probe_record.responses,probe_record.raw_count,
+          probe_record.raw_saved,probe_record.truncated,
+          static_cast<unsigned long>(probe_record.transaction_us),
+          static_cast<unsigned long>(probe_record.first_response_us));
+      for(unsigned i=0;i<probe_record.raw_saved;++i) {
+        const auto& f=probe_record.raw[i];
+        Serial.printf("#DRIVELOG,PROBE_RAW,boot=%lu,index=%u,id=%08lX,dlc=%u,rx_tx_us=%lu,data=",
+            static_cast<unsigned long>(seq),i,
+            static_cast<unsigned long>(f.can_id),f.dlc,
+            static_cast<unsigned long>(f.rx_offset_us));
+        for(unsigned k=0;k<f.dlc && k<8;++k) Serial.printf("%02X",f.data[k]);
+        Serial.println("");
+      }
+    } else if(r.grouped && r.multipid) {
+      Serial.printf("#DRIVELOG,PROBE,boot=%lu,state=MISSING\n",
+                    static_cast<unsigned long>(seq));
+    }
+#endif
     for(unsigned i=0;i<r.event_count;++i) {
       const auto& e=r.events[i];Serial.printf("#DRIVELOG,EVENT,boot=%lu,ms=%lu,kind=%u,peer=%u,status=%u,ecu=%08lX,responses=%u,raw_count=%u,transaction_us=%lu,first_response_us=%lu\n",
         static_cast<unsigned long>(r.sequence),static_cast<unsigned long>(e.uptime_ms),e.kind,e.peer,e.status,static_cast<unsigned long>(e.responder),e.responses,e.raw_count,
