@@ -46,10 +46,10 @@ class DiagnosticRequestPacer {
         // PID and must not be double-counted as capacity for the other.
         const bool reserved=entry.valid &&
             (entry.key==rpm_key || entry.key==speed_key);
-        if (!reserved &&
-            (!entry.valid || timeRemaining(entry.sent_us,now_us)==0))
+        if (reserved) continue;
+        if (!entry.valid || timeRemaining(entry.sent_us,now_us)==0) {
           ++free_slots;
-        else {
+        } else {
           const uint64_t remaining=timeRemaining(entry.sent_us,now_us);
           if (remaining<earliest) earliest=remaining;
         }
