@@ -16,6 +16,7 @@
 #include "drive_log.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "dual_ble_elm.h"
+#include "ble_evidence_journal.h"
 #ifndef M5CAN_DUAL_BLE_APP_CORE
 #define M5CAN_DUAL_BLE_APP_CORE 1
 #endif
@@ -60,6 +61,10 @@ void setup() {
 #else
   m5can::driveLog().begin(0);
 #endif
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  m5can::bleEvidenceJournal().begin(m5can::driveLog().snapshot().sequence,
+                                    M5CAN_BUILD_SHA);
+#endif
 
   g_ble_ok = g_ble.begin();
 #if defined(ARDUINO_ARCH_ESP32)
@@ -97,7 +102,9 @@ void setup() {
 void loop() {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   m5can::BleDiagnosticEvent event{};
+  m5can::bleEvidenceJournal().observeQueueDrops(g_ble.diagnosticDrops());
   for (unsigned n=0;n<8 && g_ble.pollDiagnostic(event);++n) {
+    m5can::bleEvidenceJournal().append(event,g_ble.diagnosticDrops());
     const char* kind=event.kind==m5can::BleDiagnosticEvent::Kind::Connect ? "CONNECT"
         : event.kind==m5can::BleDiagnosticEvent::Kind::Disconnect ? "DISCONNECT" : "REJECT";
     Serial.printf("#BLE_EVENT,kind=%s,seq=%lu,ms=%lu,id=%u,gen=%lu,addr=%04X,reason_known=%u,reason=%d,mtu=%u,interval=%u,latency=%u,supervision=%u,rx=%llu,tx=%llu,retries=%lu,failed=%lu,drops=%lu\n",
@@ -199,6 +206,11 @@ void loop() {
       coord_log.single_submissions);
 #endif
   m5can::driveLog().poll(g_can,g_ble,g_serial.demoActive());
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  // Flash only from Arduino loop and only at CAN-idle checkpoints.
+  // Never block NimBLE GAP callbacks or CPU0 CAN owner with NVS writes.
+  m5can::bleEvidenceJournal().poll(g_can);
+#endif
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   const auto peers=g_ble.peerTraffic();
   g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
