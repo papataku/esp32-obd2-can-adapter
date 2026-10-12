@@ -142,13 +142,43 @@ int main() {
   return 0;
 #endif
   {mode=Ecu::Full;Bench bench;bench.batchBoth();bench.drain();bench.values();
-   assert(bench.groups()==2 && requests.size()==4);
-   bench.batchBoth();bench.drain();assert(bench.groups()==4 && requests.size()==8);}
+   assert(bench.groups()==1 && requests.size()==2);
+   bench.batchBoth();bench.drain();assert(bench.groups()==2 && requests.size()==4);}
   for(Ecu failure:{Ecu::Partial,Ecu::Negative,Ecu::Silent,Ecu::Split,Ecu::FirstFrame}) {
     mode=failure;Bench bench;bench.batchBoth();bench.drain();bench.values();
-    assert(bench.groups()==1 && requests.size()==7);
+    assert(bench.groups()==1 && requests.size()==4);
     bench.batchBoth();bench.drain();bench.values();
-    assert(bench.groups()==1 && requests.size()==13);
+    assert(bench.groups()==1 && requests.size()==7);
+  }
+  // Two different BLE peers independently request different PIDs. The
+  // coordinator may group them only because both were already pending;
+  // there is no synthetic extra PID fetch or cross-peer result leakage.
+  {mode=Ecu::Full;Bench bench;
+   write(bench.a,"ATM5B00:010C");
+   write(bench.b,"ATM5B00:010D");
+   bench.dual.poll();bench.dual.poll();bench.dual.poll();
+   assert(bench.groups()==1 && requests.size()==1);
+   assert(output(7).find("M5ITEM:00:010C\\r18DAF101 04 41 0C 13 88")!=std::string::npos);
+   assert(output(7).find("M5ITEM:00:010D")==std::string::npos);
+   assert(output(19).find("M5ITEM:00:010D\\r18DAF101 03 41 0D 50")!=std::string::npos);
+   assert(output(19).find("M5ITEM:00:010C")==std::string::npos);
+   // Both parameters are cached individually: reusing RPM in a different
+   // BLE session within the TTL does not generate a new CAN transaction.
+   test_notifications.clear();
+   write(bench.b,"ATM5B00:010C");
+   bench.dual.poll();bench.dual.poll();
+   assert(requests.size()==1);
+   assert(output(19).find("M5ITEM:00:010C")!=std::string::npos);
+  }
+  // Matching pending requests from two peers should also fan out one
+  // individual physical CAN reply, even when grouping is ineligible.
+  {mode=Ecu::Full;Bench bench;
+   write(bench.a,"ATM5B00:0105");
+   write(bench.b,"ATM5B00:0105");
+   bench.dual.poll();bench.dual.poll();bench.dual.poll();
+   assert(requests.size()==1 && bench.groups()==0);
+   assert(output(7).find("M5ITEM:00:0105")!=std::string::npos);
+   assert(output(19).find("M5ITEM:00:0105")!=std::string::npos);
   }
   {mode=Ecu::Full;Bench bench;write(bench.a,"ATM5B00:010C,010D,0105");bench.drain();
    mode=Ecu::Foreign;bench.batchBoth();bench.drain();bench.values();
