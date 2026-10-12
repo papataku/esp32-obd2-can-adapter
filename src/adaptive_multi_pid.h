@@ -80,6 +80,27 @@ class AdaptiveMultiPid {
     return grouped;
   }
 
+  // CAN owner statistics measure physical positive response reception,
+  // not the CPU1 coordinator's group acceptance. A valid complete pair
+  // from ANY responder counts as transport-positive even when an unlearned
+  // group later falls back due to conflicting ECU values. The actual
+  // grouped-success count is maintained by the BLE coordinator.
+  static bool hasCompletePositivePair(const DiagnosticResult& result,
+                                      uint32_t& positive_ecu) {
+    positive_ecu=0;
+    if (result.status!=DiagnosticStatus::Ok ||
+        result.response_count==0 ||
+        result.response_count>kDiagnosticMaxResponses) return false;
+    for(uint8_t i=0;i<result.response_count;++i) {
+      uint8_t values[3]{};
+      const auto& m=result.responses[i];
+      if (parseCompletePair(m,values) &&
+          (!positive_ecu || m.can_id<positive_ecu))
+        positive_ecu=m.can_id;
+    }
+    return positive_ecu!=0;
+  }
+
   // Decode one coherent RPM + speed pair from ONE ECU. On the first probe,
   // all responses must be complete, valid and agree on both raw PID values.
   // Choose the lowest CAN ID, independent of arrival order. An ambiguous
