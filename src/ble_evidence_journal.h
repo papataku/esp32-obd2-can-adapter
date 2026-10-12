@@ -17,7 +17,7 @@ class BleEvidenceJournal {
   static constexpr uint16_t kVersion=1;
   static constexpr unsigned kBootSlots=8;
   static constexpr unsigned kEvents=24;
-  static constexpr unsigned kFaultBuckets=32;
+  static constexpr unsigned kFaultBuckets=48;
 
   struct Entry {
     uint32_t seq=0,ms=0,gen=0;
@@ -32,7 +32,7 @@ class BleEvidenceJournal {
   };
   struct FaultSummary {
     uint16_t code=0,reserved=0;
-    uint32_t count=0,first_ms=0,last_ms=0,last_detail=0;
+    uint32_t count=0,first_ms=0,last_ms=0,first_detail=0,last_detail=0;
   };
   struct Record {
     uint32_t magic=kMagic;
@@ -67,7 +67,8 @@ class BleEvidenceJournal {
   static bool load(unsigned slot,Record& data);
   static bool canExport(CanMonitor& can,BleElmTransport& ble);
   static void print(const Record& data,bool persisted);
-  void recordFault(uint16_t code,uint32_t detail,uint32_t at_ms);
+  void recordFault(uint16_t code,uint32_t detail,uint32_t at_ms,
+                   uint32_t occurrences=1);
   Record record_{},scratch_{};
   bool started_=false,dirty_=false,persisted_=false,urgent_=false;
   uint32_t last_attempt_ms_=0,last_success_ms_=0;
