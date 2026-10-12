@@ -2,10 +2,16 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   host-tests:
@@ -15,7 +21,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run Phase 1 host safety checks
+      - name: Run host safety and protocol checks
         run: ./tests/run_all.sh
 
   platformio-build:
@@ -29,3 +35,14 @@ jobs:
         run: python -m pip install --upgrade platformio
       - name: Build M5Dial firmware
         run: pio run -e m5dial
+      - name: Upload M5Dial build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: m5can-m5dial
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            .pio/build/m5dial/firmware.bin
+            .pio/build/m5dial/firmware.elf
+            .pio/build/m5dial/bootloader.bin
+            .pio/build/m5dial/partitions.bin

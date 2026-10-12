@@ -30,5 +30,9 @@ struct SerialStub {
   void begin(uint32_t){}
   int printf(const char*,...){return 0;}
   void println(const char*){}
+  size_t write(const uint8_t*,size_t n){return n;}
+  void flush(){}
+  int available(){return 0;}
+  int read(){return -1;}
 };
 extern SerialStub Serial;

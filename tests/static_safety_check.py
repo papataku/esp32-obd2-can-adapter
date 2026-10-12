@@ -2,20 +2,30 @@
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-source = "\n".join(p.read_text() for p in (root / "src").glob("*.[ch]pp"))
-config = (root / "src" / "can_monitor.cpp").read_text()
+src = "\n".join(p.read_text() for p in (root / "src").glob("*.[ch]pp"))
+cfg = (root / "include" / "app_config.h").read_text()
+serial = (root / "src" / "serial_protocol.cpp").read_text()
 
 checks = {
-    "boot driver is LISTEN_ONLY": "TWAI_MODE_LISTEN_ONLY" in config,
-    "TWAI TX queue is disabled": "general.tx_queue_len = 0" in config,
-    "no twai_transmit call exists": "twai_transmit(" not in source,
-    "no TWAI normal mode exists": "TWAI_MODE_NORMAL" not in source,
-    "no public TX command marker": "TX LEASE" not in source and "OBD " not in source,
+    "listen-only present": "TWAI_MODE_LISTEN_ONLY" in src,
+    "TX queue constant disabled": "kTwaiTxQueueLen = 0" in cfg,
+    "TWAI config TX queue disabled": "general.tx_queue_len = 0" in src,
+    "no twai_transmit": "twai_transmit(" not in src,
+    "no normal mode": "TWAI_MODE_NORMAL" not in src,
+    "no TX lease": "TX_LEASE" not in src,
+    "no OBD command": "OBD " not in src,
+    "host input bounded": "kMaxBytesPerPoll = 256" in serial,
+    "native switch final text ACK": "#OK,NATIVE,ON" in serial,
+    "native starts stream disabled": "stream_enabled_ = false" in serial,
 }
 
-failed = [name for name, ok in checks.items() if not ok]
+failed = []
 for name, ok in checks.items():
     print(("PASS" if ok else "FAIL"), name)
+    if not ok:
+        failed.append(name)
+
 if failed:
-    raise SystemExit(f"Phase 1 safety checks failed: {', '.join(failed)}")
-print(f"{len(checks)} Phase 1 safety checks passed")
+    raise SystemExit("failed: " + ", ".join(failed))
+
+print(f"{len(checks)} Phase 2 safety checks passed")

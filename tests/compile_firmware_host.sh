@@ -5,4 +5,8 @@ for source in "$ROOT"/src/*.cpp; do
   echo "syntax: $source"
   g++ -std=c++17 -Wall -Wextra -Werror     -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"     -fsyntax-only "$source"
 done
-echo "PASS all Phase 1 firmware translation units"
+
+g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"   "$ROOT/tests/test_native_protocol.cpp"   "$ROOT/src/native_protocol.cpp"   "$ROOT/tests/host_stubs/stubs.cpp"   -o /tmp/m5can-native-test
+/tmp/m5can-native-test
+
+echo "PASS all Phase 2 firmware translation units"
