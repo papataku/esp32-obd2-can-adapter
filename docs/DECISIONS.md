@@ -146,3 +146,49 @@ CAN IDs, and cache saturation. CI + PlatformIO build followed by
 controlled CAN bench metrics are required before any vehicle
 performance validation. An actual 60Hz per PID is not supported by
 a retained same-PID 50ms limit.
+
+## D017 - Dual-meter stability baseline retains 20-byte notifications
+
+SmartRing and JC3636W518C M5CAN bench clients have a bounded 20-byte
+notification receiver unless the MTU experiment is explicitly enabled.
+Negotiating ATT MTU247 does not enlarge this application receiver. The
+dual adapter must therefore cap its targeted notification chunks at 20
+bytes for the current stability baseline. Larger chunks reproduced RX
+queue rejection, batch timeout and repeated reconnection with SmartRing
+alone. This cap applies only to the experimental dual environment;
+production transport and CAN safety policy are unchanged. Throughput
+experiments must coordinate sender and both receiver profiles.
+
+The regression test uses two distinct connection handles and large MTUs,
+checks a 203-byte reply arrives as individually targeted chunks <=20 bytes,
+and verifies disconnect/reconnect generation isolation. Physical USB-only
+dual-client runtime evidence is recorded separately.
+
+### Matched MTU247 throughput bench
+
+`m5dial_dual_ble_mtu_bench` explicitly raises the notification cap to 244
+bytes. Use it only with both meter receivers built with
+`VEHICLE_M5CAN_MTU247_EXPERIMENTAL`; it is not compatible with the old
+20-byte receiver. The default dual bench retains its 20-byte cap. Peer
+MTU still bounds each send, and unicast, generation checks and bounded
+backpressure behavior are shared. Host tests run both caps and compare
+payload bytes, including retries. A short performance comparison does
+not replace the one-hour stability acceptance for either profile.
+
+## D018 - CAN owner scratch is fixed storage, not nested stack frames
+
+On the USB bench, selecting DEMO OFF reproduced a stack-canary panic in
+m5can-owner during `twai_driver_uninstall` / `esp_intr_free` cross-core IPC.
+The compiler reported rxTask 3392 bytes plus performQuery 3040 bytes,
+leaving too little of the 7168-byte task stack for driver/RTOS calls.
+Move the bounded result and transaction into CanMonitor storage owned
+exclusively by its one CAN task. Return results through an output reference,
+with queue/cache copies completed before scratch reuse. Reset the transaction
+on TX-error paths as well, so prior replies cannot become the new result.
+
+CI rejects either owner function growing beyond 512 bytes. The optional
+canmode dry bench exercises Listen-Only/Normal/Listen-Only mode transitions
+with `transmitOwnedFrame` returning before any physical TX call. This checks
+the reproduced stack path on disconnected USB hardware without CAN traffic.
+It does not establish live-ECU transaction/caching acceptance. Diagnostic
+allowlist, finite lease, single owner, cache and fault rules are unchanged.

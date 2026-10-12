@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <type_traits>
 #include <esp_timer.h>
 
 #include "app_config.h"
@@ -9,6 +10,13 @@
 
 namespace m5can {
 namespace {
+
+void clearResult(DiagnosticResult& result) {
+  static_assert(std::is_trivially_copyable<DiagnosticResult>::value,
+                "result reset requires plain bounded data");
+  std::memset(static_cast<void*>(&result),0,sizeof(result));
+  result.status=DiagnosticStatus::NoData;
+}
 
 struct QueryActiveReset {
   QueryActiveReset(CanStats* stats_in, portMUX_TYPE* mux_in)
@@ -140,10 +148,16 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
 }
 
 void CanMonitor::rxTask() {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  // Actual runtime affinity, rather than assuming the requested pin worked.
+  Serial.printf("#CORE,task=can-owner,core=%d,priority=%u\n",
+                xPortGetCoreID(),static_cast<unsigned>(uxTaskPriorityGet(nullptr)));
+#endif
   while (running_) {
     DiagnosticRequest request{};
     if (xQueueReceive(query_queue_, &request, 0) == pdTRUE) {
-      DiagnosticResult result{};
+      DiagnosticResult& result=owner_result_;
+      clearResult(result);
       // Both BLE sessions must share one CAN owner. A second identical
       // read-only PID/DID request can reuse a validated <=100ms result,
       // avoiding another CAN TX and expensive TWAI mode transition.
@@ -151,7 +165,7 @@ void CanMonitor::rxTask() {
           result_cache_.lookup(
               request, static_cast<uint64_t>(esp_timer_get_time()), result);
       if (!from_cache) {
-        result = performQuery(request);
+        performQuery(request,result);
         result_cache_.remember(
             request, result, static_cast<uint64_t>(esp_timer_get_time()));
       }
@@ -286,6 +300,12 @@ void CanMonitor::enterFaultLocked(const char* reason) {
 
 esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
                                          uint32_t wait_ms) {
+#if defined(M5CAN_CAN_MODE_DRY_RUN)
+  // USB-only mode-switch stack regression: no call to the physical TX API.
+  (void)message;
+  (void)wait_ms;
+  return ESP_FAIL;
+#else
   portENTER_CRITICAL(&stats_mux_);
   ++stats_.tx_attempts;
   portEXIT_CRITICAL(&stats_mux_);
@@ -298,6 +318,7 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
     portEXIT_CRITICAL(&stats_mux_);
   }
   return result;
+#endif
 }
 
 twai_message_t CanMonitor::makeDiagnosticRequestFrame(
@@ -326,9 +347,8 @@ twai_message_t CanMonitor::makeFlowControlFrame(uint32_t can_id) {
   return tx;
 }
 
-DiagnosticResult CanMonitor::performQuery(
-    const DiagnosticRequest& request) {
-  DiagnosticResult result{};
+void CanMonitor::performQuery(
+    const DiagnosticRequest& request, DiagnosticResult& result) {
 
   portENTER_CRITICAL(&stats_mux_);
   stats_.query_active = true;
@@ -341,11 +361,11 @@ DiagnosticResult CanMonitor::performQuery(
 
   if (fault_locked_) {
     result.status = DiagnosticStatus::ModeError;
-    return result;
+    return;
   }
   if (!DiagnosticPolicy::allowedReadRequest(request)) {
     result.status = DiagnosticStatus::InvalidRequest;
-    return result;
+    return;
   }
 
   const uint32_t response_timeout_ms =
@@ -358,17 +378,17 @@ DiagnosticResult CanMonitor::performQuery(
 
   if (!leaseAllowsBudget(budget_ms)) {
     result.status = DiagnosticStatus::LeaseRequired;
-    return result;
+    return;
   }
   if (!waitForRateLimit(request) || !leaseAllowsBudget(budget_ms)) {
     result.status = DiagnosticStatus::LeaseRequired;
-    return result;
+    return;
   }
 
   if (!switchDriverMode(TWAI_MODE_NORMAL)) {
     enterFaultLocked("enter normal mode failed");
     result.status = DiagnosticStatus::ModeError;
-    return result;
+    return;
   }
 
   DiagnosticStatus terminal = DiagnosticStatus::NoData;
@@ -398,12 +418,12 @@ DiagnosticResult CanMonitor::performQuery(
     }
   }
 
-  DiagnosticTransaction transaction;
-  if (!terminal_set) {
-    transaction.begin(
-        request, tx_us,
-        static_cast<uint32_t>(cfg::kIsoTpCfTimeoutUs / 1000ULL));
-  }
+  DiagnosticTransaction& transaction=owner_transaction_;
+  // Reset even when TX failed: reused scratch must never retain an older
+  // transaction's positive response or raw frames on the error path.
+  transaction.begin(
+      request, tx_us,
+      static_cast<uint32_t>(cfg::kIsoTpCfTimeoutUs / 1000ULL));
 
   uint64_t deadline_us =
       tx_us + static_cast<uint64_t>(response_timeout_ms) * 1000ULL;
@@ -533,27 +553,38 @@ DiagnosticResult CanMonitor::performQuery(
       static_cast<uint32_t>(
           static_cast<uint64_t>(esp_timer_get_time()) -
           transaction_start_us);
-  return result;
+  return;
 }
 
 bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
-  if (!query_queue_ || !result_queue_ ||
-      fault_locked_ || query_in_flight_) {
-    return false;
-  }
+  if (!query_queue_ || !result_queue_) return false;
+  // Reserve the single in-flight slot atomically across USB and BLE callers.
+  // IMPORTANT: never call FreeRTOS queues while holding an ESP spinlock.
+  portENTER_CRITICAL(&query_mux_);
+  const bool accepted = !fault_locked_ && !query_in_flight_;
+  if (accepted) query_in_flight_ = true;
+  portEXIT_CRITICAL(&query_mux_);
+  if (!accepted) return false;
 
   DiagnosticResult stale{};
   while (xQueueReceive(result_queue_, &stale, 0) == pdTRUE) {}
+  if (xQueueSend(query_queue_, &request, 0) == pdTRUE) return true;
 
-  if (xQueueSend(query_queue_, &request, 0) != pdTRUE) return false;
-  query_in_flight_ = true;
-  return true;
+  portENTER_CRITICAL(&query_mux_);
+  query_in_flight_ = false;
+  portEXIT_CRITICAL(&query_mux_);
+  return false;
 }
 
 bool CanMonitor::pollQueryResult(DiagnosticResult& result) {
   if (!query_in_flight_ || !result_queue_) return false;
+  // A query is owned by the caller that successfully submitted it. The two
+  // DualBleElm sessions dispatch through one owner and the USB path submits
+  // only when that owner is idle. Do not block under the query spinlock.
   if (xQueueReceive(result_queue_, &result, 0) != pdTRUE) return false;
+  portENTER_CRITICAL(&query_mux_);
   query_in_flight_ = false;
+  portEXIT_CRITICAL(&query_mux_);
   return true;
 }
 
@@ -564,7 +595,9 @@ bool CanMonitor::query(const DiagnosticRequest& request,
   if (xQueueReceive(result_queue_, &result, wait_ticks) != pdTRUE) {
     return false;
   }
+  portENTER_CRITICAL(&query_mux_);
   query_in_flight_ = false;
+  portEXIT_CRITICAL(&query_mux_);
   return true;
 }
 

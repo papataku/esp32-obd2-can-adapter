@@ -3,6 +3,9 @@
 #include <Arduino.h>
 #include "can_monitor.h"
 #include "demo_touch_control.h"
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#include "ble_elm_transport.h"
+#endif
 
 namespace m5can {
 class Ui {
@@ -12,7 +15,11 @@ class Ui {
   bool pollDemoToggle();
   void update(const CanMonitor& can, bool ble_ready,
               bool ble_connected, bool ble_elm, bool demo_auto,
-              bool demo_active);
+              bool demo_active
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+              , const BlePeersSnapshot* peers = nullptr
+#endif
+              );
   void showFatal(const char* title, const char* detail);
 
  private:
@@ -25,6 +32,14 @@ class Ui {
   uint32_t frames_per_second_ = 0;
   uint32_t queries_per_second_x10_ = 0;
   uint32_t tx_per_second_x10_ = 0;
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  BlePeersSnapshot last_peers_{};
+  uint32_t last_peer_rate_ms_ = 0;
+  uint32_t peer_rx_bytes_per_sec_[2]{};
+  uint32_t peer_tx_bytes_per_sec_[2]{};
+  bool show_ble_peer_page_ = true;
+  char cached_lower_label_[32]{};
+#endif
 
   char cached_ble_[24]{};
   char cached_status_[24]{};

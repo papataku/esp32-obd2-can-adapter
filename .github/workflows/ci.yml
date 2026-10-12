@@ -37,6 +37,12 @@ jobs:
         run: pio run -e m5dial
       - name: Build two-client BLE opt-in bench
         run: pio run -e m5dial_dual_ble_bench
+      - name: Build matched MTU247 two-client bench
+        run: pio run -e m5dial_dual_ble_mtu_bench
+      - name: Build CAN mode-switch dry-run bench (physical TX disabled)
+        run: pio run -e m5dial_dual_ble_canmode_dry_bench
+      - name: Check compiler stack frame budgets
+        run: python tools/check_dual_stack.py m5dial m5dial_dual_ble_bench m5dial_dual_ble_mtu_bench m5dial_dual_ble_canmode_dry_bench
       - name: Upload M5Dial build artifacts (quota-dependent)
         continue-on-error: true
         uses: actions/upload-artifact@v4

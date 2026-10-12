@@ -2,13 +2,24 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-struct ble_gap_conn_desc { uint16_t conn_handle = 0; };
-struct os_mbuf {};
-inline os_mbuf* ble_hs_mbuf_from_flat(const void*,size_t) {
+#include <vector>
+struct ble_gap_conn_desc {
+  uint16_t conn_handle = 0;
+  struct { uint8_t val[6]{}; } peer_ota_addr{};
+};
+struct os_mbuf { size_t length=0; std::vector<uint8_t> data; };
+struct TestNotify {uint16_t conn; size_t length;std::vector<uint8_t> data;};
+inline std::vector<TestNotify> test_notifications;
+inline int test_notify_busy=0;
+inline constexpr int BLE_HS_ENOMEM=6, BLE_HS_EAGAIN=1, BLE_HS_EBUSY=15;
+inline os_mbuf* ble_hs_mbuf_from_flat(const void* data,size_t length) {
   static os_mbuf buffer;
+  buffer.length=length;
+  const auto* bytes=static_cast<const uint8_t*>(data);
+  buffer.data.assign(bytes,bytes+length);
   return &buffer;
 }
-inline int ble_gattc_notify_custom(uint16_t,uint16_t,os_mbuf*) { return 0; }
+inline int ble_gattc_notify_custom(uint16_t conn,uint16_t,os_mbuf* packet) { if(test_notify_busy>0){--test_notify_busy;return BLE_HS_ENOMEM;} test_notifications.push_back({conn,packet->length,packet->data}); return 0; }
 namespace NIMBLE_PROPERTY {
   static constexpr uint32_t WRITE = 1;
   static constexpr uint32_t WRITE_NR = 2;
@@ -30,9 +41,11 @@ class NimBLECharacteristicCallbacks {
 };
 class NimBLECharacteristic {
  public:
-  void setCallbacks(NimBLECharacteristicCallbacks*) {}
+  inline static NimBLECharacteristicCallbacks* callbacks=nullptr;
+  inline static std::string next_write_value;
+  void setCallbacks(NimBLECharacteristicCallbacks* c) {callbacks=c;}
   uint16_t getHandle() const {return 1;}
-  std::string getValue() const {return "";}
+  std::string getValue() const {return next_write_value;}
 };
 class NimBLEService {
  public:
@@ -50,7 +63,8 @@ class NimBLEAdvertising {
 };
 class NimBLEServer {
  public:
-  void setCallbacks(NimBLEServerCallbacks*) {}
+  inline static NimBLEServerCallbacks* callbacks=nullptr;
+  void setCallbacks(NimBLEServerCallbacks* c) {callbacks=c;}
   NimBLEService* createService(const char*) {
     static NimBLEService s;
     return &s;
