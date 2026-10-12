@@ -106,6 +106,13 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   "$ROOT/tests/test_dual_ble_transport.cpp" "$ROOT/src/ble_elm_transport.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-transport-test
 /tmp/m5can-dual-transport-test
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_ble_evidence_journal.cpp" "$ROOT/src/ble_evidence_journal.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-ble-evidence-journal-test
+/tmp/m5can-ble-evidence-journal-test
+echo "PASS BLE persisted disconnect/CRC/reboot/overflow and CAN-idle checkpoint"
+
 echo "PASS dual BLE targeted chunks and disconnect isolation"
 
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
