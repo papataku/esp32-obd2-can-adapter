@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstdint>
 #include "../src/diagnostic_result_cache.h"
+#include "../src/diagnostic_pid_cache.h"
 
 using namespace m5can;
 
@@ -21,6 +22,12 @@ int main() {
   valid.responses[0].data[1] = 0x0D;
   valid.responses[0].data[2] = 42;
   valid.raw_frame_count = 1;
+  valid.raw_frames[0].can_id = 0x18DAF101U;
+  valid.raw_frames[0].dlc = 8;
+  valid.raw_frames[0].data[0] = 3;
+  valid.raw_frames[0].data[1] = 0x41;
+  valid.raw_frames[0].data[2] = 0x0D;
+  valid.raw_frames[0].data[3] = 42;
   valid.transaction_us = 78000;
 
   DiagnosticResult reused{};
@@ -59,6 +66,15 @@ int main() {
   assert(!cache.lookup(unsafe, 540001, reused));
 
   cache.remember(speed, valid, 550000);
+  // A cache hit on CPU0 must preserve the ORIGINAL physical read time.
+  // Re-caching it on CPU1 cannot extend the 100ms freshness window.
+  assert(cache.lookup(speed,599999,reused));
+  assert(reused.completed_at_us==550000);
+  DiagnosticPidCache cross_cpu;
+  assert(cross_cpu.rememberSingle(speed,reused,reused.completed_at_us));
+  DiagnosticResult from_ble{};
+  assert(cross_cpu.lookup(speed,649999,from_ble));
+  assert(!cross_cpu.lookup(speed,650000,from_ble));
   cache.clear();
   assert(!cache.lookup(speed, 550001, reused));
 }
