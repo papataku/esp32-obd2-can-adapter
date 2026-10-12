@@ -113,6 +113,33 @@ int main() {
   assert(multi.remainingUs(speed,t+1000)==49000);
   assert(multi.remainingUs(combined,t+1000)==49000);
   assert(multi.remainingUs(combined,t+50000)==0);
+  // Grouped capacity regression: 31 unrelated active keys leave only
+  // ONE slot; both constituents are new and MUST NOT silently bypass
+  // the second PID's 50ms history.
+  DiagnosticRequestPacer near_full{};
+  for (unsigned i=0;i<DiagnosticRequestPacer::kSlots-1;++i) {
+    auto distinct=req(functional_obd,0x01,static_cast<uint8_t>(0x60+i));
+    near_full.noteSuccessfulTx(distinct,t);
+  }
+  assert(near_full.remainingUs(combined,t+100)==49900);
+  assert(near_full.remainingUs(combined,t+50000)==0);
+  near_full.noteSuccessfulTx(combined,t+50000);
+  assert(near_full.remainingUs(rpm,t+50001)==49999);
+  assert(near_full.remainingUs(speed,t+50001)==49999);
+
+  // An expired RPM entry is reserved for RPM and must not be mistaken
+  // for an available slot to add speed.
+  DiagnosticRequestPacer reserved{};
+  reserved.noteSuccessfulTx(rpm,t);
+  for (unsigned i=0;i<DiagnosticRequestPacer::kSlots-1;++i) {
+    auto distinct=req(functional_obd,0x01,static_cast<uint8_t>(0x60+i));
+    reserved.noteSuccessfulTx(distinct,t+10000);
+  }
+  assert(reserved.remainingUs(combined,t+50000)==10000);
+  assert(reserved.remainingUs(combined,t+60000)==0);
+  reserved.noteSuccessfulTx(combined,t+60000);
+  assert(reserved.remainingUs(speed,t+60001)==49999);
+
   std::cout << "PASS per-PID/DID diagnostic pacing and safe bounded table\n";
   return 0;
 }
