@@ -144,7 +144,14 @@ class DiagnosticPidCache {
 
   static bool trackable(const DiagnosticRequest& request) {
     // Intentional: only the Mode 01 PID set, not a compound CAN payload.
-    return request.can_id == 0x18DB33F1U &&
+    // Require an established fixed PID payload format. A service-01
+    // allowlist alone does NOT establish the response length of unknown PIDs.
+    // Mode01 0x9A and variable manufacturer data remain uncached until
+    // their precise length/ECU identity is independently established.
+    const uint8_t pid=request.data[1];
+    const bool known=(pid==0x0C || pid==0x0D ||
+                      pid==0x05 || pid==0x5B);
+    return known && request.can_id == 0x18DB33F1U &&
            request.length == 2 && request.data[0] == 0x01 &&
            DiagnosticPolicy::allowedReadRequest(request);
   }
@@ -168,12 +175,8 @@ class DiagnosticPidCache {
                            const DiagnosticMessage& message) {
     // For the 4 known meter PIDs the payload length is fixed. Never
     // cache a truncated RPM (missing its second byte) as a fresh sample.
-    uint16_t exact_length=0;
-    if (request.data[1]==0x0C) exact_length=4;
-    if (request.data[1]==0x0D || request.data[1]==0x05 ||
-        request.data[1]==0x5B) exact_length=3;
-    return message.length >= 3 && message.length <= kDiagnosticMaxPayload &&
-           (exact_length==0 || message.length==exact_length) &&
+    const uint16_t exact_length=request.data[1]==0x0C?4U:3U;
+    return message.length == exact_length &&
            message.data[0] == 0x41 &&
            message.data[1] == request.data[1] &&
            DiagnosticPolicy::responseBelongsToRequest(request,message.can_id) &&
@@ -190,6 +193,14 @@ class DiagnosticPidCache {
     Entry* oldest = &entries_[0];
     for (auto& e : entries_) {
       if (e.valid && sameKey(e.request,request)) {
+        // A functional address must not silently switch responders.
+        // Invalidate on unexpected ECU provenance, rather than treating
+        // a different ECU's value as the same physical signal.
+        if (e.message.can_id != message.can_id) {
+          e.valid=false;
+          ++stats_.invalidations;
+          return false;
+        }
         chosen = &e;
         break;
       }
