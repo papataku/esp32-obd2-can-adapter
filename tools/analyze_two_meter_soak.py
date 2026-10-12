@@ -61,10 +61,17 @@ def analyze(root):
             if match and re.fullmatch(r'POLL \d+ enabled=[01] period=\d+ ok=\d+ timeout=\d+ error=\d+ latency=\d+', line):
                 for k in ['ok', 'timeout', 'error']:
                     counters.setdefault(device+':poll'+match[1]+':'+k, []).append((row['monotonic'], int(d[k])))
+                series.setdefault(device+':poll'+match[1]+':latency_ms', []).append(int(d['latency']))
             else: invalid('poll')
+        if line.startswith('M5CAN PID '):
+            match = re.fullmatch(r'M5CAN PID (\d+) target=(\d+)Hz actual=([0-9.]+)Hz missed=(\d+)', line)
+            if match:
+                series.setdefault(device+':poll'+match[1]+':reported_hz', []).append(float(match[3]))
+                counters.setdefault(device+':poll'+match[1]+':missed', []).append((row['monotonic'], int(match[4])))
+            else: invalid('pid_rate')
         if line.startswith(('BLE_HEALTH ', '#MEMORY,', '#BLE_TASK,')):
             for k in ['internal_free', 'internal_min', 'largest', 'stack_min_free', 'stack_free_bytes',
-                      'can_stack_free_bytes', 'rx_dropped', 'connected']:
+                      'can_stack_free_bytes', 'rx_dropped', 'connected', 'poll_peak_us', 'ui_loop_peak_us']:
                 if k in d and d[k].isdigit():
                     series.setdefault(device+':'+k, []).append(int(d[k]))
         if line.startswith('FPS '):
@@ -87,6 +94,15 @@ def analyze(root):
                       'updates_delta': delta, 'hz': round(delta/(end-start), 3) if end > start and delta >= 0 else None,
                       'max_age_ms': max(int(d['age_ms']) for _, d in samples),
                       'qualities': sorted(set(int(d['quality']) for _, d in samples))}
+        windows = []
+        for offset in range(0, int(end-lo), 300):
+            subset = [(t, d) for t, d in samples if lo+offset <= t < lo+offset+300]
+            if len(subset) < 2: continue
+            first, a = subset[0]; last, b = subset[-1]
+            if last > first:
+                windows.append({'offset_s': offset, 'sample_s': round(last-first, 3),
+                                'hz': round((int(b['updates'])-int(a['updates']))/(last-first), 3)})
+        rates[key]['five_minute_windows'] = windows
     traffic = {}
     for key, samples in peers.items():
         start, a = samples[0]; end, b = samples[-1]

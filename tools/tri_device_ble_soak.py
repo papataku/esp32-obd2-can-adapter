@@ -85,6 +85,23 @@ def capture(args):
         if args.isolate_jc and 'jc' in links:send('jc','x')
         if args.isolate_ring or args.ring_after_ipad:send('ring','x')
         time.sleep(2)
+        if args.meter_order:
+            if not args.require_two_meters or 'jc' not in links or args.isolate_ring or args.isolate_jc or args.ipad_device:
+                raise RuntimeError('meter order requires two meters without iPad/isolation')
+            send('ring','x');send('jc','x')
+            deadline=time.monotonic()+15
+            while time.monotonic()<deadline and latest.get('dual',{}).get('clients')!='0':time.sleep(.1)
+            if latest.get('dual',{}).get('clients')!='0':raise RuntimeError('both meters must disconnect before ordered connect')
+            first,second=('ring','jc') if args.meter_order=='ring-first' else ('jc','ring')
+            send(first,'c');deadline=time.monotonic()+20
+            while time.monotonic()<deadline and latest.get('dual',{}).get('clients')!='1':time.sleep(.1)
+            if latest.get('dual',{}).get('clients')!='1':raise RuntimeError('first actual peer not confirmed')
+            # Allow ELM setup before the second peer; c is never sent while up.
+            time.sleep(3);send(second,'c');deadline=time.monotonic()+20
+            while time.monotonic()<deadline and latest.get('dual',{}).get('clients')!='2':time.sleep(.1)
+            if latest.get('dual',{}).get('clients')!='2':raise RuntimeError('second actual peer not confirmed')
+            time.sleep(8)
+            manifest['meter_order']=args.meter_order
         if args.meter_bench_preset:
             # DEMO has already been verified. Only the volatile existing
             # single-byte meter commands are allowed; never change NVS rates.
@@ -197,6 +214,7 @@ def main():
     for name in ['adapter','ring','output']:p.add_argument('--'+name,required=True)
     p.add_argument('--meter-sha',default='unknown')
     p.add_argument('--meter-bench-preset',choices=['moderate','high'])
+    p.add_argument('--meter-order',choices=['ring-first','jc-first'])
     p.add_argument('--require-two-meters',action='store_true');p.add_argument('--export-evidence',action='store_true')
     p.add_argument('--ipad-delay-ms',type=float,default=200);p.add_argument('--ipad-positive-repeats',type=int,default=1)
     p.add_argument('--ipad-device');p.add_argument('--ipad-scenario',choices=['idle','single','batch','no-data','faults'],default='batch');p.add_argument('--ipad-seconds',type=float,default=1800)
