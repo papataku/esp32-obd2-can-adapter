@@ -11,6 +11,12 @@ bool DiagnosticPolicy::allowedHeader(uint32_t can_id) {
 
 bool DiagnosticPolicy::allowedReadRequest(const DiagnosticRequest& request) {
   if (!allowedHeader(request.can_id)) return false;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  // Opt-in, exact read-only two-PID pilot. No arbitrary Mode01 payloads.
+  if (request.can_id == 0x18DB33F1U &&
+      request.length == 3 && request.data[0] == 0x01 &&
+      request.data[1] == 0x0C && request.data[2] == 0x0D) return true;
+#endif
   if (request.can_id == 0x18DA01F1U) {
     // The narrowly-scoped physical address is UDS 0x22 read only.
     return request.length == 3 && request.data[0] == 0x22;
@@ -45,6 +51,17 @@ bool DiagnosticPolicy::responseMatches(const DiagnosticRequest& request,
   if (payload[0] == 0x7F) {
     return payload_len >= 2 && payload[1] == service;
   }
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  if (service == 0x01 && request.length == 3 &&
+      request.can_id == 0x18DB33F1U &&
+      request.data[1] == 0x0C && request.data[2] == 0x0D) {
+    // For a multi-PID reply, validate full contents only AFTER reassembly.
+    // This filter accepts an initial ISO-TP frame only when it belongs to a
+    // requested PID. An unrelated tester's FF must never receive our FC.
+    return payload_len >= 2 && payload[0] == 0x41 &&
+           (payload[1] == 0x0C || payload[1] == 0x0D);
+  }
+#endif
   if (service == 0x01 || service == 0x09) {
     return payload_len >= 2 &&
            payload[0] == static_cast<uint8_t>(service + 0x40) &&

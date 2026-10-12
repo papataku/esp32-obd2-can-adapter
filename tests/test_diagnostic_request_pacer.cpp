@@ -102,6 +102,17 @@ int main() {
     fast.noteSuccessfulTx(sample,time);
     time+=16667;
   }
+  // Grouped requests must not evade the individual PID 50ms minimum.
+  DiagnosticRequestPacer multi{};
+  auto combined=rpm;
+  combined.length=3;
+  combined.data[2]=0x0D;
+  assert(multi.remainingUs(combined,t)==0);
+  multi.noteSuccessfulTx(combined,t);
+  assert(multi.remainingUs(rpm,t+1000)==49000);
+  assert(multi.remainingUs(speed,t+1000)==49000);
+  assert(multi.remainingUs(combined,t+1000)==49000);
+  assert(multi.remainingUs(combined,t+50000)==0);
   std::cout << "PASS per-PID/DID diagnostic pacing and safe bounded table\n";
   return 0;
 }

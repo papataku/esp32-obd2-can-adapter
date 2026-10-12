@@ -24,6 +24,14 @@ class DiagnosticRequestPacer {
 
   uint64_t remainingUs(const DiagnosticRequest& request,
                        uint64_t now_us) const {
+    if (grouped(request)) {
+      // Preserve the established 50ms PER-PID guard even via grouped TX.
+      const DiagnosticRequest rpm = singleFromGroup(request, 0x0C);
+      const DiagnosticRequest speed = singleFromGroup(request, 0x0D);
+      const uint64_t a = remainingUs(rpm, now_us);
+      const uint64_t b = remainingUs(speed, now_us);
+      return a > b ? a : b;
+    }
     if (!trackable(request)) return 0;
     const uint64_t key = requestKey(request);
     bool has_free_slot = false;
@@ -51,6 +59,11 @@ class DiagnosticRequestPacer {
   // attempt or for unapproved requests. Caller must first check remainingUs.
   void noteSuccessfulTx(const DiagnosticRequest& request,
                         uint64_t timestamp_us) {
+    if (grouped(request)) {
+      noteSuccessfulTx(singleFromGroup(request, 0x0C), timestamp_us);
+      noteSuccessfulTx(singleFromGroup(request, 0x0D), timestamp_us);
+      return;
+    }
     if (!trackable(request)) return;
     const uint64_t key = requestKey(request);
     Entry* reusable = nullptr;
@@ -78,6 +91,21 @@ class DiagnosticRequestPacer {
     uint64_t sent_us = 0;
     bool valid = false;
   };
+
+  static bool grouped(const DiagnosticRequest& request) {
+    return request.can_id == 0x18DB33F1U && request.length == 3 &&
+           request.data[0] == 0x01 && request.data[1] == 0x0C &&
+           request.data[2] == 0x0D;
+  }
+
+  static DiagnosticRequest singleFromGroup(const DiagnosticRequest& group,
+                                           uint8_t pid) {
+    DiagnosticRequest item = group;
+    item.length = 2;
+    item.data[1] = pid;
+    item.data[2] = 0;
+    return item;
+  }
 
   static bool trackable(const DiagnosticRequest& request) {
     const uint32_t can_id = request.can_id;

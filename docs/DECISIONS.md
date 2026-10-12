@@ -192,3 +192,32 @@ with `transmitOwnedFrame` returning before any physical TX call. This checks
 the reproduced stack path on disconnected USB hardware without CAN traffic.
 It does not establish live-ECU transaction/caching acceptance. Diagnostic
 allowlist, finite lease, single owner, cache and fault rules are unchanged.
+## D019 - Experimental probe-once multi-PID CAN request with failback
+
+**Decision:** An opt-in dual-BLE firmware may test only the known read-only
+Mode 01 pair `010C,010D` as one `01 0C 0D` CAN transaction. The first
+eligible real-CAN batch probes the pair once. A complete matching positive
+reply from one ECU enables grouping for the remainder of the boot. Any
+negative, incomplete, malformed, timed-out or ISO-TP-failed reply disables
+grouping and falls back to the previous individual PID path for the rest of
+the boot. Driver/lease/BUS-OFF faults never trigger speculative fallback TX.
+
+**Preserved invariants:** Normal builds retain existing request forms; the
+same-PID 50ms pacing is enforced for *each* constituent of a grouped query.
+Read-only allowlists, lease checks, query ownership, response affiliation,
+bounded ISO-TP, CAN fault locking, per-connection BLE isolation and RAW CAN
+logging remain in force. Logical split ELM replies must never be interpreted
+as actual RAW CAN frame evidence.
+
+**Follow-up:** Only expand beyond RPM+speed after controlled ECU replay/bench
+results. Multiple UDS DIDs require separately verified record boundaries.
+See [adaptive_multipid_pilot.md](adaptive_multipid_pilot.md).
+
+## D020 - Grouped CAN pilot requires a separate build opt-in
+
+The PR15 host scheduler tests and USB DEMO checks cannot qualify physical CAN
+behavior. Keep the exact grouped read allowlist behind
+`M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL` in the separate
+`m5dial_dual_ble_multipid_bench` profile. Existing dual-client stable profiles
+continue individual queries. Merge the tested implementation without advancing
+the physical CAN or vehicle acceptance gate; those remain pending.

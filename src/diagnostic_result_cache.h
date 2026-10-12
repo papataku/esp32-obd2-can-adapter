@@ -18,6 +18,9 @@ class DiagnosticResultCache {
 
   bool lookup(const DiagnosticRequest& request, uint64_t now_us,
               DiagnosticResult& result) const {
+    // Group replies are decoded and validated by the adaptive group
+    // classifier; never reuse a partial response as a positive cache hit.
+    if (request.length == 3 && request.data[0] == 0x01) return false;
     if (!DiagnosticPolicy::allowedReadRequest(request)) return false;
     for (const auto& e : entries_) {
       if (!e.valid || !sameKey(e.request, request)) continue;
@@ -34,6 +37,7 @@ class DiagnosticResultCache {
 
   void remember(const DiagnosticRequest& request, const DiagnosticResult& result,
                 uint64_t completed_us) {
+    if (request.length == 3 && request.data[0] == 0x01) return;
     if (!DiagnosticPolicy::allowedReadRequest(request)) return;
     Entry* chosen = nullptr;
     Entry* oldest = &entries_[0];

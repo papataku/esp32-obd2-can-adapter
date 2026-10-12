@@ -61,6 +61,30 @@ g++ -std=c++17 -Wall -Wextra -Werror \
   -o /tmp/m5can-diagnostic-cache-test
 /tmp/m5can-diagnostic-cache-test
 
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_adaptive_multi_pid.cpp" \
+  "$ROOT/src/diagnostic_transaction.cpp" "$ROOT/src/isotp_reassembler.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-adaptive-multipid-test
+/tmp/m5can-adaptive-multipid-test
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_adaptive_multipid_pipeline.cpp" \
+  "$ROOT/src/elm_compat.cpp" "$ROOT/src/elm_response_formatter.cpp" \
+  "$ROOT/src/diagnostic_transaction.cpp" "$ROOT/src/isotp_reassembler.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-adaptive-multipid-pipeline-test
+/tmp/m5can-adaptive-multipid-pipeline-test
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_diagnostic_policy.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-dual-policy-test
+/tmp/m5can-dual-policy-test
+
 echo "PASS all Phase 3C firmware translation units + demo drive + screen toggle"
 
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
@@ -77,3 +101,21 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-mtu-transport-test
 /tmp/m5can-dual-mtu-transport-test
 echo "PASS opt-in 244-byte unicast and exact retry payload ordering"
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_dual_ble_adaptive.cpp" "$ROOT/src/dual_ble_elm.cpp" \
+  "$ROOT/src/ble_elm_transport.cpp" "$ROOT/src/elm_compat.cpp" \
+  "$ROOT/src/elm_response_formatter.cpp" "$ROOT/src/diagnostic_transaction.cpp" \
+  "$ROOT/src/isotp_reassembler.cpp" "$ROOT/src/diagnostic_policy.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-adaptive-test
+/tmp/m5can-dual-adaptive-test
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_dual_ble_adaptive.cpp" "$ROOT/src/dual_ble_elm.cpp" \
+  "$ROOT/src/ble_elm_transport.cpp" "$ROOT/src/elm_compat.cpp" \
+  "$ROOT/src/elm_response_formatter.cpp" "$ROOT/src/diagnostic_transaction.cpp" \
+  "$ROOT/src/isotp_reassembler.cpp" "$ROOT/src/diagnostic_policy.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-legacy-test
+/tmp/m5can-dual-legacy-test

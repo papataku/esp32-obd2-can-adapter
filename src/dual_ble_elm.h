@@ -4,6 +4,7 @@
 #include "can_monitor.h"
 #include "elm_compat.h"
 #include "demo_drive.h"
+#include "adaptive_multi_pid.h"
 
 namespace m5can {
 class SerialProtocol;
@@ -31,6 +32,7 @@ class DualBleElm {
     size_t output_size = 0;
     bool pending = false;
     bool batch = false;
+    bool multi_pid_pair = false;
     uint8_t batch_next = 0;
     uint8_t batch_count = 0;
     ElmVehicleRequest items[ElmResult::kBatchMaxIDs]{};
@@ -52,6 +54,7 @@ class DualBleElm {
   static DiagnosticRequest requestOf(const ElmVehicleRequest& item,
                                      const ElmCompat& elm);
 
+  AdaptiveMultiPid adaptive_multi_pid_{};
   CanMonitor& can_;
   BleElmTransport& ble_;
   SerialProtocol& demo_source_;
