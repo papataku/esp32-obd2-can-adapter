@@ -63,7 +63,8 @@ python tools/tri_device_ble_soak.py \
   --adapter /dev/cu.ADAPTER --ring /dev/cu.RING --jc /dev/cu.JC \
   --output /private/path/unique-run --seconds 1845 \
   --scenario ipad-ring-batch --demo-auto --isolate-jc \
-  --fw-sha EXACT_SOURCE --app-sha EXACT_APP_SOURCE
+  --fw-sha EXACT_SOURCE --app-sha EXACT_APP_SOURCE \
+  --ipad-device DEVICE --ipad-scenario batch --ipad-seconds 1800
 ```
 
 DEMO AUTO must reply active=YES; otherwise capture stops and no experiment is
@@ -72,6 +73,12 @@ DEMO on a live bus. Do not connect a vehicle for unattended testing. Ring's
 runtime starts after the splash; isolation commands are delayed until it can
 accept them. Save settings before experimentation and restore the prior
 DEMO/client configuration after testing. Current baseline was DEMO OFF.
+
+With --ipad-device, the runner launches the already installed companion AFTER
+DEMO verification, keeps both ports open for the whole window and retrieves its
+SQLite/JSONL at the end. Launch failure is reported explicitly; no unlock bypass
+or automatic approval is attempted. Capture duration must exceed app duration
+by at least30s. Manual launch is also available:
 
 The iPad companion debug-only app in the Honda Analyzer issue branch accepts:
 
@@ -117,3 +124,15 @@ Full physical acceptance remains single and combined30min x3 repetitions,
 idle/single/batch and controlled fault scenarios, unknown disconnect0,
 reboot0, no response mixing, SQLite ok, and fresh per-PID samples. CI/DEMO
 does not establish real CAN/vehicle acceptance.
+
+Offline analysis:
+
+```sh
+python tools/analyze_tri_device_soak.py --capture RUN_DIR \
+  --ipad-jsonl RUN_DIR/ipad-bundle/RUN_ID.jsonl \
+  --ipad-db RUN_DIR/ipad-bundle/RUN_ID.sqlite3 --output RUN_DIR/analysis
+```
+
+This reports the measured window, latency percentiles, resets/disconnects,
+per-PID updates/age and per-peer throughput. Missing coverage remains unknown;
+the script does not issue a blanket physical PASS.

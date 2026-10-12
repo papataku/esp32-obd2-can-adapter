@@ -2,6 +2,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import json
+import tempfile
 spec=importlib.util.spec_from_file_location('tri_device_ble_soak',Path(__file__).resolve().parents[1]/'tools/tri_device_ble_soak.py')
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 class SoakParser(unittest.TestCase):
@@ -17,4 +19,20 @@ class SoakParser(unittest.TestCase):
   self.assertEqual(out['reboots'][0]['device'],'ring')
   self.assertEqual(out['notify_failures'],2)
   self.assertEqual(out['last_peers'],{})
+class EvidenceWindow(unittest.TestCase):
+ def test_missing_capture_never_becomes_full_physical_pass(self):
+  spec=importlib.util.spec_from_file_location('analyze',Path(__file__).resolve().parents[1]/'tools/analyze_tri_device_soak.py')
+  analyzer=importlib.util.module_from_spec(spec);spec.loader.exec_module(analyzer)
+  with tempfile.TemporaryDirectory() as directory:
+   p=Path(directory)
+   (p/'mac_events.jsonl').write_text(json.dumps({'utc':'2026-10-12T00:00:02Z','device':'ring','line':'M5CAN SIGNAL id=0 updates=9 age_ms=30 quality=1'})+'\n')
+   app=[{'utc':'2026-10-12T00:00:00Z','kind':'DEMO_VERIFIED','note':'MODE=DEMO'}, {'utc':'2026-10-12T00:00:01Z','kind':'SAMPLE','note':'latency_ms=60'}, {'utc':'2026-10-12T00:00:30Z','kind':'SOAK_END','note':'failed=false'}]
+   (p/'app.jsonl').write_text('\n'.join(json.dumps(x) for x in app))
+   result=analyzer.run_analysis(p,p/'app.jsonl')
+   self.assertTrue(result['app_complete'])
+   self.assertEqual(result['samples'],1)
+   self.assertEqual(result['latency_ms']['p95'],60)
+   self.assertIsNone(result['signals']['ring:0']['actual_hz'])
+   self.assertFalse(result['full_host_coverage'])
+   self.assertNotIn('physical_pass',result)
 if __name__=='__main__':unittest.main()

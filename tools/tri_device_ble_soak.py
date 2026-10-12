@@ -4,7 +4,7 @@
 No arbitrary CAN/ELM commands are supported. --demo-auto requests the existing
 USB DEMO AUTO setting and verifies active=YES before the measurement starts.
 """
-import argparse, csv, datetime, json, re, threading, time
+import argparse, csv, datetime, json, re, subprocess, threading, time
 from pathlib import Path
 
 
@@ -26,6 +26,10 @@ def capture(args):
         p=ports.get(port)
         if not p or p.serial_number!=expected[name] or (p.vid,p.pid)!=(0x303a,0x1001):raise RuntimeError('USB identity mismatch: '+name)
         manifest['devices'][name]={'port':port,'serial':p.serial_number,'vid':p.vid,'pid':p.pid}
+    if args.ipad_device:
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',output.name):raise RuntimeError('unsafe app run ID')
+        if args.seconds < args.ipad_seconds + 30:raise RuntimeError('capture must exceed iPad duration by at least30s')
+        manifest['devices']['ipad']={'identifier':args.ipad_device,'bundle':'com.papataku.HondaAnalyzer'}
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
     stop=threading.Event();lock=threading.Lock();latest={};rows=[];links={};errors=[]
     events=(output/'mac_events.jsonl').open('w',buffering=1)
@@ -74,6 +78,14 @@ def capture(args):
         time.sleep(2)
         started=time.monotonic();manifest['measurement_start_monotonic']=started
         (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
+        if args.ipad_device:
+            launch=['xcrun','devicectl','device','process','launch','--device',args.ipad_device,
+                    '--terminate-existing','com.papataku.HondaAnalyzer','--ble-soak',
+                    '--soak-scenario',args.ipad_scenario,'--soak-seconds',str(args.ipad_seconds),
+                    '--soak-run-id',output.name,'--timeout','15','--json-output',str(output/'ipad-launch.json')]
+            completed=subprocess.run(launch,capture_output=True,text=True,timeout=20)
+            (output/'ipad-launch.log').write_text(completed.stdout+completed.stderr)
+            if completed.returncode:raise RuntimeError('iPad launch blocked; inspect ipad-launch.log and request required unlock/approval')
         end=started+args.seconds;next_status=0
         while time.monotonic()<end:
             if errors:raise RuntimeError(str(errors))
@@ -88,6 +100,13 @@ def capture(args):
         for thread in threads:thread.join(timeout=1)
         for link in links.values():link.close()
         events.close()
+    if args.ipad_device:
+        copy=['xcrun','devicectl','device','copy','from','--device',args.ipad_device,
+              '--domain-type','appDataContainer','--domain-identifier','com.papataku.HondaAnalyzer',
+              '--source','Documents/BLESoak','--destination',str(output/'ipad-bundle'),'--timeout','30']
+        completed=subprocess.run(copy,capture_output=True,text=True,timeout=35)
+        (output/'ipad-copy.log').write_text(completed.stdout+completed.stderr)
+        if completed.returncode:errors.append('iPad evidence export failed')
     measured=[r for r in rows if r['monotonic']>=manifest.get('measurement_start_monotonic',float('inf'))]
     metrics=analyze(measured);metrics['capture_errors']=errors
     (output/'metrics.json').write_text(json.dumps(metrics,indent=2))
@@ -113,10 +132,12 @@ def analyze(rows):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ['adapter','ring','output']:p.add_argument('--'+name,required=True)
+    p.add_argument('--ipad-device');p.add_argument('--ipad-scenario',choices=['idle','single','batch'],default='batch');p.add_argument('--ipad-seconds',type=float,default=1800)
     p.add_argument('--jc');p.add_argument('--seconds',type=float,default=60)
     p.add_argument('--scenario',default='smoke');p.add_argument('--fw-sha',default='unknown');p.add_argument('--app-sha',default='unknown')
     p.add_argument('--demo-auto',action='store_true');p.add_argument('--isolate-jc',action='store_true');p.add_argument('--isolate-ring',action='store_true')
     a=p.parse_args()
     if not 1<=a.seconds<=10800:p.error('seconds must be in 1..10800')
+    if not 1<=a.ipad_seconds<=3600:p.error('iPad duration must be in1..3600')
     capture(a)
 if __name__=='__main__':main()
