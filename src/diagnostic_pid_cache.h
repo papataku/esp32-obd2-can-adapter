@@ -163,7 +163,14 @@ class DiagnosticPidCache {
   }
   static bool validMessage(const DiagnosticRequest& request,
                            const DiagnosticMessage& message) {
+    // For the 4 known meter PIDs the payload length is fixed. Never
+    // cache a truncated RPM (missing its second byte) as a fresh sample.
+    uint16_t exact_length=0;
+    if (request.data[1]==0x0C) exact_length=4;
+    if (request.data[1]==0x0D || request.data[1]==0x05 ||
+        request.data[1]==0x5B) exact_length=3;
     return message.length >= 3 && message.length <= kDiagnosticMaxPayload &&
+           (exact_length==0 || message.length==exact_length) &&
            message.data[0] == 0x41 &&
            message.data[1] == request.data[1] &&
            DiagnosticPolicy::responseBelongsToRequest(request,message.can_id) &&
