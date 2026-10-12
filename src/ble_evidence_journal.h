@@ -4,6 +4,7 @@
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
+#include "diagnostic_error_catalog.h"
 
 namespace m5can {
 
@@ -16,6 +17,7 @@ class BleEvidenceJournal {
   static constexpr uint16_t kVersion=1;
   static constexpr unsigned kBootSlots=8;
   static constexpr unsigned kEvents=24;
+  static constexpr unsigned kFaultBuckets=32;
 
   struct Entry {
     uint32_t seq=0,ms=0,gen=0;
@@ -24,22 +26,35 @@ class BleEvidenceJournal {
     uint8_t kind=0,reason_known=0;
     uint16_t reserved=0;
     uint32_t retries=0,failed=0;
+    uint16_t code=0,reserved2=0;
+    uint32_t detail=0;
     uint64_t rx_bytes=0,tx_bytes=0;
+  };
+  struct FaultSummary {
+    uint16_t code=0,reserved=0;
+    uint32_t count=0,first_ms=0,last_ms=0,last_detail=0;
   };
   struct Record {
     uint32_t magic=kMagic;
     uint16_t version=kVersion,bytes=sizeof(Record);
     uint32_t crc=0,boot=0,saves=0,total=0,evicted=0,queue_drops=0;
     uint32_t first_seq=0,last_seq=0,seq_gaps=0;
+    uint32_t unknown_faults=0,storage_errors=0;
     uint8_t count=0,overflow=0;
     uint16_t reserved=0;
     char build[40]{};
     Entry events[kEvents]{};
+    FaultSummary faults[kFaultBuckets]{};
   };
   static_assert(sizeof(Record)<4096,"BLE evidence NVS record too large");
   void begin(uint32_t boot,const char* build);
   void append(const BleDiagnosticEvent& event,uint32_t queue_drops);
   void observeQueueDrops(uint32_t drops);
+  // Snapshot monotonic driver/transport counters. Includes failures that
+  // happen on CPU0 independently of BLE requests.
+  void observeHealth(const CanStats& can,const BleStats& ble);
+  void appendError(DiagnosticError code,uint32_t detail=0,
+                   uint32_t timestamp_ms=0);
   bool poll(CanMonitor& can);
   bool saved() const {return !dirty_ && persisted_;}
   // USB retrieval intentionally refuses active peers/CAN reads. A long
@@ -52,9 +67,13 @@ class BleEvidenceJournal {
   static bool load(unsigned slot,Record& data);
   static bool canExport(CanMonitor& can,BleElmTransport& ble);
   static void print(const Record& data,bool persisted);
+  void recordFault(uint16_t code,uint32_t detail,uint32_t at_ms);
   Record record_{},scratch_{};
   bool started_=false,dirty_=false,persisted_=false,urgent_=false;
   uint32_t last_attempt_ms_=0,last_success_ms_=0;
+  CanStats last_can_{};
+  BleStats last_ble_{};
+  bool health_initialized_=false;
 };
 BleEvidenceJournal& bleEvidenceJournal();
 
