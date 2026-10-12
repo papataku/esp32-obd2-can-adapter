@@ -106,7 +106,8 @@ void loop() {
   for (unsigned n=0;n<8 && g_ble.pollDiagnostic(event);++n) {
     m5can::bleEvidenceJournal().append(event,g_ble.diagnosticDrops());
     const char* kind=event.kind==m5can::BleDiagnosticEvent::Kind::Connect ? "CONNECT"
-        : event.kind==m5can::BleDiagnosticEvent::Kind::Disconnect ? "DISCONNECT" : "REJECT";
+        : event.kind==m5can::BleDiagnosticEvent::Kind::Disconnect ? "DISCONNECT"
+        : event.kind==m5can::BleDiagnosticEvent::Kind::Reject ? "REJECT" : "ERROR";
     Serial.printf("#BLE_EVENT,kind=%s,seq=%lu,ms=%lu,id=%u,gen=%lu,addr=%04X,reason_known=%u,reason=%d,mtu=%u,interval=%u,latency=%u,supervision=%u,rx=%llu,tx=%llu,retries=%lu,failed=%lu,drops=%lu\n",
         kind,static_cast<unsigned long>(event.sequence),static_cast<unsigned long>(event.uptime_ms),
         event.connection_id,static_cast<unsigned long>(event.generation),event.address_suffix,
@@ -134,6 +135,9 @@ void loop() {
   if (millis()-last_dual_stats>=5000) {
     last_dual_stats=millis();
     const auto stats=g_ble.stats();
+    // Counter snapshots catch CAN owner and GATT failures even when an
+    // individual event ring overflows; compare monotonic counters.
+    m5can::bleEvidenceJournal().observeHealth(g_can.stats(),stats);
     Serial.printf("#BLE_DUAL,clients=%u,rx_overflow=%lu,notify=%lu,retries=%lu,failed=%lu\n",
         g_ble.connectedClientCount(),static_cast<unsigned long>(stats.rx_overflow),
         static_cast<unsigned long>(stats.targeted_notifications),
