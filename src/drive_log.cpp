@@ -51,8 +51,10 @@ void DriveLog::recordFirstProbe(uint16_t peer,const DiagnosticResult& result,
     probe_.raw_saved=result.raw_frame_count<kDiagnosticMaxRawFrames ?
         result.raw_frame_count : kDiagnosticMaxRawFrames;
     probe_.truncated=result.raw_frame_count>=kDiagnosticMaxRawFrames;
-    for(unsigned i=0;i<probe_.raw_saved;++i)
+    for(unsigned i=0;i<probe_.raw_saved;++i) {
       probe_.raw[i]=result.raw_frames[i];
+      probe_.rx_offset_us[i]=result.raw_rx_offsets_us[i];
+    }
     probe_present_=true;probe_dirty_=true;probe_saved_=false;
     // Permit the next idle Arduino-loop checkpoint immediately.
     probe_last_attempt_ms_=0;
@@ -331,7 +333,7 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
         Serial.printf("#DRIVELOG,PROBE_RAW,boot=%lu,index=%u,id=%08lX,dlc=%u,rx_tx_us=%lu,data=",
             static_cast<unsigned long>(seq),i,
             static_cast<unsigned long>(f.can_id),f.dlc,
-            static_cast<unsigned long>(f.rx_offset_us));
+            static_cast<unsigned long>(probe_record.rx_offset_us[i]));
         for(unsigned k=0;k<f.dlc && k<8;++k) Serial.printf("%02X",f.data[k]);
         Serial.println("");
       }
