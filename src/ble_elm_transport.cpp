@@ -1,4 +1,5 @@
 #include "ble_elm_transport.h"
+#include "diagnostic_error_catalog.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include <NimBLEDevice.h>
 // NimBLE exposes connection-aware GATT callbacks and allows sending one
@@ -255,6 +256,9 @@ void BleElmTransport::pushEvent(BleClientEvent::Type type,
   const size_t next = (event_head_ + 1) % kEventBufferSize;
   if (next == event_tail_) {
     ++stats_.rx_overflow;
+    pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
+                   static_cast<uint16_t>(DiagnosticError::BleRxQueueOverflow),
+                   static_cast<uint32_t>(stats_.rx_overflow));
     return;
   }
   BleClientEvent& e = events_[event_head_];
@@ -288,7 +292,8 @@ void BleElmTransport::onPeerConnect(uint16_t id, uint16_t address_suffix) {
   }
   if (!accepted) {
     ++stats_.session_rejections;
-    pushDiagnostic(BleDiagnosticEvent::Kind::Reject,id);
+    pushDiagnostic(BleDiagnosticEvent::Kind::Reject,id,0,false,0,0,0,
+                   static_cast<uint16_t>(DiagnosticError::BleNoClientSlot),0);
   }
   portEXIT_CRITICAL(&mux_);
   if (!accepted && server_) {
@@ -318,7 +323,7 @@ void BleElmTransport::onPeerDisconnect(uint16_t id) {
 // Caller holds mux_: callbacks enqueue bounded POD only, main loop prints.
 void BleElmTransport::pushDiagnostic(BleDiagnosticEvent::Kind kind, uint16_t id,
     int reason, bool known, uint16_t interval, uint16_t latency,
-    uint16_t supervision) {
+    uint16_t supervision,uint16_t code,uint32_t detail) {
   const uint32_t seq = ++diagnostic_seq_;
   const size_t next = (diagnostic_head_ + 1) % kDiagnosticSlots;
   if (next == diagnostic_tail_) { ++diagnostic_drops_; return; }
@@ -326,6 +331,7 @@ void BleElmTransport::pushDiagnostic(BleDiagnosticEvent::Kind kind, uint16_t id,
   e = BleDiagnosticEvent{};
   e.kind=kind; e.sequence=seq; e.uptime_ms=millis();
   e.connection_id=id; e.reason=reason; e.reason_known=known;
+  e.error_code=code; e.error_detail=detail;
   e.interval=interval; e.latency=latency; e.supervision=supervision;
   for (const auto& p : clients_) if (p.connection_id==id && p.generation) {
     e.generation=p.generation; e.address_suffix=p.traffic.address_suffix;
@@ -340,6 +346,18 @@ void BleElmTransport::recordGapDisconnect(uint16_t id, int reason,
   portENTER_CRITICAL(&mux_);
   pushDiagnostic(BleDiagnosticEvent::Kind::Disconnect,id,reason,true,
                  interval,latency,supervision);
+  portEXIT_CRITICAL(&mux_);
+}
+void BleElmTransport::recordDiagnosticError(
+    uint16_t id,uint32_t generation,uint16_t code,uint32_t detail) {
+  portENTER_CRITICAL(&mux_);
+  bool found=false;
+  for(const auto& peer:clients_) {
+    if(peer.active && peer.connection_id==id &&
+       peer.generation==generation) {found=true;break;}
+  }
+  if(found)pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
+                          code,detail);
   portEXIT_CRITICAL(&mux_);
 }
 bool BleElmTransport::pollDiagnostic(BleDiagnosticEvent& event) {
@@ -494,6 +512,14 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
       break;
     }
   }
+  if(retries)
+    pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
+                   static_cast<uint16_t>(DiagnosticError::BleNotifyBackpressure),
+                   retries);
+  if(sent<length)
+    pushDiagnostic(BleDiagnosticEvent::Kind::Error,id,0,false,0,0,0,
+                   static_cast<uint16_t>(DiagnosticError::BleNotifySendFailed),
+                   static_cast<uint32_t>(length-sent));
   portEXIT_CRITICAL(&mux_);
   if (sent<length && isClientConnected(id,gen)) server_->disconnect(id);
   return sent;
