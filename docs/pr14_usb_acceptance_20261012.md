@@ -8,39 +8,39 @@ CAN/OBD remained disconnected. This is USB-demo evidence.
 
 ## Findings and fixes
 
-- The previous MYNEWT affinity macro was unused by NimBLE-Arduino1.4.3; use
+- The previous MYNEWT affinity macro was unused by NimBLE-Arduino 1.4.3; use
   CONFIG_BT_NIMBLE_PINNED_TO_CORE and assert the actual compiled setting.
-  Hardware logs confirm CAN owner core0, BLE worker core1, nimble_host core1.
+  Hardware logs confirm CAN owner core 0, BLE worker core 1, nimble_host core 1.
 - Peer suffix used the address prefix; extract little-endian val[1:0].
   One-at-a-time connections identify SmartRing DD41 and JC FB19. Slots vary.
-- The user observed clipped top text. Its Font2 width161px exceeded the
-  circular row width~109px. BLE n/2 is52px and retains the connection count.
+- The user observed clipped top text. Its Font2 width 161 px exceeded the
+  circular row width~109px. BLE n/2 is52 px and retains the connection count.
 - DEMO OFF reproduced two CAN-owner stack-canary resets during TWAI driver
   mode switching / esp_intr_free IPC. Move bounded result/transaction scratch
-  into fixed single-owner storage; compiler frames drop3392+3040 to144+336.
+  into fixed single-owner storage; compiler frames drop3392 + 3040 to144 + 336.
   Queue/cache copies precede reuse; reset on failed TX too. CI guards both
-  owner functions at512bytes and checks the8192byte BLE worker frame reserve.
+  owner functions at 512 bytes and checks the 8192-byte BLE worker frame reserve.
 
 ## Functional and dry-mode checks
 
 Both solo connections, reconnect generations, five dual page pairs and
 configured foreground/background rates pass. Per-peer RX/TX are application
 payload counters, not radio acknowledgements. Exact counter windows are in
-the adjacent JSON; nominal page windows were45seconds after warming.
+the adjacent JSON; nominal page windows were 45 seconds after warming.
 
 The dedicated dry profile has physical TX compiled out (no twai_transmit
-symbol in its ELF). Two OFF20s/AUTO20s cycles execute1540diagnostic requests
-without reset. Physical CAN RX/TX remain0; CAN stack minimum4416bytes, BLE
-stack minimum4120bytes, internal heap minimum197964bytes. Error replies
+symbol in its ELF). Two OFF 20s / AUTO 20s cycles execute 1540 diagnostic requests
+without reset. Physical CAN RX/TX remain 0; CAN stack minimum 4416 bytes, BLE
+stack minimum 4120 bytes, internal heap minimum 197964 bytes. Error replies
 during OFF are expected in this profile; they are not valid ECU data.
 
 ## Continuous run stopped as requested
 
-The final normal20-byte run started09:03:02JST and ran1476seconds
-(about24.6minutes) before the user explicitly stopped it. Both clients
+The final normal 20-byte run started 09:03:02 JST and ran 1476 seconds
+(about 24.6 minutes) before the user explicitly stopped it. Both clients
 remained connected; no reboot, ELM failure, RX drop, PID timeout/classified
 error, queue overflow or notification retry/failure was recorded.
-**This is not a65-minute or one-hour pass.** Long testing is deferred to the
+**This is not a 65-minute or one-hour pass.** Long testing is deferred to the
 final stage at the user request. The earlier failing run is not accepted.
 
 | Meter | Counter window seconds | Visible signal average Hz | Lowest short interval Hz |
@@ -48,17 +48,17 @@ final stage at the user request. The earlier failing run is not accepted.
 | SmartRing RPM | 1480.317 | 9.9864 | 8.9964 |
 | JC speed | 1480.406 | 9.9567 | 8.5906 |
 
-Hidden signals averaged~2Hz. JC still has brief8.59Hz intervals and a
-sampled batch p95 up to145ms; CPU separation does not eliminate all jitter.
+Hidden signals averaged ~2 Hz. JC still has brief 8.59 Hz intervals and a
+sampled batch p95 up to 145 ms; CPU separation does not eliminate all jitter.
 These maxima are not a controlled regression comparison: the previous
-65-minute baseline sampled status every5minutes, this run every minute.
+65-minute baseline sampled status every 5 minutes, this run every minute.
 
-Adapter minimum internal heap197928bytes, CAN stack
-5232bytes, BLE stack4120bytes.
-BLE poll peak10549us; UI loop gap peak20008us.
+Adapter minimum internal heap 197928 bytes, CAN stack
+5232 bytes, BLE stack 4120 bytes.
+BLE poll peak 10549 us; UI loop gap peak 20008 us.
 
-CI38185527348 passes host regressions, normal/dual/MTU/dry builds and stack
+CI 38185527348 passes host regressions, normal/dual/MTU/dry builds and stack
 checks on the firmware code. Live CAN cache sharing, actual ECU throughput
 and final one-hour acceptance remain outside this completed short test.
-PR14 is integrated into its declared PR13 parent branch; this does not
+PR14 targets its declared PR13 parent branch; this does not
 represent integration of the wider staged adapter phases into main.
