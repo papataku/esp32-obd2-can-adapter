@@ -9,6 +9,7 @@
 #include "diagnostic_batch_planner.h"
 #include "elm_response_formatter.h"
 #include "serial_protocol.h"
+#include "drive_log.h"
 
 namespace m5can {
 namespace {
@@ -56,6 +57,7 @@ void DualBleElm::event(const BleClientEvent& event) {
           (active_secondary_owner_ >= 0 &&
            &sessions_[active_secondary_owner_] == s))))
       adaptive_multi_pid_.disable();
+    driveLog().event(DriveLog::Kind::Disconnect,s->conn_id);
     s->multi_pid_pair = false;
     s->active = false;
     s->pending = false;
@@ -442,6 +444,11 @@ void DualBleElm::onResult() {
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
 #endif
+    driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
+        ? DriveLog::Kind::GroupEnabled
+        : decision==AdaptiveMultiPid::Decision::RetryLegacy
+          ? DriveLog::Kind::GroupFallback : DriveLog::Kind::GroupStopped,
+        s.conn_id,result,responder);
     if (decision==AdaptiveMultiPid::Decision::UseGrouped) {
       emitLine(s,"M5ITEM:00:010C");
       appendFrame(s,virtual_frames[0]);
@@ -563,6 +570,7 @@ void DualBleElm::dispatch() {
 #endif
 
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
+      driveLog().event(DriveLog::Kind::LeaseDenied,s.conn_id);
       s.pending=false;
       if (s.multi_pid_pair) {
         s.multi_pid_pair=false;
@@ -583,6 +591,7 @@ void DualBleElm::dispatch() {
       continue;
     }
     if (can_.submitQuery(outgoing)) {
+      driveLog().submitted(outgoing);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
       if (shared) joins_.fetch_add(1,std::memory_order_relaxed);
       if (cross) cross_groups_.fetch_add(1,std::memory_order_relaxed);
