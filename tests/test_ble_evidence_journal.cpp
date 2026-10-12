@@ -120,6 +120,11 @@ int main() {
   faults.begin(44,"fault-matrix");
   CanStats can_stat{};
   BleStats ble_stat{};
+  can_stat.result_status_count[0]=20;
+  can_stat.result_status_count[1]=4;
+  can_stat.result_status_count[3]=2;
+  can_stat.result_status_count[7]=1;
+  can_stat.result_status_count[9]=3;
   can_stat.query_timeout=4;
   can_stat.query_failed=3;
   can_stat.driver_rx_overrun=2;
@@ -146,6 +151,9 @@ int main() {
   SerialStub::capture=true;SerialStub::lines.clear();
   persisted_faults.dump(can,transport,44);
   const auto fault_dump=SerialStub::lines;
+  assert(fault_dump.find("#BLELOG,CAN_STATUS,boot=44,status=0,code=0,name=NONE,count=20")!=std::string::npos);
+  assert(fault_dump.find("#BLELOG,CAN_STATUS,boot=44,status=1,code=201,name=CAN_NO_DATA,count=4")!=std::string::npos);
+  assert(fault_dump.find("#BLELOG,CAN_STATUS,boot=44,status=9,code=209,name=ISOTP_FAILURE,count=3")!=std::string::npos);
   assert(fault_dump.find("name=CAN_TIMEOUT_COUNTER,count=4")!=std::string::npos);
   assert(fault_dump.find("name=CAN_BUS_ERRORS,count=20")!=std::string::npos);
   assert(fault_dump.find("name=BLE_TX_BACKPRESSURE,count=50")!=std::string::npos);
