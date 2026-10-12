@@ -31,7 +31,7 @@ def analyze(root):
                 continue
             if row['monotonic'] >= lo and (hi is None or row['monotonic'] <= hi):
                 rows.append(row)
-    signals, peers, series, counters = {}, {}, {}, {}
+    signals, peers, series, counters, policies = {}, {}, {}, {}, {}
     reboots, malformed = [], {}
     for row in rows:
         device, line = row['device'], row['line']
@@ -47,6 +47,10 @@ def analyze(root):
             if re.fullmatch(r'M5CAN SIGNAL id=\d+ value_x100=-?\d+ quality=\d+ updates=\d+ age_ms=\d+', line):
                 signals.setdefault(device+':'+d['id'], []).append((row['monotonic'], d))
             else: invalid('signal')
+        if line.startswith('M5CAN DISPLAY_POLL '):
+            if re.fullmatch(r'M5CAN DISPLAY_POLL mask=\d+ auto=[01] background=\d+ foreground=\d+/\d+/\d+/\d+/\d+',line):
+                policies.setdefault(device,[]).append((row['monotonic'],d))
+            else: invalid('policy')
         if '#BLE_PEER,' in line:
             if re.fullmatch(r'#BLE_PEER,slot=\d+,up=[01],id=\d+,gen=\d+,addr=[0-9A-Fa-f]+,mtu=\d+,rx_bytes=\d+,tx_bytes=\d+,rx_writes=\d+,notify=\d+,retries=\d+,failed=\d+', line):
                 peers.setdefault(d['id']+':'+d['gen'], []).append((row['monotonic'], d))
@@ -116,6 +120,26 @@ def analyze(root):
                 windows.append({'offset_s': offset, 'sample_s': round(last-first, 3),
                                 'hz': round((int(b['updates'])-int(a['updates']))/(last-first), 3)})
         rates[key]['five_minute_windows'] = windows
+    policy_report={}
+    for device,samples in policies.items():
+        changes=[];previous=None;last_high=lo;initial_high_end=hi or rows[-1]['monotonic'];ended=False
+        for timestamp,d in samples:
+            state=(d['auto'],d['foreground'],d['mask'],d['background'])
+            if state!=previous:
+                changes.append({'offset_s':round(timestamp-lo,3),'auto':int(d['auto']),'foreground':d['foreground'],'mask':int(d['mask']),'background':int(d['background'])})
+                previous=state
+            matched=d['auto']=='0' and d['foreground']=='20/20/20/1/1'
+            if manifest.get('meter_bench_preset')=='high' and not ended:
+                if matched:last_high=timestamp
+                else:initial_high_end=last_high;ended=True
+        fixed_rates={}
+        if manifest.get('meter_bench_preset')=='high':
+            for signal in ['0','1','5']:
+                subset=[(t,d) for t,d in signals.get(device+':'+signal,[]) if t<=initial_high_end]
+                if len(subset)>1:
+                    t0,a=subset[0];t1,b=subset[-1]
+                    fixed_rates[signal]={'sample_s':round(t1-t0,3),'hz':round((int(b['updates'])-int(a['updates']))/(t1-t0),3)}
+        policy_report[device]={'changes':changes,'initial_matched_high_s':round(initial_high_end-lo,3) if manifest.get('meter_bench_preset')=='high' else None,'initial_matched_high_rates':fixed_rates,'comparison_note':'A changed automatic/foreground policy changes the intended sensor rates; overall rates must not be labeled a transport regression. Transition timing is sampled; initial matched interval ends at the last confirmed high snapshot.'}
     traffic = {}
     for key, samples in peers.items():
         start, a = samples[0]; end, b = samples[-1]
@@ -138,7 +162,7 @@ def analyze(root):
         else: coverage[device] = None
     return {'complete': hi is not None, 'duration_s': round((hi or rows[-1]['monotonic'])-lo, 3) if rows else 0,
             'requested_s': manifest['duration_s'], 'rows': len(rows), 'reboots_or_panics': reboots,
-            'signals': rates, 'peer_traffic': traffic, 'counters': counts,
+            'signals': rates, 'rate_policies': policy_report, 'rate_policy_reapplications':manifest.get('rate_policy_reapplications',[]), 'peer_traffic': traffic, 'counters': counts,
             'ranges': {k: summarize(v) for k, v in series.items()}, 'malformed_rows': malformed,
             'capture_coverage': coverage,
             'partial_jsonl_rows': partial,

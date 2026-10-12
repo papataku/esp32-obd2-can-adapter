@@ -61,6 +61,10 @@ def capture(args):
                         if text.startswith('#BLELOG,END'):latest['blelog_complete']=True
                         if text.startswith('M5CAN BENCH RATE APPLIED '):latest[name+'_bench']=text
                         if text.startswith('M5CAN DISPLAY_POLL '):latest[name+'_bench_status']=text
+                        if re.fullmatch(r'M5CAN DISPLAY_POLL mask=\d+ auto=[01] background=\d+ foreground=\d+/\d+/\d+/\d+/\d+',text):
+                            latest[name+'_policy_observation']={'line':text,'monotonic':row['monotonic']}
+                        elif args.meter_bench_preset and bench_applied(text,args.meter_bench_preset):
+                            latest[name+'_policy_observation']={'line':text,'monotonic':row['monotonic']}
         except Exception as exc:
             with lock:errors.append(name+': '+repr(exc))
         finally:raw.close()
@@ -163,6 +167,11 @@ def capture(args):
             started=time.monotonic();manifest['measurement_start_monotonic']=started
             manifest['measurement_start_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat()
             (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
+        if getattr(args,'maintain_bench_preset',False) and not args.meter_bench_preset:
+            raise RuntimeError('maintain-bench-preset requires an explicit volatile preset')
+        manifest['maintain_bench_preset']=getattr(args,'maintain_bench_preset',False)
+        manifest['rate_policy_reapplications']=[]
+        last_reapplication={}
         end=started+args.seconds;next_status=0
         while time.monotonic()<end:
             if errors:raise RuntimeError(str(errors))
@@ -170,6 +179,16 @@ def capture(args):
                 send('adapter','STATS');send('ring','i')
                 if 'jc' in links and not args.isolate_jc:send('jc','i')
                 next_status=time.monotonic()+10
+            if getattr(args,'maintain_bench_preset',False):
+                for name in ['ring','jc']:
+                    if name not in links:continue
+                    with lock:observation=latest.get(name+'_policy_observation')
+                    if observation and observation['monotonic']>last_reapplication.get(name,0) and not bench_applied(observation['line'],args.meter_bench_preset):
+                        command='#' if args.meter_bench_preset=='high' else '!'
+                        send(name,command)
+                        now=time.monotonic();last_reapplication[name]=now
+                        manifest['rate_policy_reapplications'].append({'device':name,'monotonic':now,'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'observed_policy':observation['line'],'command':command})
+                        (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
             time.sleep(.2)
         manifest['measurement_end_monotonic']=time.monotonic()
         manifest['measurement_end_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -224,6 +243,7 @@ def main():
     p.add_argument('--meter-sha',default='unknown')
     p.add_argument('--meter-bench-preset',choices=['moderate','high'])
     p.add_argument('--meter-order',choices=['ring-first','jc-first'])
+    p.add_argument('--maintain-bench-preset',action='store_true',help='reapply the volatile preset only after a fully parsed policy change')
     p.add_argument('--require-two-meters',action='store_true');p.add_argument('--export-evidence',action='store_true')
     p.add_argument('--ipad-delay-ms',type=float,default=200);p.add_argument('--ipad-positive-repeats',type=int,default=1)
     p.add_argument('--ipad-device');p.add_argument('--ipad-scenario',choices=['idle','single','batch','no-data','faults'],default='batch');p.add_argument('--ipad-seconds',type=float,default=1800)
@@ -231,6 +251,7 @@ def main():
     p.add_argument('--scenario',default='smoke');p.add_argument('--fw-sha',default='unknown');p.add_argument('--app-sha',default='unknown')
     p.add_argument('--ring-after-ipad',action='store_true');p.add_argument('--demo-auto',action='store_true');p.add_argument('--isolate-jc',action='store_true');p.add_argument('--isolate-ring',action='store_true')
     a=p.parse_args()
+    if a.maintain_bench_preset and not a.meter_bench_preset:p.error('--maintain-bench-preset requires --meter-bench-preset')
     if not 1<=a.seconds<=10800:p.error('seconds must be in 1..10800')
     if not 1<=a.ipad_seconds<=3600:p.error('iPad duration must be in1..3600')
     if a.ring_after_ipad and not a.ipad_device:p.error('--ring-after-ipad requires --ipad-device')
