@@ -240,6 +240,10 @@ void DualBleElm::onLine(Session& s,const char* line) {
   switch (parsed.action) {
     case ElmAction::ReplyOnly:
       if (parsed.reply[0]) {
+        if(!std::strcmp(parsed.reply,"?") ||
+           !std::strcmp(parsed.reply,"ERROR"))
+          ble_.recordDiagnosticError(s.conn_id,s.generation,
+              static_cast<uint16_t>(DiagnosticError::ElmInvalidCommand));
         if (!std::strcmp(compact,"ATM5CAP")) {
           char caps[200]{};
           std::snprintf(caps,sizeof(caps),"%s DEMO=1 MODE=%s",
@@ -418,6 +422,8 @@ void DualBleElm::onResult() {
     if (!primary_live || !other_live) {
       ble_.recordDiagnosticError(s.conn_id,s.generation,
           static_cast<uint16_t>(DiagnosticError::GroupPeerGone));
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::GroupPeerGone));
       adaptive_multi_pid_.disable();
       return;
     }
@@ -486,6 +492,9 @@ void DualBleElm::onResult() {
   }
 
   if (!primary_live) {
+    ble_.recordDiagnosticError(s.conn_id,s.generation,
+        static_cast<uint16_t>(DiagnosticError::AppPeerGone),
+        static_cast<uint32_t>(result.status));
     if (other_live) finishSingle(*other,result);
     return;
   }
@@ -568,6 +577,8 @@ void DualBleElm::dispatch() {
         !ble_.isClientConnected(s.conn_id,s.generation)) continue;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     if (can_.faultLocked()) {
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::CanModeError));
       // A cached sample is not authorization for a fresh diagnostic read.
       // Do not report fresh values while the physical bus is fault locked.
       pid_cache_.clear();
@@ -639,6 +650,9 @@ void DualBleElm::dispatch() {
 #endif
 
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::CanLeaseRequired),
+          outgoing.can_id);
       driveLog().event(DriveLog::Kind::LeaseDenied,s.conn_id);
       s.pending=false;
       if (s.multi_pid_pair) {
