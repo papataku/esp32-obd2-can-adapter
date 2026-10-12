@@ -418,7 +418,9 @@ void DualBleElm::onResult() {
   // A successful single PID updates the same cache used by both peers,
   // whether it was sent alone or followed a failed group probe. Cache
   // failures invalidate ONLY the requested PID, never unrelated samples.
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   pid_cache_.rememberSingle(s.request,result,now_us);
+#endif
   finishSingle(s,result);
   if (other_live && other->pending) finishSingle(*other,result);
 }
@@ -437,6 +439,7 @@ void DualBleElm::dispatch() {
       advanceBatch(s);
       if (!s.pending) continue;
     }
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
     if (!s.multi_pid_pair &&
         pid_cache_.lookup(s.request,now_us,cache_workspace_)) {
@@ -444,19 +447,26 @@ void DualBleElm::dispatch() {
       // Another device may now be able to use that same PID value.
       continue;
     }
+#endif
 
     // At most two BLE peers: do not need a heap-backed global queue.
     // Both waiting peer intents may share ONE physical read, or an
     // eligible RPM+speed pair can be bundled across DIFFERENT peers.
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     const int j=1-i;
+#endif
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     Session& peer=sessions_[j];
+#endif
+    bool cross=false;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    bool shared=false;
+#endif
+    DiagnosticRequest outgoing=s.request;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     const bool other_pending=peer.active && peer.pending &&
         !peer.multi_pid_pair &&
         ble_.isClientConnected(peer.conn_id,peer.generation);
-    bool cross=false;
-    bool shared=false;
-    DiagnosticRequest outgoing=s.request;
-#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     const bool can_pair=other_pending && !s.multi_pid_pair &&
         !pid_cache_.hasFresh(peer.request,now_us);
     if (can_pair) {
@@ -477,12 +487,14 @@ void DualBleElm::dispatch() {
       }
     }
 #endif
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     if (!cross && other_pending && !s.multi_pid_pair &&
         s.request.can_id==peer.request.can_id &&
         s.request.length==peer.request.length &&
         s.request.timeout_ms==peer.request.timeout_ms &&
         std::memcmp(s.request.data,peer.request.data,s.request.length)==0)
       shared=true;
+#endif
 
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
       s.pending=false;
@@ -507,7 +519,11 @@ void DualBleElm::dispatch() {
     if (can_.submitQuery(outgoing)) {
       active_query_owner_=i;
       active_query_generation_=s.generation;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
       active_secondary_owner_=(shared || cross)?j:-1;
+#else
+      active_secondary_owner_=-1;
+#endif
       active_cross_group_=cross;
       round_robin_=static_cast<uint8_t>((i+1)%2);
       return;
