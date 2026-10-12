@@ -306,6 +306,24 @@ void DualBleElm::abortBatch(Session& s, const DiagnosticResult& result) {
   prompt(s);
 }
 
+void DualBleElm::cacheSafePartialGroup(
+    const DiagnosticResult& result, const DiagnosticRequest& rpm,
+    const DiagnosticRequest& speed, uint64_t timestamp_us) {
+  // Salvage only a positive, complete, unambiguous ONE-PID response.
+  // Split-ECU, stale/wrong ECU, multi-message and negative replies cannot
+  // poison the shared cache. No extra physical read is manufactured.
+  if (result.status!=DiagnosticStatus::Ok || result.response_count!=1 ||
+      result.raw_frame_count!=1) return;
+  const DiagnosticMessage& m=result.responses[0];
+  if (!adaptive_multi_pid_.responderMatchesLearnedEcu(m.can_id) ||
+      m.length < 3 || m.data[0]!=0x41 ||
+      result.raw_frames[0].can_id!=m.can_id) return;
+  if (m.data[1]==0x0C && m.length==4)
+    pid_cache_.rememberSingle(rpm,result,timestamp_us);
+  else if (m.data[1]==0x0D && m.length==3)
+    pid_cache_.rememberSingle(speed,result,timestamp_us);
+}
+
 void DualBleElm::onResult() {
   if (active_query_owner_<0) return;
   DiagnosticResult result{};
@@ -364,6 +382,12 @@ void DualBleElm::onResult() {
       // No speculative individual CAN TX after lease, mode or bus failure.
       abortBatch(s,result);
       abortBatch(*other,result);
+    } else {
+      // A single complete RPM or speed returned from the group is usable
+      // independently. Re-fetch ONLY the still-missing PID.
+      const bool s_rpm=s.request.data[1]==0x0C;
+      cacheSafePartialGroup(result,s_rpm?s.request:other->request,
+                            s_rpm?other->request:s.request,now_us);
     }
     // RetryLegacy leaves both individual requests pending. The next
     // dispatch will observe the disabled capability and send them one by
@@ -410,6 +434,9 @@ void DualBleElm::onResult() {
         prompt(s);
         return;
       }
+      const DiagnosticRequest rpm=requestOf(s.items[s.batch_next],s.elm);
+      const DiagnosticRequest speed=requestOf(s.items[s.batch_next+1],s.elm);
+      cacheSafePartialGroup(result,rpm,speed,now_us);
     }
     advanceBatch(s);
     return;
