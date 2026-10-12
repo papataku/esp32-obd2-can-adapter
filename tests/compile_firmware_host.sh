@@ -171,3 +171,10 @@ g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   "$ROOT/src/ble_elm_transport.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
   -o /tmp/m5can-combined-evidence-test
 /tmp/m5can-combined-evidence-test
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -I"$ROOT/include" \
+  "$ROOT/tests/test_ble_notify_chunk.cpp" \
+  -o /tmp/m5can-ble-notify-chunk-test
+/tmp/m5can-ble-notify-chunk-test
+
+echo "PASS all Phase 3C firmware translation units + demo drive + screen toggle + BLE notify chunk"

@@ -5,6 +5,8 @@
 #include <string>
 #include "esp_gatts_api.h"
 
+struct esp_ble_gatts_cb_param_t { struct { uint16_t mtu = 23; } mtu; };
+
 class BLEServer;
 class BLECharacteristic;
 

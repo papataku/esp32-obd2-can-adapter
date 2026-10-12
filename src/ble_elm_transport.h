@@ -20,6 +20,8 @@ struct BleStats {
   uint64_t rx_bytes = 0;
   uint64_t tx_bytes = 0;
   uint32_t rx_overflow = 0;
+  uint32_t tx_notifications=0;
+  uint16_t peer_mtu=23,max_notify_chunk=0;
   uint32_t targeted_notifications = 0;
   uint32_t session_rejections = 0;
   uint32_t notify_retries = 0;
@@ -104,6 +106,7 @@ class BleElmTransport {
 
   void onConnect();
   void onDisconnect();
+  void onMtuChanged(uint16_t mtu);
   void onWrite(const uint8_t* data, size_t length);
   void restartAdvertising();
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -153,6 +156,7 @@ class BleElmTransport {
   volatile bool connected_ = false;
   volatile bool disconnect_event_ = false;
   BleStats stats_{};
+  uint16_t peer_mtu_=23;
 
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   NimBLECharacteristic* tx_characteristic_ = nullptr;

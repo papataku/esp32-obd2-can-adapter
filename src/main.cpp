@@ -226,6 +226,28 @@ void loop() {
   }
 
   g_serial.emitStats(false);
+#if defined(M5CAN_BLE_MTU_EXPERIMENTAL) || defined(M5CAN_BLE_NOTIFY_DIAG)
+  // Bench-only USB telemetry: counters are queued notifications, not peer ACKs.
+  static uint32_t last_ble_diag_ms = 0;
+  const uint32_t now = millis();
+  if (now - last_ble_diag_ms >= 5000) {
+    last_ble_diag_ms = now;
+    const m5can::BleStats b = g_ble.stats();
+    Serial.printf(
+        "#BLE_MTU_BENCH,mode=%s,mtu=%u,max_chunk=%u,notifications=%lu,tx_bytes=%llu,rx_overflow=%lu\n",
+#if defined(M5CAN_BLE_MTU_EXPERIMENTAL)
+        "MTU247",
+#else
+        "MTU23",
+#endif
+        static_cast<unsigned>(b.peer_mtu),
+        static_cast<unsigned>(b.max_notify_chunk),
+        static_cast<unsigned long>(b.tx_notifications),
+        static_cast<unsigned long long>(b.tx_bytes),
+        static_cast<unsigned long>(b.rx_overflow));
+  }
+#endif
+
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   const auto coord_log=g_dual.coordinatorStats();
   m5can::driveLog().coordinator(coord_log.cache_hits,coord_log.cache_misses,

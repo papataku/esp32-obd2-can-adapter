@@ -14,6 +14,7 @@
 #include <cstring>
 #include <string>
 #include "app_config.h"
+#include "ble_notify_chunk.h"
 
 namespace m5can {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -66,6 +67,9 @@ class M5CanBleServerCallbacks final : public BLEServerCallbacks {
   explicit M5CanBleServerCallbacks(BleElmTransport& owner) : owner_(owner) {}
   void onConnect(BLEServer*) override { owner_.onConnect(); }
   void onDisconnect(BLEServer*) override { owner_.onDisconnect(); }
+  void onMtuChanged(BLEServer*,esp_ble_gatts_cb_param_t* p) override {
+    if(p)owner_.onMtuChanged(p->mtu.mtu);
+  }
  private:
   BleElmTransport& owner_;
 };
@@ -118,6 +122,9 @@ bool BleElmTransport::begin() {
   advertising_=NimBLEDevice::getAdvertising();
 #else
   BLEDevice::init(cfg::kBleDeviceName);
+#if defined(M5CAN_BLE_MTU_EXPERIMENTAL)
+  BLEDevice::setMTU(247);
+#endif
   BLEServer* server=BLEDevice::createServer();
   if (!server) { setError("BLE server failed"); return false; }
   server->setCallbacks(new M5CanBleServerCallbacks(*this));
@@ -147,6 +154,7 @@ bool BleElmTransport::begin() {
 void BleElmTransport::onConnect() {
   portENTER_CRITICAL(&mux_);
   connected_ = true;
+  peer_mtu_=stats_.peer_mtu=23;
   disconnect_event_ = false;
   rx_head_ = 0;
   rx_tail_ = 0;
@@ -160,11 +168,18 @@ void BleElmTransport::restartAdvertising() {
 void BleElmTransport::onDisconnect() {
   portENTER_CRITICAL(&mux_);
   connected_ = false;
+  peer_mtu_=stats_.peer_mtu=23;
   disconnect_event_ = true;
   rx_head_ = 0;
   rx_tail_ = 0;
   portEXIT_CRITICAL(&mux_);
   restartAdvertising();
+}
+
+void BleElmTransport::onMtuChanged(uint16_t mtu) {
+  portENTER_CRITICAL(&mux_);
+  peer_mtu_=stats_.peer_mtu=mtu>=23?mtu:23;
+  portEXIT_CRITICAL(&mux_);
 }
 
 void BleElmTransport::onWrite(const uint8_t* data, size_t length) {
@@ -217,13 +232,20 @@ size_t BleElmTransport::write(const uint8_t* data, size_t length) {
   if (!data || !length || !connected_ || !tx_characteristic_) return 0;
 
   // 20 bytes is valid before any larger ATT MTU negotiation.
-  constexpr size_t kNotificationChunk = 20;
+  size_t kNotificationChunk=20;
+#if defined(M5CAN_BLE_MTU_EXPERIMENTAL)
+  portENTER_CRITICAL(&mux_);kNotificationChunk=ble_notify_chunk_size(peer_mtu_);portEXIT_CRITICAL(&mux_);
+#endif
   size_t sent = 0;
   while (sent < length && connected_) {
     const size_t chunk = std::min(kNotificationChunk, length - sent);
     tx_characteristic_->setValue(
         const_cast<uint8_t*>(data + sent), chunk);
     tx_characteristic_->notify();
+    portENTER_CRITICAL(&mux_);
+    ++stats_.tx_notifications;
+    stats_.max_notify_chunk=std::max<size_t>(stats_.max_notify_chunk,chunk);
+    portEXIT_CRITICAL(&mux_);
     sent += chunk;
     if (sent < length) delay(1);
   }
@@ -286,6 +308,7 @@ void BleElmTransport::onPeerConnect(uint16_t id, uint16_t address_suffix) {
       peer.traffic.generation = peer.generation;
       peer.traffic.address_suffix = address_suffix;
       connected_ = true;
+  peer_mtu_=stats_.peer_mtu=23;
       pushEvent(BleClientEvent::Type::Connect,id,peer.generation,0);
       pushDiagnostic(BleDiagnosticEvent::Kind::Connect,id);
       accepted = true;
@@ -323,6 +346,7 @@ void BleElmTransport::onPeerDisconnect(uint16_t id) {
     }
   }
   connected_ = false;
+  peer_mtu_=stats_.peer_mtu=23;
   for (const auto& peer : clients_) if (peer.active) connected_ = true;
   portEXIT_CRITICAL(&mux_);
   restartAdvertising();
