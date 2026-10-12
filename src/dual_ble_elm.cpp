@@ -310,6 +310,7 @@ void DualBleElm::abortBatch(Session& s, const DiagnosticResult& result) {
 void DualBleElm::cacheSafePartialGroup(
     const DiagnosticResult& result, const DiagnosticRequest& rpm,
     const DiagnosticRequest& speed, uint64_t timestamp_us) {
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   // Salvage only a positive, complete, unambiguous ONE-PID response.
   // Split-ECU, stale/wrong ECU, multi-message and negative replies cannot
   // poison the shared cache. No extra physical read is manufactured.
@@ -323,6 +324,12 @@ void DualBleElm::cacheSafePartialGroup(
     pid_cache_.rememberSingle(rpm,result,timestamp_us);
   else if (m.data[1]==0x0D && m.length==3)
     pid_cache_.rememberSingle(speed,result,timestamp_us);
+#else
+  (void)result;
+  (void)rpm;
+  (void)speed;
+  (void)timestamp_us;
+#endif
 }
 
 void DualBleElm::onResult() {
@@ -367,6 +374,8 @@ void DualBleElm::onResult() {
     const bool s_rpm=s.request.data[1]==0x0C;
     const DiagnosticRequest& rpm=s_rpm?s.request:other->request;
     const DiagnosticRequest& speed=s_rpm?other->request:s.request;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
         !pid_cache_.rememberApprovedPair(
             rpm,speed,virtual_frames,acquired_us)) {
@@ -375,6 +384,7 @@ void DualBleElm::onResult() {
       adaptive_multi_pid_.disable();
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
+#endif
     if (decision==AdaptiveMultiPid::Decision::UseGrouped) {
       // The per-item M5ITEM lines were already emitted when staged.
       // Never rewrite or cross-deliver a peer's batch response.
@@ -431,6 +441,7 @@ void DualBleElm::onResult() {
       adaptive_multi_pid_.disable();
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
+#endif
     if (decision==AdaptiveMultiPid::Decision::UseGrouped) {
       emitLine(s,"M5ITEM:00:010C");
       appendFrame(s,virtual_frames[0]);
