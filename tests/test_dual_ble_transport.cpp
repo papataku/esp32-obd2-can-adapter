@@ -121,10 +121,21 @@ int main() {
   }
   assert(saw_stale);
   // Diagnostic overflow stays bounded and never touches protocol events.
-  for(unsigned n=0;n<70;++n) NimBLEDevice::gap_handler(&drop,nullptr);
+  for(unsigned n=0;n<70;++n) {
+    drop.disconnect.reason=0x300+static_cast<int>(n);
+    NimBLEDevice::gap_handler(&drop,nullptr);
+  }
   assert(transport.diagnosticDrops()==7);
   unsigned logged=0;
-  while(transport.pollDiagnostic(diag))++logged;
+  int last_reason=0;
+  while(transport.pollDiagnostic(diag)) {
+    ++logged;
+    assert(diag.kind==m5can::BleDiagnosticEvent::Kind::Disconnect);
+    last_reason=diag.reason;
+  }
+  // Never retain only the 63 oldest events while silently losing the
+  // actual latest disconnection. Loss count remains explicit.
+  assert(last_reason==0x300+69);
   assert(logged==63 && transport.connectedClientCount()==2);
 
 }
