@@ -4,11 +4,19 @@
 #include "can_monitor.h"
 #include "serial_protocol.h"
 #include "ui.h"
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#include "dual_ble_elm.h"
+#endif
 
 namespace {
 m5can::CanMonitor g_can;
 m5can::BleElmTransport g_ble;
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+m5can::SerialProtocol g_serial(g_can, nullptr); // USB only, separate ELM state
+m5can::DualBleElm g_dual(g_can,g_ble,g_serial);
+#else
 m5can::SerialProtocol g_serial(g_can, &g_ble);
+#endif
 m5can::Ui g_ui;
 bool g_can_ok = false;
 bool g_ble_ok = false;
@@ -42,6 +50,9 @@ void loop() {
     g_serial.toggleDemoAuto();
   }
   g_serial.pollInput();
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  g_dual.poll();
+#endif
   if (!g_can_ok) {
     delay(20);
     return;
@@ -49,7 +60,13 @@ void loop() {
 
   m5can::CapturedFrame frame{};
   for (size_t i = 0; i < 64 && g_can.pop(frame, 0); ++i) {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    // Avoid flooding blocking USB serial with CAN frames while two BLE
+    // clients are polling. CAN capture and safety accounting remain active.
+    if (!g_ble.connected()) g_serial.emitFrame(frame);
+#else
     g_serial.emitFrame(frame);
+#endif
   }
 
   g_serial.emitStats(false);

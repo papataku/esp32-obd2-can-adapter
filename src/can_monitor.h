@@ -5,6 +5,7 @@
 
 #include "diagnostic_policy.h"
 #include "diagnostic_request_pacer.h"
+#include "diagnostic_result_cache.h"
 
 namespace m5can {
 
@@ -28,7 +29,8 @@ struct CanStats {
   uint64_t tx_success = 0;
   uint64_t query_count = 0;
   uint64_t query_timeout = 0;
-  uint64_t query_ok = 0;        // Positive validated ISO-TP response
+  uint64_t query_ok = 0;
+  uint64_t query_cache_hits = 0;        // Positive validated ISO-TP response
   uint64_t query_no_data = 0;   // No matching response
   uint64_t query_failed = 0;    // Lease, TX, bus or protocol error
   uint32_t last_response_can_id = 0; // Actual responder, not ambient CAN RX
@@ -98,6 +100,7 @@ class CanMonitor {
   volatile bool query_in_flight_ = false;
   uint64_t last_status_poll_us_ = 0;
   DiagnosticRequestPacer diagnostic_pacer_{};
+  DiagnosticResultCache result_cache_{};
   uint64_t lease_deadline_ms_ = 0;
   char last_error_[96] = "not started";
 };

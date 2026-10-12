@@ -143,7 +143,18 @@ void CanMonitor::rxTask() {
   while (running_) {
     DiagnosticRequest request{};
     if (xQueueReceive(query_queue_, &request, 0) == pdTRUE) {
-      const DiagnosticResult result = performQuery(request);
+      DiagnosticResult result{};
+      // Both BLE sessions must share one CAN owner. A second identical
+      // read-only PID/DID request can reuse a validated <=100ms result,
+      // avoiding another CAN TX and expensive TWAI mode transition.
+      const bool from_cache = !fault_locked_ &&
+          result_cache_.lookup(
+              request, static_cast<uint64_t>(esp_timer_get_time()), result);
+      if (!from_cache) {
+        result = performQuery(request);
+        result_cache_.remember(
+            request, result, static_cast<uint64_t>(esp_timer_get_time()));
+      }
       // A negative ISO-TP response (7F <service> <NRC>) is still a
       // completed transport transaction, but is NOT a usable meter value.
       // Count only a matching *positive* PID/DID response as OBD OK.
@@ -165,6 +176,7 @@ void CanMonitor::rxTask() {
         }
       }
       portENTER_CRITICAL(&stats_mux_);
+      if (from_cache) ++stats_.query_cache_hits;
       if (result.status==DiagnosticStatus::Ok && positive_ecu!=0) {
         ++stats_.query_ok;
         stats_.last_response_can_id=positive_ecu;
