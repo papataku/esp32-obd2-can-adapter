@@ -98,7 +98,10 @@ bool BleElmTransport::begin() {
 }
 
 void BleElmTransport::onConnect() {
+  const uint32_t when_ms = millis();
   portENTER_CRITICAL(&mux_);
+  ++stats_.connect_count;
+  stats_.last_connect_ms = when_ms;
   connected_ = true;
   disconnect_event_ = false;
   rx_head_ = 0;
@@ -111,7 +114,10 @@ void BleElmTransport::restartAdvertising() {
 }
 
 void BleElmTransport::onDisconnect() {
+  const uint32_t when_ms = millis();
   portENTER_CRITICAL(&mux_);
+  ++stats_.disconnect_count;
+  stats_.last_disconnect_ms = when_ms;
   connected_ = false;
   disconnect_event_ = true;
   rx_head_ = 0;
