@@ -106,6 +106,18 @@ void loop() {
         static_cast<unsigned>(uxTaskGetStackHighWaterMark(g_ble_app_task)),
         static_cast<unsigned long>(loop_peak_us));
     loop_peak_us=0;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    const auto coordinator=g_dual.coordinatorStats();
+    // These are logical coordinator submissions; physical TX is separately
+    // counted by CanMonitor::stats(). Do not label these as CAN frames.
+    Serial.printf("#PID_COORD,cache_hit=%lu,cache_miss=%lu,join=%lu,group_submit=%lu,cross_group=%lu,single_submit=%lu\\n",
+        static_cast<unsigned long>(coordinator.cache_hits),
+        static_cast<unsigned long>(coordinator.cache_misses),
+        static_cast<unsigned long>(coordinator.joins),
+        static_cast<unsigned long>(coordinator.grouped_submissions),
+        static_cast<unsigned long>(coordinator.cross_group_submissions),
+        static_cast<unsigned long>(coordinator.single_submissions));
+#endif
 #if defined(ARDUINO_ARCH_ESP32)
     Serial.printf("#MEMORY,internal_free=%u,internal_min=%u,largest=%u,can_stack_free_bytes=%lu\n",
         static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
