@@ -47,7 +47,13 @@ void DualBleElm::event(const BleClientEvent& event) {
   if (event.type == BleClientEvent::Type::Disconnect) {
     // If the probing owner vanishes mid-query, its result cannot be
     // classified safely. Avoid a second speculative probe this boot.
-    if (s->multi_pid_pair) adaptive_multi_pid_.disable();
+    if (s->multi_pid_pair ||
+        (active_cross_group_ &&
+         (active_query_owner_ >= 0 &&
+          &sessions_[active_query_owner_] == s ||
+          active_secondary_owner_ >= 0 &&
+          &sessions_[active_secondary_owner_] == s)))
+      adaptive_multi_pid_.disable();
     s->multi_pid_pair = false;
     s->active = false;
     s->pending = false;
@@ -155,7 +161,13 @@ void DualBleElm::advanceBatch(Session& s) {
       const DiagnosticRequest first=requestOf(item,s.elm);
       const DiagnosticRequest second=
           requestOf(s.items[s.batch_next + 1],s.elm);
-      if (adaptive_multi_pid_.eligible(first,second)) {
+      // A group is a transmission optimization for already-requested
+      // CACHE MISSES. If either PID is fresh, serve it independently and
+      // do not issue an unnecessary grouped physical CAN query.
+      const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
+      if (!pid_cache_.hasFresh(first,now_us) &&
+          !pid_cache_.hasFresh(second,now_us) &&
+          adaptive_multi_pid_.eligible(first,second)) {
         const DiagnosticRequest grouped=
             AdaptiveMultiPid::group(first,second);
         if (DiagnosticPolicy::allowedReadRequest(grouped)) {
@@ -275,14 +287,94 @@ void DualBleElm::onLine(Session& s,const char* line) {
   if (prompt_now) prompt(s);
 }
 
+void DualBleElm::finishSingle(Session& s, const DiagnosticResult& result) {
+  appendResult(s,result);
+  s.pending=false;
+  if (s.batch) {
+    ++s.batch_next;
+    advanceBatch(s);
+  } else prompt(s);
+}
+
+void DualBleElm::abortBatch(Session& s, const DiagnosticResult& result) {
+  appendResult(s,result);
+  s.pending=false;
+  if (s.batch) {
+    s.batch=false;
+    emitLine(s,"M5DONE");
+  }
+  prompt(s);
+}
+
 void DualBleElm::onResult() {
   if (active_query_owner_<0) return;
   DiagnosticResult result{};
   if (!can_.pollQueryResult(result)) return;
   const int index=active_query_owner_;
+  const int second=active_secondary_owner_;
+  const bool cross=active_cross_group_;
   active_query_owner_=-1;
+  active_secondary_owner_=-1;
+  active_cross_group_=false;
   Session& s=sessions_[index];
-  if (!s.active || s.generation!=active_query_generation_) return;
+  const bool primary_live=s.active &&
+      s.generation==active_query_generation_;
+  Session* other=second<0?nullptr:&sessions_[second];
+  const bool other_live=other && other->active &&
+      ble_.isClientConnected(other->conn_id,other->generation);
+  const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
+
+  if (cross) {
+    // The pair was constructed solely from TWO ALREADY PENDING peers.
+    // Losing one peer invalidates the speculative support decision. The
+    // other peer retains its individual pending request for normal retry.
+    if (!primary_live || !other_live) {
+      adaptive_multi_pid_.disable();
+      return;
+    }
+    DiagnosticRawFrame virtual_frames[2]{};
+    uint32_t responder=0;
+    const bool first_success=
+        adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
+    const auto decision=
+        adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
+    if (decision==AdaptiveMultiPid::Decision::UseGrouped) {
+      const bool s_rpm=s.request.data[1]==0x0C;
+      const DiagnosticRequest& rpm=s_rpm?s.request:other->request;
+      const DiagnosticRequest& speed=s_rpm?other->request:s.request;
+      pid_cache_.rememberApprovedPair(rpm,speed,virtual_frames,now_us);
+      // The per-item M5ITEM lines were already emitted when staged.
+      // Never rewrite or cross-deliver a peer's batch response.
+      appendFrame(s,virtual_frames[s_rpm?0:1]);
+      appendFrame(*other,virtual_frames[s_rpm?1:0]);
+      s.pending=false;
+      other->pending=false;
+      if (first_success)
+        Serial.printf("#MULTIPID,enabled,ecu=%08lX\\n",
+                      static_cast<unsigned long>(responder));
+      if (s.batch) {
+        ++s.batch_next;
+        advanceBatch(s);
+      } else prompt(s);
+      if (other->batch) {
+        ++other->batch_next;
+        advanceBatch(*other);
+      } else prompt(*other);
+    } else if (decision==AdaptiveMultiPid::Decision::Stop) {
+      // No speculative individual CAN TX after lease, mode or bus failure.
+      abortBatch(s,result);
+      abortBatch(*other,result);
+    }
+    // RetryLegacy leaves both individual requests pending. The next
+    // dispatch will observe the disabled capability and send them one by
+    // one, respecting the existing CAN owner's per-PID 50ms guard.
+    return;
+  }
+
+  if (!primary_live) {
+    if (other_live) finishSingle(*other,result);
+    return;
+  }
   if (s.multi_pid_pair) {
     s.multi_pid_pair=false;
     s.pending=false;
@@ -293,32 +385,26 @@ void DualBleElm::onResult() {
     const auto decision=
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
     if (decision==AdaptiveMultiPid::Decision::UseGrouped) {
-      // Preserve the existing ATM5B item-by-item wire contract.
-      // These are decoded virtual ELM frames, NOT physical RAW captures.
+      const DiagnosticRequest rpm=requestOf(s.items[s.batch_next],s.elm);
+      const DiagnosticRequest speed=requestOf(s.items[s.batch_next+1],s.elm);
+      pid_cache_.rememberApprovedPair(rpm,speed,virtual_frames,now_us);
       emitLine(s,"M5ITEM:00:010C");
       appendFrame(s,virtual_frames[0]);
       emitLine(s,"M5ITEM:00:010D");
       appendFrame(s,virtual_frames[1]);
       s.batch_next=static_cast<uint8_t>(s.batch_next+2);
       if (first_success)
-        Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
+        Serial.printf("#MULTIPID,enabled,ecu=%08lX\\n",
                       static_cast<unsigned long>(responder));
     } else {
-      adaptive_multi_pid_.disable();
-      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\n",
+      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\\n",
                     static_cast<unsigned>(result.status),
                     static_cast<unsigned long>(responder));
-      // Only a valid-but-incomplete reply, negative response, protocol
-      // failure or ordinary timeout may trigger per-item CAN retries.
-      // On bus/lease/driver failures never initiate more CAN transmissions.
       if (decision==AdaptiveMultiPid::Decision::Stop) {
         emitLine(s,"M5ITEM:00:010C");
         appendResult(s,result);
         emitLine(s,"M5ITEM:00:010D");
         appendResult(s,result);
-        s.batch_next=static_cast<uint8_t>(s.batch_next+2);
-        // The preceding CAN/lease/policy failure may have changed our
-        // transmit authorization. Do not proceed to the other batch items.
         s.batch=false;
         emitLine(s,"M5DONE");
         prompt(s);
@@ -328,12 +414,13 @@ void DualBleElm::onResult() {
     advanceBatch(s);
     return;
   }
-  appendResult(s,result);
-  s.pending=false;
-  if (s.batch) {
-    ++s.batch_next;
-    advanceBatch(s);
-  } else prompt(s);
+
+  // A successful single PID updates the same cache used by both peers,
+  // whether it was sent alone or followed a failed group probe. Cache
+  // failures invalidate ONLY the requested PID, never unrelated samples.
+  pid_cache_.rememberSingle(s.request,result,now_us);
+  finishSingle(s,result);
+  if (other_live && other->pending) finishSingle(*other,result);
 }
 
 void DualBleElm::dispatch() {
@@ -343,16 +430,61 @@ void DualBleElm::dispatch() {
     Session& s=sessions_[i];
     if (!s.active || !s.pending ||
         !ble_.isClientConnected(s.conn_id,s.generation)) continue;
-    // A second BLE client may already have staged the same probe when the
-    // first client's ECU response disables grouping. Re-evaluate right at
-    // dispatch; never send a second unsupported grouped CAN request.
     if (s.multi_pid_pair &&
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Disabled) {
       s.multi_pid_pair=false;
       s.pending=false;
-      advanceBatch(s); // unchanged batch index => legacy individual reads
+      advanceBatch(s);
       if (!s.pending) continue;
     }
+    const uint64_t now_us=static_cast<uint64_t>(millis())*1000ULL;
+    DiagnosticResult cached{};
+    if (!s.multi_pid_pair &&
+        pid_cache_.lookup(s.request,now_us,cached)) {
+      finishSingle(s,cached);
+      // Another device may now be able to use that same PID value.
+      continue;
+    }
+
+    // At most two BLE peers: do not need a heap-backed global queue.
+    // Both waiting peer intents may share ONE physical read, or an
+    // eligible RPM+speed pair can be bundled across DIFFERENT peers.
+    const int j=1-i;
+    Session& peer=sessions_[j];
+    const bool other_pending=peer.active && peer.pending &&
+        !peer.multi_pid_pair &&
+        ble_.isClientConnected(peer.conn_id,peer.generation);
+    const bool can_pair=other_pending && !s.multi_pid_pair &&
+        !pid_cache_.hasFresh(peer.request,now_us);
+    bool cross=false;
+    bool shared=false;
+    DiagnosticRequest outgoing=s.request;
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    if (can_pair) {
+      const DiagnosticRequest* rpm=nullptr;
+      const DiagnosticRequest* speed=nullptr;
+      if (s.request.length==2 && s.request.data[0]==0x01 &&
+          peer.request.length==2 && peer.request.data[0]==0x01 &&
+          s.request.data[1]==0x0C && peer.request.data[1]==0x0D) {
+        rpm=&s.request;speed=&peer.request;
+      } else if (peer.request.length==2 && peer.request.data[0]==0x01 &&
+                 s.request.length==2 && s.request.data[0]==0x01 &&
+                 peer.request.data[1]==0x0C && s.request.data[1]==0x0D) {
+        rpm=&peer.request;speed=&s.request;
+      }
+      if (rpm && speed && adaptive_multi_pid_.eligible(*rpm,*speed)) {
+        outgoing=AdaptiveMultiPid::group(*rpm,*speed);
+        cross=DiagnosticPolicy::allowedReadRequest(outgoing);
+      }
+    }
+#endif
+    if (!cross && other_pending && !s.multi_pid_pair &&
+        s.request.can_id==peer.request.can_id &&
+        s.request.length==peer.request.length &&
+        s.request.timeout_ms==peer.request.timeout_ms &&
+        std::memcmp(s.request.data,peer.request.data,s.request.length)==0)
+      shared=true;
+
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
       s.pending=false;
       if (s.multi_pid_pair) {
@@ -363,8 +495,6 @@ void DualBleElm::dispatch() {
         emitLine(s,"M5ITEM:00:010D");
         emitLine(s,"M5CAN TX LOCKED");
         s.batch_next=static_cast<uint8_t>(s.batch_next+2);
-        // No TX permission: stop the entire remaining batch, not just
-        // the grouped pair, and never automatically re-probe.
         s.batch=false;
         emitLine(s,"M5DONE");
       } else {
@@ -375,9 +505,11 @@ void DualBleElm::dispatch() {
       else prompt(s);
       continue;
     }
-    if (can_.submitQuery(s.request)) {
+    if (can_.submitQuery(outgoing)) {
       active_query_owner_=i;
       active_query_generation_=s.generation;
+      active_secondary_owner_=(shared || cross)?j:-1;
+      active_cross_group_=cross;
       round_robin_=static_cast<uint8_t>((i+1)%2);
       return;
     }
