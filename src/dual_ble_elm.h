@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <atomic>
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
 #include "elm_compat.h"
@@ -19,6 +20,21 @@ class DualBleElm {
              SerialProtocol& demo_source)
       : can_(can), ble_(ble), demo_source_(demo_source) {}
   void poll();
+  struct CoordinatorStats {
+    uint32_t cache_hits=0, cache_misses=0, joins=0;
+    uint32_t grouped_submissions=0, cross_group_submissions=0;
+    uint32_t single_submissions=0;
+  };
+  CoordinatorStats coordinatorStats() const {
+    CoordinatorStats s{};
+    s.cache_hits=cache_hits_.load(std::memory_order_relaxed);
+    s.cache_misses=cache_misses_.load(std::memory_order_relaxed);
+    s.joins=joins_.load(std::memory_order_relaxed);
+    s.grouped_submissions=grouped_submissions_.load(std::memory_order_relaxed);
+    s.cross_group_submissions=cross_groups_.load(std::memory_order_relaxed);
+    s.single_submissions=single_submissions_.load(std::memory_order_relaxed);
+    return s;
+  }
 
  private:
   struct Session {
@@ -70,6 +86,11 @@ class DualBleElm {
   BleElmTransport& ble_;
   SerialProtocol& demo_source_;
   Session sessions_[2]{};
+  // Atomics are published from BLE core1 and read by the Arduino/UI
+  // task without exposing non-thread-safe cache internals.
+  std::atomic<uint32_t> cache_hits_{0},cache_misses_{0},joins_{0};
+  std::atomic<uint32_t> grouped_submissions_{0},cross_groups_{0};
+  std::atomic<uint32_t> single_submissions_{0};
   int active_query_owner_ = -1;
   // A second pending request may join the same physical CAN transaction.
   int active_secondary_owner_ = -1;
