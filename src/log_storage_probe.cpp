@@ -55,10 +55,11 @@ void reportLogStorageCapacity() {
                   static_cast<long>(code));
     return;
   }
-  Serial.printf("#LOGCAP,STATS,used=%lu,free=%lu,available=%lu,total=%lu,namespaces=%lu\n",
+  // This PlatformIO-pinned ESP-IDF uses the legacy nvs_stats_t without
+  // available_entries. Do not infer allocatable blob space from free alone.
+  Serial.printf("#LOGCAP,STATS,used=%lu,free=%lu,total=%lu,namespaces=%lu,blob_write_capacity=UNKNOWN\n",
       static_cast<unsigned long>(stats.used_entries),
       static_cast<unsigned long>(stats.free_entries),
-      static_cast<unsigned long>(stats.available_entries),
       static_cast<unsigned long>(stats.total_entries),
       static_cast<unsigned long>(stats.namespace_count));
 
