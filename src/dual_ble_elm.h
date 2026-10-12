@@ -60,6 +60,8 @@ class DualBleElm {
   AdaptiveMultiPid adaptive_multi_pid_{};
   // Shared across both BLE sessions, independent of the CAN grouping policy.
   DiagnosticPidCache pid_cache_{};
+  // Avoid allocating a multi-KiB DiagnosticResult on the BLE task stack.
+  DiagnosticResult cache_workspace_{};
   CanMonitor& can_;
   BleElmTransport& ble_;
   SerialProtocol& demo_source_;
