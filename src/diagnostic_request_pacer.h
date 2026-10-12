@@ -42,7 +42,12 @@ class DiagnosticRequestPacer {
       for (const Entry& entry:entries_) {
         if (entry.valid && entry.key==rpm_key) rpm_seen=true;
         if (entry.valid && entry.key==speed_key) speed_seen=true;
-        if (!entry.valid || timeRemaining(entry.sent_us,now_us)==0)
+        // An expired matching slot is still reserved for that constituent
+        // PID and must not be double-counted as capacity for the other.
+        const bool reserved=entry.valid &&
+            (entry.key==rpm_key || entry.key==speed_key);
+        if (!reserved &&
+            (!entry.valid || timeRemaining(entry.sent_us,now_us)==0))
           ++free_slots;
         else {
           const uint64_t remaining=timeRemaining(entry.sent_us,now_us);
