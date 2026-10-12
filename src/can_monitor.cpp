@@ -178,10 +178,11 @@ void CanMonitor::rxTask() {
       if (request.can_id==0x18DB33F1U && request.length==3 &&
           request.data[0]==0x01 && request.data[1]==0x0C &&
           request.data[2]==0x0D) {
-        AdaptiveMultiPid validator;
-        DiagnosticRawFrame virtual_frames[2]{};
-        // A partial grouped reply must NOT inflate successful PID metrics.
-        validator.decode(result,virtual_frames,positive_ecu);
+        // Physical CAN receive metric: count a complete positive pair
+        // from any valid responder. CPU1's coordinator separately records
+        // GroupEnabled/GroupFallback after multi-ECU provenance checks.
+        // These are intentionally distinct from application acceptance.
+        AdaptiveMultiPid::hasCompletePositivePair(result,positive_ecu);
       } else for (uint8_t i=0;i<result.response_count;++i) {
         const DiagnosticMessage &message=result.responses[i];
         const bool positive_obd=(request.data[0]==0x01 ||
