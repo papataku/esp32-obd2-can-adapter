@@ -15,6 +15,11 @@ class AdaptiveMultiPid {
   enum class Decision : uint8_t { UseGrouped, RetryLegacy, Stop };
 
   Support support() const { return support_; }
+  // Inspect provenance even after the profile has been disabled. A reply
+  // from a different functional ECU must never fill this profile's cache.
+  bool responderMatchesLearnedEcu(uint32_t can_id) const {
+    return responder_can_id_ == 0 || can_id == responder_can_id_;
+  }
   void markSupported(uint32_t responder) {
     support_ = Support::Supported;
     responder_can_id_ = responder;
