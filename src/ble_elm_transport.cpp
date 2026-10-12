@@ -326,7 +326,21 @@ void BleElmTransport::pushDiagnostic(BleDiagnosticEvent::Kind kind, uint16_t id,
     uint16_t supervision,uint16_t code,uint32_t detail) {
   const uint32_t seq = ++diagnostic_seq_;
   const size_t next = (diagnostic_head_ + 1) % kDiagnosticSlots;
-  if (next == diagnostic_tail_) { ++diagnostic_drops_; return; }
+  if (next == diagnostic_tail_) {
+    ++diagnostic_drops_;
+    // Preserve the newest hard-link evidence under event storms. A ring
+    // filled with routine errors must not hide the actual GAP disconnect.
+    // Displaced records are explicitly counted as lost. Bounded O(1),
+    // still no allocations, USB, or NVS in NimBLE's callback context.
+    const bool critical=kind==BleDiagnosticEvent::Kind::Disconnect ||
+        kind==BleDiagnosticEvent::Kind::Reject ||
+        (kind==BleDiagnosticEvent::Kind::Error &&
+         (code==static_cast<uint16_t>(DiagnosticError::BleNotifySendFailed) ||
+          code==static_cast<uint16_t>(DiagnosticError::CanBusOff) ||
+          code==static_cast<uint16_t>(DiagnosticError::CanDriverError)));
+    if(!critical)return;
+    diagnostic_tail_=(diagnostic_tail_+1)%kDiagnosticSlots;
+  }
   auto& e = diagnostics_[diagnostic_head_];
   e = BleDiagnosticEvent{};
   e.kind=kind; e.sequence=seq; e.uptime_ms=millis();
