@@ -66,3 +66,49 @@ queue loss, write throttling and CAN-owner checkpoint blocking. PlatformIO
 and stack budgets also remain gates. **Physical power-cycle/USB recovery**
 and concurrent iPad+SmartRing load must be completed before accepting
 real-device retention.
+
+## Classified error routes (software review)
+
+All known error branches in the current dual-peer diagnostic pipeline are
+either recorded at their source or represented by monotonic failure counters.
+The word *all* is scoped to the listed, observable software routes. An unknown
+radio-controller failure cannot be assigned an invented NimBLE cause.
+
+| Route and original source | Persistent classification | Evidence |
+|---|---|---|
+| GAP disconnect, peer rejected, no slot | `BLELOG EVENT`; `101` no-slot | raw NimBLE reason, handle, peer generation, MTU, link interval, bytes |
+| BLE callback RX queue full | `102` + `521` | per-event + global dropped byte counter |
+| Notify retry/backpressure, definitive failure | `103` / `104`, `524` / `522` | retry count; raw NimBLE host error as `detail`, counter deltas |
+| GATT stale connection/generation / asynchronous result to old peer | `105` / `404` | **old** generation; no invented new peer identity |
+| GAP diagnostic ring drops | `106` | total lost and stream sequence gaps |
+| Read result (NoData, Busy, lease, policy, rate, driver, BusOff, mode, ISO-TP) | `201..209` | specific `DiagnosticStatus` and transaction duration, not just aggregate `CAN ERROR` |
+| Grouped PID rejected/stopped or lost peer | `301..303` | CAN status, response count, raw-frame count; PR #25 will add ECU-selection *reason* and original CAN evidence |
+| ELM pending command, too-long input, parser error, old peer result | `401..404` | per-session error, not a global reset |
+| CAN health counters | `501..508` | timeouts, query failures, queue drops, TWAI RX missed/overrun/bus error/arbitration; init failure |
+| BLE transport counters | `521..524` | dropped writes, notify failure/retries, session rejections |
+| Initialization and task creation | `107`, `405`, `508` | boot sequence and build SHA; log through degraded main loop |
+| Journal NVS errors | `901`, `storage_errors` | RAM error record; recoverable only if a later NVS write succeeds |
+
+The persistent record retains the most recent 24 individual link/errors for
+each of eight boot epochs, plus 48 **independent error-category counters** with
+first/last monotonic timestamps and first/last detail values. Global source
+counters are sampled every five seconds, and their actual delta—not merely one
+per poll—is accumulated. Therefore a burst that overwrites individual event
+entries can still leave an attributable count. The `unclassified`,
+`queue_drops`, `seq_gaps`, `evicted` and `storage_errors` fields explicitly
+disclose data loss. A 48-bucket limit, 8-boot retention and power-cut-before-
+checkpoint remain bounded failure modes.
+
+Failure evidence != causal proof. For example, `BLE_NOTIFY_FAILURE` plus
+a subsequent HCI supervision timeout is correlation, not proof that GATT
+backpressure caused the RF link to drop. Distinguish expected `NO DATA`
+for unsupported DID probes from unexpected CAN timeouts in the report.
+
+### Integration not yet covered by this stacked PR
+
+This branch is **not** a merge of #25 and #26. It preserves #26's live BLE
+failure path and adds its own NVS sidecar. When #25 lands, the integration
+pass must add grouped ECU choice/fallback reason, grouped RAW-frame timestamps
+and status to a shared offline timeline export, and verify both journals
+survive a physical cold boot without overwriting one another. Tests must
+also check CAN stack budget and CPU1 BLE latency after NVS commits.
