@@ -16,7 +16,8 @@ class AdaptiveMultiPid {
   // Stable numeric codes for bounded event-time USB diagnostics.
   enum class RejectReason : uint8_t {
     None=0, Transport=1, NoResponse=2, InvalidPair=3,
-    DuplicateEcu=4, ValuesDisagree=5, LearnedEcuMissing=6
+    DuplicateEcu=4, ValuesDisagree=5, LearnedEcuMissing=6,
+    CacheEcuConflict=7
   };
   RejectReason lastRejectReason() const { return last_reject_reason_; }
 
@@ -31,6 +32,10 @@ class AdaptiveMultiPid {
     responder_can_id_ = responder;
   }
   void disable() { support_ = Support::Disabled; }
+  void rejectCacheEcuConflict() {
+    last_reject_reason_=RejectReason::CacheEcuConflict;
+    disable();
+  }
 
   // One classification path for BOTH BLE clients. Transport/bus/lease
   // errors must not start extra diagnostic TX. Supported groups must
