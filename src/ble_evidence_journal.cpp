@@ -48,8 +48,10 @@ bool BleEvidenceJournal::load(unsigned slot,Record& target) {
   return true;
 }
 void BleEvidenceJournal::begin(uint32_t boot,const char* build) {
-  record_=Record{};
-  scratch_=Record{};
+  std::memset(static_cast<void*>(&record_),0,sizeof(record_));
+  record_.magic=kMagic;record_.version=kVersion;record_.bytes=sizeof(record_);
+  std::memset(static_cast<void*>(&scratch_),0,sizeof(scratch_));
+  scratch_.magic=kMagic;scratch_.version=kVersion;scratch_.bytes=sizeof(scratch_);
   record_.boot=boot;
   if(build)std::snprintf(record_.build,sizeof(record_.build),"%s",build);
   started_=boot!=0;

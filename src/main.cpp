@@ -76,7 +76,7 @@ void setup() {
   Serial.printf("#LOGSTORE,ready=%u,sectors=%lu,foreign=%u\n",log_store_ready?1U:0U,
       static_cast<unsigned long>(m5can::evidenceStore().status().sectors),
       m5can::evidenceStore().status().foreign?1U:0U);
-  m5can::bleEvidenceJournal().begin(m5can::driveLog().snapshot().sequence,
+  m5can::bleEvidenceJournal().begin(m5can::driveLog().bootSequence(),
                                     M5CAN_BUILD_SHA);
 #endif
 

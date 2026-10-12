@@ -79,6 +79,7 @@ class DriveLog {
   void poll(CanMonitor& can,BleElmTransport& ble,bool demo);
   void dump(CanMonitor& can,BleElmTransport& ble,bool demo);
   Record snapshot() const;
+  uint32_t bootSequence() const {return record_.sequence;}
   uint32_t storageErrors() const {return storage_errors_;}
  private:
   static bool load(unsigned slot,Record& record);
@@ -89,6 +90,7 @@ class DriveLog {
   void populateEvidence(ProbeRecord& record,const DiagnosticResult& result,
                         uint32_t responder,uint8_t decision,uint8_t reason,bool fixture=false);
   ProbeRecord probe_{},failure_{};
+  ProbeRecord save_probe_{},save_failure_{},verify_probe_{};
   bool probe_present_=false,probe_dirty_=false,probe_saved_=false;
   bool failure_present_=false,failure_dirty_=false,failure_saved_=false;
   uint32_t probe_last_attempt_ms_=0;
@@ -97,7 +99,8 @@ class DriveLog {
   void addEvent(Kind kind,uint16_t peer,const DiagnosticResult* result,
                 uint32_t responder);
   mutable portMUX_TYPE mux_=portMUX_INITIALIZER_UNLOCKED;
-  Record record_{};
+  Record record_{},save_record_{},export_current_{},export_record_{};
+  CoordinatorRecord save_coordinator_{};
   CoordinatorRecord coordinator_{};
   bool coordinator_enabled_=false;
   bool enabled_=false,urgent_=false;

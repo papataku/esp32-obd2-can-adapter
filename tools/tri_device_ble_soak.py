@@ -46,6 +46,7 @@ def capture(args):
                     with lock:
                         events.write(json.dumps(row)+'\n');rows.append(row)
                         if '#DEMO,' in text:latest['demo']=fields(text)
+                        if text.startswith('#STATS,'):latest['stats']=fields(text)
                         if text.startswith('#DRIVELOG,boot='):latest['trip']=fields(text)
                         if '#DRIVELOG,END' in text:latest['trip_complete']=True
                         if text.startswith('#BLE_DUAL,'):latest['dual']=fields(text)
@@ -66,12 +67,11 @@ def capture(args):
             send('adapter','DEMO AUTO');deadline=time.monotonic()+5
             while time.monotonic()<deadline and latest.get('demo',{}).get('active')!='YES':time.sleep(.1)
         if latest.get('demo',{}).get('active')!='YES':
-            # Reapplying an unchanged DEMO setting is silent. Existing DRIVELOG
-            # reports the CURRENT RAM state last; ignore historical/demo trips
-            # until END is seen. This checkpoint is before measurement only.
-            send('adapter','DRIVELOG');deadline=time.monotonic()+8
-            while time.monotonic()<deadline and not latest.get('trip_complete'):time.sleep(.1)
-            if not latest.get('trip_complete') or latest.get('trip',{}).get('demo')!='1':
+            # Unchanged settings are silent; live STATS explicitly reports
+            # the current DEMO mode without a blocking journal export.
+            send('adapter','STATS');deadline=time.monotonic()+8
+            while time.monotonic()<deadline and latest.get('stats',{}).get('demo')!='ON':time.sleep(.1)
+            if latest.get('stats',{}).get('demo')!='ON':
                 raise RuntimeError('DEMO not confirmed: measurement prohibited')
         # SmartRing defers runtime init ~6s: never silently drop isolation commands.
         time.sleep(8)

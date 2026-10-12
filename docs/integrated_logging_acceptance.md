@@ -75,3 +75,33 @@ Physical gates pending: full-RAW synthetic flash/readback/reset, dual-meter
 smoke,2h sustained traffic/heap/fps/error check, cold power cycle and setting
 preservation, human LCD/touch observation. Hardware test data and residual
 limits will be appended before merging. Existing vehicle issues stay open.
+
+
+## Pre-soak physical blocker and stack correction
+
+The first full integration fixture3f00008 was application-only flashed with
+hash verification; its USB and BLE runtime did not respond, and esptool
+could not subsequently enter ROM by default or explicitUSB reset. The2h
+soak has NOT started and no physical PASS/merge is claimed. A user10s power
+cycle/ROM recovery is needed; complete8MiB/16MiB backups are available.
+
+Compiler inspection found startup frames752+2464+3872=7088 bytes before
+NVS/library calls, and export could nest3632+3872 before caller frames.
+The initial checker monitored only BLE-worker paths and missed these chains.
+This is a concrete stack risk, not yet a confirmed electrical/boot cause.
+Move trip/probe/readback/export copies to fixed per-object RAM, reuse them
+only in the single Arduino owner, reset large records without temporaries,
+and query boot sequence without returning a full record. New measured
+frames: setup48,DriveLog begin112/save112/dump256,BLE begin256; estimated
+startup/export with2048-byte library reserve2352/5328 of8192. Add these
+paths to CI and recognize the integrated soak's actual dual worker rather
+than selecting by environment name. Dumps now refuse active peers/queries;
+DEMO verification uses non-blockingSTATS instead of a journal dump.
+
+Host/sanitizer tests and corrected profile builds/stack check pass locally.
+Meter integration's14 CI jobs pass at1860414; native evidence is verified
+in persistent runner storage, remote artifact quota remainsIssue94.
+Meter images72f7ad9 are flashed, but they cannot link to the unresponsive
+adapter. No merge until device recovery and long-run evidence. Preserve
+this failed prototype's logs (including zero-byte UART captures) and avoid
+NVS/partition erase as a recovery shortcut.

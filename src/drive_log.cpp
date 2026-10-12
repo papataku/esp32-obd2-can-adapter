@@ -5,6 +5,19 @@
 #include <cstring>
 
 namespace m5can {
+namespace {
+void clearTrip(DriveLog::Record& r) {
+  std::memset(static_cast<void*>(&r),0,sizeof(r));
+  r.magic=DriveLog::kMagic;r.version=DriveLog::kVersion;r.size=sizeof(r);
+}
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+void clearProbe(DriveLog::ProbeRecord& r) {
+  std::memset(static_cast<void*>(&r),0,sizeof(r));
+  r.magic=0x4D355052U;r.version=1;r.size=sizeof(r);
+}
+#endif
+}
+
 DriveLog& driveLog(){static DriveLog log;return log;}
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
 uint32_t DriveLog::probeChecksum(const ProbeRecord& r) {
@@ -36,7 +49,7 @@ bool DriveLog::loadProbe(unsigned slot,ProbeRecord& record,
 void DriveLog::populateEvidence(
     ProbeRecord& target,const DiagnosticResult& result,
     uint32_t responder,uint8_t decision,uint8_t reject_reason,bool fixture) {
-  target=ProbeRecord{};
+  clearProbe(target);
   target.sequence=record_.sequence;
   target.uptime_ms=millis();
   target.responder=responder;
@@ -98,17 +111,17 @@ bool DriveLog::load(unsigned slot,Record& record) {
 }
 void DriveLog::begin(uint32_t reset_reason,uint32_t rom_reset_reason) {
   storage_errors_=0;
-  uint32_t latest=0;Record previous{};
+  uint32_t latest=0;Record& previous=save_record_;
   for(unsigned slot=0;slot<kSlots;++slot)
     if(load(slot,previous) && previous.sequence>latest) latest=previous.sequence;
   coordinator_=CoordinatorRecord{};coordinator_enabled_=false;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-  probe_=ProbeRecord{};failure_=ProbeRecord{};
+  clearProbe(probe_);clearProbe(failure_);
   probe_present_=probe_dirty_=probe_saved_=false;
   failure_present_=failure_dirty_=failure_saved_=false;
   probe_last_attempt_ms_=0;
 #endif
-  record_=Record{};record_.sequence=latest+1;record_.reset_reason=reset_reason;record_.rom_reset_reason=rom_reset_reason;
+  clearTrip(record_);record_.sequence=latest+1;record_.reset_reason=reset_reason;record_.rom_reset_reason=rom_reset_reason;
   std::snprintf(record_.build,sizeof(record_.build),"%s %s",__DATE__,__TIME__);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   record_.multipid=1;
@@ -180,14 +193,16 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
   if(!forced && !probe_due && elapsed<30000 &&
      !(urgent && elapsed>=2000))return false;
   if(can && !can->tryBeginLogCheckpoint())return false;
-  Record copy=snapshot();copy.uptime_ms=now;++copy.saves;
-  CoordinatorRecord coord{};bool coord_enabled;
+  Record& copy=save_record_;
+  portENTER_CRITICAL(&mux_);copy=record_;portEXIT_CRITICAL(&mux_);
+  copy.uptime_ms=now;++copy.saves;
+  CoordinatorRecord& coord=save_coordinator_;bool coord_enabled;
   portENTER_CRITICAL(&mux_);coord=coordinator_;coord_enabled=coordinator_enabled_;portEXIT_CRITICAL(&mux_);
   coord.sequence=copy.sequence;coord.uptime_ms=now;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   // BLE worker only mutates immutable first-probe RAM once. The Arduino
   // loop alone can commit the sidecar when CAN is quiescent.
-  ProbeRecord probe_copy{},failure_copy{};
+  ProbeRecord& probe_copy=save_probe_;ProbeRecord& failure_copy=save_failure_;
   bool write_probe=false,write_failure=false;
   portENTER_CRITICAL(&mux_);
   write_probe=probe_dirty_;write_failure=failure_dirty_;
@@ -219,7 +234,7 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
     if(write_probe && ok) {
       std::snprintf(key,sizeof(key),"probe%u",static_cast<unsigned>(copy.sequence%kSlots));
       const bool stored=evidence.putBytes(key,&probe_copy,sizeof(probe_copy))==sizeof(probe_copy);
-      ProbeRecord readback{};
+      ProbeRecord& readback=verify_probe_;
       const bool verified=stored && loadProbe(copy.sequence%kSlots,readback) &&
           readback.sequence==copy.sequence;
       if(verified) {
@@ -236,7 +251,7 @@ bool DriveLog::save(uint32_t now,bool forced,CanMonitor* can) {
     if(write_failure && ok) {
       std::snprintf(key,sizeof(key),"fail%u",static_cast<unsigned>(copy.sequence%kSlots));
       const bool stored=evidence.putBytes(key,&failure_copy,sizeof(failure_copy))==sizeof(failure_copy);
-      ProbeRecord readback{};
+      ProbeRecord& readback=verify_probe_;
       const bool verified=stored &&
           loadProbe(copy.sequence%kSlots,readback,"fail") &&
           readback.sequence==copy.sequence;
@@ -300,12 +315,17 @@ void DriveLog::poll(CanMonitor& can,BleElmTransport& ble,bool demo) {
   save(millis(),false,&can);
 }
 void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
+  if(can.queryPending() || ble.connected()) {
+    Serial.println("#DRIVELOG,ERR,ACTIVE_TRAFFIC,disconnect_peers_before_dump");return;
+  }
   poll(can,ble,demo);save(millis(),true,&can);
   Serial.println("#DRIVELOG,BEGIN,version=2,kind=1:enabled/2:fallback/3:stopped/4:disconnect/5:lease_denied/6:can_fault");
   // Ascending sequence, with the current RAM snapshot last; dump never clears.
-  const Record current=snapshot();const uint32_t first=current.sequence>kSlots?current.sequence-kSlots+1:1;
+  Record& current=export_current_;
+  portENTER_CRITICAL(&mux_);current=record_;portEXIT_CRITICAL(&mux_);
+  const uint32_t first=current.sequence>kSlots?current.sequence-kSlots+1:1;
   for(uint32_t seq=first;seq<=current.sequence;++seq) {
-    Record r{};
+    Record& r=export_record_;
     if(seq==current.sequence)r=current;
     else if(!load(seq%kSlots,r) || r.sequence!=seq)continue;
     Serial.printf("#DRIVELOG,boot=%lu,reset=%lu,rom_reset=%lu,build=%s,multipid=%u,uptime_ms=%lu,saves=%lu,grouped_submissions=%lu,individual_submissions=%lu,group_ok=%lu,fallback=%lu,stopped=%lu,disconnects=%lu,demo=%u,clients=%u,peers=%04X/%04X,fault=%u,lease_ms=%lu\n",
@@ -349,7 +369,7 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
         static_cast<unsigned long long>(coord.owner_cache_hits));
     }
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-    ProbeRecord probe_record{};
+    ProbeRecord& probe_record=save_probe_;
     bool has_probe=false,persisted=false;
     if(seq==current.sequence) {
       portENTER_CRITICAL(&mux_);
@@ -387,7 +407,7 @@ void DriveLog::dump(CanMonitor& can,BleElmTransport& ble,bool demo) {
     }
 #endif
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
-    ProbeRecord failure_record{};
+    ProbeRecord& failure_record=save_failure_;
     bool has_failure=false,failure_persisted=false;
     if(seq==current.sequence) {
       portENTER_CRITICAL(&mux_);

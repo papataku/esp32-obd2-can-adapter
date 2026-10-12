@@ -428,6 +428,8 @@ int main() {
     Preferences::storage["m5can_trip/trip0"].resize(sizeof(saved));
     std::memcpy(Preferences::storage["m5can_trip/trip0"].data(),&saved,sizeof(saved));
     DriveLog version_recover;version_recover.begin(1);assert(version_recover.snapshot().sequence==16);
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.a);
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.b);
     journal.dump(bench.can,bench.ble,false); // Never deletes older entries.
     assert(Preferences::storage.size()==DriveLog::kSlots);
   }
@@ -504,6 +506,8 @@ int main() {
     assert(saved.sequence==1 && saved.raw_saved==5);
     assert(saved.raw[4].can_id==0x18DAF103);
     SerialStub::capture=true;SerialStub::captured.clear();
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.a);
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.b);
     after_reboot.dump(bench.can,bench.ble,false);
     const std::string valid_dump=SerialStub::captured;
     assert(valid_dump.find("#DRIVELOG,PROBE,boot=1,state=persisted")!=std::string::npos);
@@ -516,6 +520,8 @@ int main() {
     auto& bytes=Preferences::storage["m5can_trip/probe1"];
     bytes[sizeof(saved)-1]^=0x80;
     SerialStub::captured.clear();
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.a);
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.b);
     after_reboot.dump(bench.can,bench.ble,false);
     assert(SerialStub::captured.find("#DRIVELOG,PROBE,boot=1,state=MISSING")!=std::string::npos);
     assert(SerialStub::captured.find("#DRIVELOG,PROBE_RAW,boot=1")==std::string::npos);
