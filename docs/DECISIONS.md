@@ -174,3 +174,21 @@ MTU still bounds each send, and unicast, generation checks and bounded
 backpressure behavior are shared. Host tests run both caps and compare
 payload bytes, including retries. A short performance comparison does
 not replace the one-hour stability acceptance for either profile.
+
+## D018 - CAN owner scratch is fixed storage, not nested stack frames
+
+On the USB bench, selecting DEMO OFF reproduced a stack-canary panic in
+m5can-owner during `twai_driver_uninstall` / `esp_intr_free` cross-core IPC.
+The compiler reported rxTask 3392 bytes plus performQuery 3040 bytes,
+leaving too little of the 7168-byte task stack for driver/RTOS calls.
+Move the bounded result and transaction into CanMonitor storage owned
+exclusively by its one CAN task. Return results through an output reference,
+with queue/cache copies completed before scratch reuse. Reset the transaction
+on TX-error paths as well, so prior replies cannot become the new result.
+
+CI rejects either owner function growing beyond 512 bytes. The optional
+canmode dry bench exercises Listen-Only/Normal/Listen-Only mode transitions
+with `transmitOwnedFrame` returning before any physical TX call. This checks
+the reproduced stack path on disconnected USB hardware without CAN traffic.
+It does not establish live-ECU transaction/caching acceptance. Diagnostic
+allowlist, finite lease, single owner, cache and fault rules are unchanged.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <atomic>
 
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
@@ -86,8 +87,8 @@ class SerialProtocol {
   ElmCompat elm_{};
   ElmLink elm_link_ = ElmLink::None;
   bool elm_mode_ = false;
-  DemoSetting demo_setting_ = DemoSetting::Auto;
-  uint32_t demo_start_ms_ = 0;
+  std::atomic<DemoSetting> demo_setting_{DemoSetting::Auto};
+  std::atomic<uint32_t> demo_start_ms_{0};
   bool elm_query_pending_ = false;
   bool elm_batch_active_ = false;
   uint8_t elm_batch_total_ = 0;

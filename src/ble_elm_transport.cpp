@@ -20,7 +20,13 @@ class M5CanBleServerCallbacks final : public NimBLEServerCallbacks {
  public:
   explicit M5CanBleServerCallbacks(BleElmTransport& owner) : owner_(owner) {}
   void onConnect(NimBLEServer*, ble_gap_conn_desc* d) override {
-    if (d) owner_.onPeerConnect(d->conn_handle);
+    Serial.printf("#CORE,task=nimble-host-callback,core=%d,name=%s,priority=%u,stack_free_bytes=%u\n",
+        xPortGetCoreID(),pcTaskGetName(nullptr),
+        static_cast<unsigned>(uxTaskPriorityGet(nullptr)),
+        static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    if (d) owner_.onPeerConnect(d->conn_handle,
+        static_cast<uint16_t>((static_cast<uint16_t>(d->peer_ota_addr.val[1]) << 8) |
+                               d->peer_ota_addr.val[0]));
   }
   void onDisconnect(NimBLEServer*, ble_gap_conn_desc* d) override {
     if (d) owner_.onPeerDisconnect(d->conn_handle);
@@ -76,6 +82,12 @@ void BleElmTransport::setError(const char* message) {
 
 bool BleElmTransport::begin() {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#if defined(ARDUINO_ARCH_ESP32)
+  // NimBLE-Arduino 1.4 uses CONFIG_BT_NIMBLE_PINNED_TO_CORE, not the
+  // MYNEWT_VAL name used by other NimBLE ports. Reject silent core0 fallback.
+  static_assert(CONFIG_BT_NIMBLE_PINNED_TO_CORE == M5CAN_DUAL_BLE_APP_CORE,
+                "NimBLE host and BLE worker must share the configured core");
+#endif
   NimBLEDevice::init(cfg::kBleDeviceName);
   NimBLEDevice::setMTU(247);
   NimBLEServer* server=NimBLEDevice::createServer();
@@ -245,7 +257,7 @@ void BleElmTransport::pushEvent(BleClientEvent::Type type,
   event_head_ = next;
 }
 
-void BleElmTransport::onPeerConnect(uint16_t id) {
+void BleElmTransport::onPeerConnect(uint16_t id, uint16_t address_suffix) {
   bool accepted = false;
   portENTER_CRITICAL(&mux_);
   for (auto& peer : clients_) {
@@ -254,6 +266,11 @@ void BleElmTransport::onPeerConnect(uint16_t id) {
       peer.generation = ++next_generation_;
       peer.mtu = 23;
       peer.active = true;
+      peer.traffic = {};
+      peer.traffic.connected = true;
+      peer.traffic.connection_id = id;
+      peer.traffic.generation = peer.generation;
+      peer.traffic.address_suffix = address_suffix;
       connected_ = true;
       pushEvent(BleClientEvent::Type::Connect,id,peer.generation,0);
       accepted = true;
@@ -277,6 +294,7 @@ void BleElmTransport::onPeerDisconnect(uint16_t id) {
     if (peer.active && peer.connection_id == id) {
       pushEvent(BleClientEvent::Type::Disconnect,id,peer.generation,0);
       peer.active = false;
+      peer.traffic.connected = false;
     }
   }
   connected_ = false;
@@ -288,7 +306,7 @@ void BleElmTransport::onPeerDisconnect(uint16_t id) {
 void BleElmTransport::onPeerMtu(uint16_t id, uint16_t mtu) {
   portENTER_CRITICAL(&mux_);
   for (auto& peer : clients_) if (peer.active && peer.connection_id == id)
-    peer.mtu = mtu < 23 ? 23 : mtu;
+    { peer.mtu = mtu < 23 ? 23 : mtu; peer.traffic.mtu = peer.mtu; }
   portEXIT_CRITICAL(&mux_);
 }
 
@@ -296,12 +314,17 @@ void BleElmTransport::onPeerWrite(uint16_t id,
                                   const uint8_t* data, size_t length) {
   if (!data || !length) return;
   portENTER_CRITICAL(&mux_);
-  for (const auto& peer : clients_) {
+  for (auto& peer : clients_) {
     if (peer.active && peer.connection_id == id) {
+      ++peer.traffic.rx_writes;
       for (size_t i = 0; i < length; ++i) {
+        const size_t before_overflow=stats_.rx_overflow;
         pushEvent(BleClientEvent::Type::Byte,id,peer.generation,data[i]);
+        if (stats_.rx_overflow != before_overflow) break;
         ++stats_.rx_bytes;
+        ++peer.traffic.rx_bytes;
       }
+      peer.traffic.last_rx_ms=millis();
       break;
     }
   }
@@ -336,6 +359,14 @@ uint8_t BleElmTransport::connectedClientCount() const {
   for (const auto& peer : clients_) if (peer.active) ++count;
   portEXIT_CRITICAL(&mux_);
   return count;
+}
+
+BlePeersSnapshot BleElmTransport::peerTraffic() const {
+  BlePeersSnapshot snapshot{};
+  portENTER_CRITICAL(&mux_);
+  for (size_t i=0;i<kMaxClients;++i) snapshot.peers[i]=clients_[i].traffic;
+  portEXIT_CRITICAL(&mux_);
+  return snapshot;
 }
 
 size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
@@ -399,6 +430,17 @@ size_t BleElmTransport::writeTo(uint16_t id, uint32_t gen,
   stats_.targeted_notifications += chunks;
   stats_.notify_retries += retries;
   if (sent<length) ++stats_.notify_failures;
+  // Reconnect generation prevents old completions from polluting a new peer.
+  for (auto& peer : clients_) {
+    if (peer.active && peer.connection_id==id && peer.generation==gen) {
+      peer.traffic.tx_bytes += sent;
+      peer.traffic.notifications += chunks;
+      peer.traffic.notify_retries += retries;
+      if (sent<length) ++peer.traffic.notify_failures;
+      peer.traffic.last_tx_ms = millis();
+      break;
+    }
+  }
   portEXIT_CRITICAL(&mux_);
   if (sent<length && isClientConnected(id,gen)) server_->disconnect(id);
   return sent;

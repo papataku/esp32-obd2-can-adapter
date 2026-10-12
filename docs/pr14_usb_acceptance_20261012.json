@@ -1,0 +1,622 @@
+{
+  "firmware_code": "de160e03cee920e9764ae6a3d69aa12d2017b8af",
+  "normal20_sha256": "66d340f250299b85544cc35997a96f12de51182c80fe620bc3d5dc6d13e00056",
+  "stop": "user requested; long acceptance deferred",
+  "continuous_wall_seconds": 1476,
+  "full_65minute_pass": false,
+  "analysis": {
+    "pass": false,
+    "elapsed": 1476,
+    "faults": [],
+    "mapping": {
+      "ring": "DD41",
+      "jc": "FB19"
+    },
+    "cores": {
+      "can-owner": {
+        "core": 0,
+        "detail": ",priority=22"
+      },
+      "ble-elm": {
+        "core": 1,
+        "detail": ",priority=4"
+      },
+      "arduino-ui": {
+        "core": 1,
+        "detail": ",can-owner-core=0,ble-app-core=1"
+      },
+      "nimble-host-callback": {
+        "core": 1,
+        "detail": ",name=nimble_host,priority=21,stack_free_bytes=1932"
+      }
+    },
+    "meters": {
+      "ring": {
+        "seconds": 1480.317,
+        "rates_rpm_speed_hv_coolant_soc": [
+          9.9864,
+          1.9996,
+          2.0002,
+          1.9996,
+          1.9996
+        ],
+        "health_rows": 148,
+        "connected_all": true,
+        "rx_dropped_max": 0,
+        "heap_min": 106232,
+        "stack_free_min_bytes": 4432,
+        "short_interval_min_hz": 8.9964,
+        "below9hz": [
+          {
+            "time": "2026-10-12T09:11:28.696",
+            "seconds": 10.004,
+            "hz": 8.9964
+          },
+          {
+            "time": "2026-10-12T09:22:18.749",
+            "seconds": 10.001,
+            "hz": 8.9991
+          }
+        ],
+        "rtt_samples": 24,
+        "rtt_p50_range_ms": [
+          25,
+          27
+        ],
+        "rtt_p95_range_ms": [
+          33,
+          36
+        ],
+        "rtt_observed_max_ms": 59
+      },
+      "jc": {
+        "seconds": 1480.406,
+        "rates_rpm_speed_hv_coolant_soc": [
+          1.9995,
+          9.9567,
+          1.9995,
+          2.0001,
+          1.9995
+        ],
+        "health_rows": 148,
+        "connected_all": true,
+        "rx_dropped_max": 0,
+        "heap_min": 137800,
+        "stack_free_min_bytes": 4416,
+        "short_interval_min_hz": 8.5906,
+        "below9hz": [
+          {
+            "time": "2026-10-12T09:22:07.883",
+            "seconds": 10.001,
+            "hz": 8.9991
+          },
+          {
+            "time": "2026-10-12T09:22:18.011",
+            "seconds": 10.0,
+            "hz": 8.6
+          },
+          {
+            "time": "2026-10-12T09:22:27.942",
+            "seconds": 10.002,
+            "hz": 8.5983
+          },
+          {
+            "time": "2026-10-12T09:22:37.859",
+            "seconds": 10.011,
+            "hz": 8.5906
+          }
+        ],
+        "rtt_samples": 23,
+        "rtt_p50_range_ms": [
+          29,
+          50
+        ],
+        "rtt_p95_range_ms": [
+          35,
+          145
+        ],
+        "rtt_observed_max_ms": 148
+      }
+    },
+    "adapter": {
+      "heap_internal_min_bytes": 197928,
+      "can_stack_free_min_bytes": 5232,
+      "ble_stack_free_min_bytes": 4120,
+      "ble_poll_peak_us": 10549,
+      "ui_loop_gap_peak_us": 20008
+    },
+    "reboot_markers": [],
+    "fatal_lines": []
+  },
+  "dry_mode_test": {
+    "boots": {
+      "adapter": 1,
+      "ring": 1,
+      "jc": 1
+    },
+    "query_count": 1540,
+    "physical_can_rx_tx_max": [
+      0,
+      0,
+      0
+    ],
+    "can_stack_free_min_bytes": 4416,
+    "ble_stack_free_min_bytes": 4120,
+    "heap_internal_min_bytes": 197964,
+    "cycles": 2,
+    "expected_driver_error_replies_during_off": true
+  },
+  "functional_windows": [
+    {
+      "name": "SmartRing only mapping",
+      "meters": {
+        "ring": {
+          "seconds": 50.006,
+          "rates_rpm_speed_hv_coolant_soc": [
+            9.9988,
+            1.9998,
+            1.9998,
+            1.9998,
+            1.9998
+          ]
+        }
+      },
+      "peers": [
+        {
+          "slot": 2,
+          "gen": 2,
+          "addr": "DD41",
+          "seconds": 44.93628383311443,
+          "rx_Bps": 186.264,
+          "tx_Bps": 759.075,
+          "notify_per_s": 48.068
+        }
+      ],
+      "peer_end": [
+        {
+          "time": 1359289.395195666,
+          "slot": 2,
+          "up": 1,
+          "id": 2,
+          "gen": 2,
+          "addr": "DD41",
+          "mtu": 247,
+          "rx": 13357,
+          "tx": 54378,
+          "writes": 871,
+          "notify": 3449,
+          "retries": 0,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "name": "JC only mapping",
+      "meters": {
+        "jc": {
+          "seconds": 40.016,
+          "rates_rpm_speed_hv_coolant_soc": [
+            1.9992,
+            9.996,
+            1.9992,
+            1.9992,
+            1.9992
+          ]
+        }
+      },
+      "peers": [
+        {
+          "slot": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "seconds": 44.979479833040386,
+          "rx_Bps": 186.085,
+          "tx_Bps": 742.339,
+          "notify_per_s": 40.018
+        }
+      ],
+      "peer_end": [
+        {
+          "time": 1359349.325515958,
+          "slot": 1,
+          "up": 1,
+          "id": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "mtu": 247,
+          "rx": 9717,
+          "tx": 38729,
+          "writes": 636,
+          "notify": 2097,
+          "retries": 0,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "name": "rpm_speed",
+      "meters": {
+        "ring": {
+          "seconds": 40.009,
+          "rates_rpm_speed_hv_coolant_soc": [
+            9.9978,
+            1.9996,
+            1.9996,
+            1.9996,
+            1.9996
+          ]
+        },
+        "jc": {
+          "seconds": 40.0,
+          "rates_rpm_speed_hv_coolant_soc": [
+            2.0,
+            10.0,
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "peers": [
+        {
+          "slot": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "seconds": 45.01525583281182,
+          "rx_Bps": 185.937,
+          "tx_Bps": 741.749,
+          "notify_per_s": 39.986
+        },
+        {
+          "slot": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "seconds": 45.01525283395313,
+          "rx_Bps": 185.937,
+          "tx_Bps": 757.743,
+          "notify_per_s": 47.984
+        }
+      ],
+      "peer_end": [
+        {
+          "time": 1359409.470693583,
+          "slot": 1,
+          "up": 1,
+          "id": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "mtu": 247,
+          "rx": 20877,
+          "tx": 83249,
+          "writes": 1356,
+          "notify": 4497,
+          "retries": 0,
+          "failed": 0
+        },
+        {
+          "time": 1359409.470754625,
+          "slot": 2,
+          "up": 1,
+          "id": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "mtu": 247,
+          "rx": 11032,
+          "tx": 44903,
+          "writes": 721,
+          "notify": 2849,
+          "retries": 0,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "name": "water_power",
+      "meters": {
+        "ring": {
+          "seconds": 40.007,
+          "rates_rpm_speed_hv_coolant_soc": [
+            1.9997,
+            1.9997,
+            1.9997,
+            1.9997,
+            1.9997
+          ]
+        },
+        "jc": {
+          "seconds": 50.049,
+          "rates_rpm_speed_hv_coolant_soc": [
+            1.998,
+            2.018,
+            10.0102,
+            1.998,
+            2.018
+          ]
+        }
+      },
+      "peers": [
+        {
+          "slot": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "seconds": 49.95881620794535,
+          "rx_Bps": 188.876,
+          "tx_Bps": 1009.552,
+          "notify_per_s": 54.445
+        },
+        {
+          "slot": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "seconds": 49.95875441702083,
+          "rx_Bps": 98.081,
+          "tx_Bps": 438.362,
+          "notify_per_s": 26.021
+        }
+      ],
+      "peer_end": [
+        {
+          "time": 1359474.361021416,
+          "slot": 1,
+          "up": 1,
+          "id": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "mtu": 247,
+          "rx": 33156,
+          "tx": 147964,
+          "writes": 2159,
+          "notify": 7987,
+          "retries": 0,
+          "failed": 0
+        },
+        {
+          "time": 1359474.361086375,
+          "slot": 2,
+          "up": 1,
+          "id": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "mtu": 247,
+          "rx": 17723,
+          "tx": 74535,
+          "writes": 1133,
+          "notify": 4619,
+          "retries": 0,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "name": "soc_rpm",
+      "meters": {
+        "ring": {
+          "seconds": 40.01,
+          "rates_rpm_speed_hv_coolant_soc": [
+            1.9995,
+            1.9995,
+            1.9995,
+            1.9995,
+            1.9995
+          ]
+        },
+        "jc": {
+          "seconds": 40.014,
+          "rates_rpm_speed_hv_coolant_soc": [
+            9.9965,
+            1.9993,
+            1.9993,
+            1.9993,
+            1.9993
+          ]
+        }
+      },
+      "peers": [
+        {
+          "slot": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "seconds": 45.17106612515636,
+          "rx_Bps": 199.464,
+          "tx_Bps": 769.298,
+          "notify_per_s": 46.424
+        },
+        {
+          "slot": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "seconds": 45.171062582870945,
+          "rx_Bps": 97.629,
+          "tx_Bps": 436.341,
+          "notify_per_s": 25.902
+        }
+      ],
+      "peer_end": [
+        {
+          "time": 1359529.496640708,
+          "slot": 1,
+          "up": 1,
+          "id": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "mtu": 247,
+          "rx": 44175,
+          "tx": 190689,
+          "writes": 2917,
+          "notify": 10559,
+          "retries": 0,
+          "failed": 0
+        },
+        {
+          "time": 1359529.496703541,
+          "slot": 2,
+          "up": 1,
+          "id": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "mtu": 247,
+          "rx": 23113,
+          "tx": 98625,
+          "writes": 1463,
+          "notify": 6049,
+          "retries": 0,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "name": "power_water",
+      "meters": {
+        "ring": {
+          "seconds": 50.009,
+          "rates_rpm_speed_hv_coolant_soc": [
+            1.9996,
+            1.9996,
+            9.9982,
+            1.9996,
+            1.9996
+          ]
+        },
+        "jc": {
+          "seconds": 50.009,
+          "rates_rpm_speed_hv_coolant_soc": [
+            1.9996,
+            1.9996,
+            1.9996,
+            1.9996,
+            1.9996
+          ]
+        }
+      },
+      "peers": [
+        {
+          "slot": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "seconds": 49.90138216689229,
+          "rx_Bps": 111.179,
+          "tx_Bps": 451.851,
+          "notify_per_s": 25.671
+        },
+        {
+          "slot": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "seconds": 49.90135954110883,
+          "rx_Bps": 218.271,
+          "tx_Bps": 1039.892,
+          "notify_per_s": 58.095
+        }
+      ],
+      "peer_end": [
+        {
+          "time": 1359594.360858708,
+          "slot": 1,
+          "up": 1,
+          "id": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "mtu": 247,
+          "rx": 51825,
+          "tx": 221599,
+          "writes": 3442,
+          "notify": 12328,
+          "retries": 0,
+          "failed": 0
+        },
+        {
+          "time": 1359594.360899666,
+          "slot": 2,
+          "up": 1,
+          "id": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "mtu": 247,
+          "rx": 36662,
+          "tx": 163014,
+          "writes": 2451,
+          "notify": 9654,
+          "retries": 0,
+          "failed": 0
+        }
+      ]
+    },
+    {
+      "name": "rpm_soc",
+      "meters": {
+        "ring": {
+          "seconds": 50.011,
+          "rates_rpm_speed_hv_coolant_soc": [
+            9.9978,
+            1.9996,
+            1.9996,
+            1.9996,
+            1.9996
+          ]
+        },
+        "jc": {
+          "seconds": 50.01,
+          "rates_rpm_speed_hv_coolant_soc": [
+            1.9996,
+            1.9996,
+            1.9996,
+            1.9996,
+            1.9996
+          ]
+        }
+      },
+      "peers": [
+        {
+          "slot": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "seconds": 44.99911337485537,
+          "rx_Bps": 110.802,
+          "tx_Bps": 450.809,
+          "notify_per_s": 25.601
+        },
+        {
+          "slot": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "seconds": 44.99913941603154,
+          "rx_Bps": 200.937,
+          "tx_Bps": 772.948,
+          "notify_per_s": 47.868
+        }
+      ],
+      "peer_end": [
+        {
+          "time": 1359654.476343416,
+          "slot": 1,
+          "up": 1,
+          "id": 1,
+          "gen": 3,
+          "addr": "FB19",
+          "mtu": 247,
+          "rx": 58473,
+          "tx": 248647,
+          "writes": 3898,
+          "notify": 13864,
+          "retries": 0,
+          "failed": 0
+        },
+        {
+          "time": 1359654.476403041,
+          "slot": 2,
+          "up": 1,
+          "id": 2,
+          "gen": 4,
+          "addr": "DD41",
+          "mtu": 247,
+          "rx": 48771,
+          "tx": 210123,
+          "writes": 3289,
+          "notify": 12555,
+          "retries": 0,
+          "failed": 0
+        }
+      ]
+    }
+  ]
+}

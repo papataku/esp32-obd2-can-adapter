@@ -6,6 +6,7 @@
 #include "diagnostic_policy.h"
 #include "diagnostic_request_pacer.h"
 #include "diagnostic_result_cache.h"
+#include "diagnostic_transaction.h"
 
 namespace m5can {
 
@@ -56,6 +57,9 @@ class CanMonitor {
   void revokeLease();
   uint32_t leaseRemainingMs() const;
 
+  uint32_t ownerStackFreeBytes() const {
+    return rx_task_ ? static_cast<uint32_t>(uxTaskGetStackHighWaterMark(rx_task_)) : 0;
+  }
   bool submitQuery(const DiagnosticRequest& request);
   bool pollQueryResult(DiagnosticResult& result);
   bool queryPending() const { return query_in_flight_; }
@@ -77,7 +81,7 @@ class CanMonitor {
 
   bool leaseAllowsBudget(uint32_t budget_ms) const;
   bool waitForRateLimit(const DiagnosticRequest& request);
-  DiagnosticResult performQuery(const DiagnosticRequest& request);
+  void performQuery(const DiagnosticRequest& request, DiagnosticResult& result);
 
   esp_err_t transmitOwnedFrame(const twai_message_t& message,
                                uint32_t wait_ms);
@@ -92,6 +96,7 @@ class CanMonitor {
   QueueHandle_t result_queue_ = nullptr;
   TaskHandle_t rx_task_ = nullptr;
 
+  mutable portMUX_TYPE query_mux_ = portMUX_INITIALIZER_UNLOCKED;
   mutable portMUX_TYPE stats_mux_ = portMUX_INITIALIZER_UNLOCKED;
   mutable portMUX_TYPE lease_mux_ = portMUX_INITIALIZER_UNLOCKED;
   CanStats stats_{};
@@ -101,6 +106,10 @@ class CanMonitor {
   uint64_t last_status_poll_us_ = 0;
   DiagnosticRequestPacer diagnostic_pacer_{};
   DiagnosticResultCache result_cache_{};
+  // Only rxTask accesses these. Queues/cache copy the completed result before
+  // reuse; avoid multi-kilobyte result/transaction frames around TWAI IPC calls.
+  DiagnosticResult owner_result_{};
+  DiagnosticTransaction owner_transaction_{};
   uint64_t lease_deadline_ms_ = 0;
   char last_error_[96] = "not started";
 };
