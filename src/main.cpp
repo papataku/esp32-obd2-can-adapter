@@ -113,6 +113,10 @@ void loop() {
   m5can::bleEvidenceJournal().observeQueueDrops(g_ble.diagnosticDrops());
   for (unsigned n=0;n<8 && g_ble.pollDiagnostic(event);++n) {
     m5can::bleEvidenceJournal().append(event,g_ble.diagnosticDrops());
+    // Long CDC serial writes during a dual-peer session compete with
+    // the Arduino loop and can skew the very latencies being diagnosed.
+    // Persist complete bounded evidence now; dump it after the run.
+    if(g_ble.connectedClientCount()!=0 || g_can.queryPending())continue;
     const char* kind=event.kind==m5can::BleDiagnosticEvent::Kind::Connect ? "CONNECT"
         : event.kind==m5can::BleDiagnosticEvent::Kind::Disconnect ? "DISCONNECT"
         : event.kind==m5can::BleDiagnosticEvent::Kind::Reject ? "REJECT" : "ERROR";
