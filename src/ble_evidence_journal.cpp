@@ -134,6 +134,32 @@ void BleEvidenceJournal::append(const BleDiagnosticEvent& event,
   out.retries=event.retries;out.failed=event.failed;
   out.code=event.error_code;out.detail=event.error_detail;
   out.rx_bytes=event.rx_bytes;out.tx_bytes=event.tx_bytes;
+  if(event.kind==BleDiagnosticEvent::Kind::Disconnect) {
+    bool found=false;
+    // Up to four distinct observed link identities per boot. The aggregate
+    // is retained when the 12 detailed events rotate out of RAM/NVS.
+    for(auto& summary:record_.disconnect_peers) {
+      if(summary.count && summary.address_suffix==event.address_suffix &&
+         summary.address_suffix!=0) {
+        found=true;
+      } else if(!summary.count) {
+        found=true;
+        summary.address_suffix=event.address_suffix;
+        summary.first_ms=event.uptime_ms;
+        summary.first_reason=event.reason_known?event.reason:INT32_MIN;
+      }
+      if(found) {
+        summary.conn=event.connection_id;
+        summary.generation=event.generation;
+        if(summary.count!=UINT32_MAX)++summary.count;
+        summary.last_ms=event.uptime_ms;
+        summary.last_reason=event.reason_known?event.reason:INT32_MIN;
+        break;
+      }
+    }
+    if(!found && record_.peer_summary_overflow!=UINT32_MAX)
+      ++record_.peer_summary_overflow;
+  }
   if(event.kind==BleDiagnosticEvent::Kind::Disconnect)
     recordFault(static_cast<uint16_t>(DiagnosticError::BleDisconnected),
                 event.reason_known?static_cast<uint32_t>(event.reason):UINT32_MAX,
@@ -214,6 +240,18 @@ void BleEvidenceJournal::print(const Record& r,bool persisted) {
         diagnosticErrorName(status?static_cast<uint16_t>(200+status):0),
         static_cast<unsigned long>(r.can_result_status[status]));
   }
+  Serial.printf("#BLELOG,PEER_SUMMARY,boot=%lu,overflow=%lu\n",
+      static_cast<unsigned long>(r.boot),
+      static_cast<unsigned long>(r.peer_summary_overflow));
+  for(const auto& peer:r.disconnect_peers) if(peer.count)
+    Serial.printf("#BLELOG,PEER_DISCONNECT,boot=%lu,peer_suffix=%04X,id=%u,gen=%lu,count=%lu,first_ms=%lu,last_ms=%lu,first_reason=%ld,last_reason=%ld\n",
+        static_cast<unsigned long>(r.boot),peer.address_suffix,peer.conn,
+        static_cast<unsigned long>(peer.generation),
+        static_cast<unsigned long>(peer.count),
+        static_cast<unsigned long>(peer.first_ms),
+        static_cast<unsigned long>(peer.last_ms),
+        static_cast<long>(peer.first_reason),
+        static_cast<long>(peer.last_reason));
   for(const auto& fault:r.faults)if(fault.code) {
     Serial.printf("#BLELOG,FAULT,boot=%lu,code=%u,name=%s,count=%lu,first_ms=%lu,last_ms=%lu,first_detail=%lu,last_detail=%lu\n",
         static_cast<unsigned long>(r.boot),fault.code,
