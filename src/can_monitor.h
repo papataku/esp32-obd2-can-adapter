@@ -34,6 +34,9 @@ struct CanStats {
   uint64_t query_cache_hits = 0;        // Positive validated ISO-TP response
   uint64_t query_no_data = 0;   // No matching response
   uint64_t query_failed = 0;    // Lease, TX, bus or protocol error
+  // CAN owner classifications, including USB-originated requests that
+  // never pass through DualBleElm. Index is DiagnosticStatus raw enum.
+  uint32_t result_status_count[10]{};
   uint32_t last_response_can_id = 0; // Actual responder, not ambient CAN RX
   bool query_active = false;
   uint32_t driver_rx_missed = 0;
