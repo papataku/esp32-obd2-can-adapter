@@ -359,13 +359,20 @@ void DualBleElm::onResult() {
     uint32_t responder=0;
     const bool first_success=
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
-    const auto decision=
+    auto decision=
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
+    const bool s_rpm=s.request.data[1]==0x0C;
+    const DiagnosticRequest& rpm=s_rpm?s.request:other->request;
+    const DiagnosticRequest& speed=s_rpm?other->request:s.request;
+    if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
+        !pid_cache_.rememberApprovedPair(
+            rpm,speed,virtual_frames,now_us)) {
+      // A previously identified ECU differs from this grouped responder.
+      // Do not send or cache ambiguous signals as successful readings.
+      adaptive_multi_pid_.disable();
+      decision=AdaptiveMultiPid::Decision::RetryLegacy;
+    }
     if (decision==AdaptiveMultiPid::Decision::UseGrouped) {
-      const bool s_rpm=s.request.data[1]==0x0C;
-      const DiagnosticRequest& rpm=s_rpm?s.request:other->request;
-      const DiagnosticRequest& speed=s_rpm?other->request:s.request;
-      pid_cache_.rememberApprovedPair(rpm,speed,virtual_frames,now_us);
       // The per-item M5ITEM lines were already emitted when staged.
       // Never rewrite or cross-deliver a peer's batch response.
       appendFrame(s,virtual_frames[s_rpm?0:1]);
@@ -411,12 +418,17 @@ void DualBleElm::onResult() {
     uint32_t responder=0;
     const bool first_success=
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
-    const auto decision=
+    auto decision=
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
+    const DiagnosticRequest rpm=requestOf(s.items[s.batch_next],s.elm);
+    const DiagnosticRequest speed=requestOf(s.items[s.batch_next+1],s.elm);
+    if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
+        !pid_cache_.rememberApprovedPair(
+            rpm,speed,virtual_frames,now_us)) {
+      adaptive_multi_pid_.disable();
+      decision=AdaptiveMultiPid::Decision::RetryLegacy;
+    }
     if (decision==AdaptiveMultiPid::Decision::UseGrouped) {
-      const DiagnosticRequest rpm=requestOf(s.items[s.batch_next],s.elm);
-      const DiagnosticRequest speed=requestOf(s.items[s.batch_next+1],s.elm);
-      pid_cache_.rememberApprovedPair(rpm,speed,virtual_frames,now_us);
       emitLine(s,"M5ITEM:00:010C");
       appendFrame(s,virtual_frames[0]);
       emitLine(s,"M5ITEM:00:010D");
