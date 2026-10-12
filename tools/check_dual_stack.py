@@ -12,6 +12,8 @@ BUDGETS = {
     'm5can::DualBleElm::onLine(': 1280,
     'm5can::DualBleElm::onResult(': 2048,
     'm5can::BleElmTransport::writeTo(': 256,
+    'm5can::BleElmTransport::queueTo(': 256,
+    'm5can::BleElmTransport::pollTx(': 512,
     'm5can::DriveLog::addEvent(': 192,
     'm5can::DriveLog::outcome(': 128,
     'm5can::DriveLog::submitted(': 128,
@@ -61,7 +63,10 @@ for env in sys.argv[1:]:
     assert max(startup,export)<=8192,f'{env}: startup/export reserve {startup}/{export}>8192'
     print(f'{env}: startup/export+library reserve {startup}/{export}/8192')
     if '::bleAppTask(' in frames:
-        assert set(BUDGETS).issubset(frames), f'{env}: missing functions {set(BUDGETS)-set(frames)}'
+        required=set(BUDGETS)-{'m5can::BleElmTransport::writeTo('}
+        if 'memory_diagnostic_baseline' in env:
+            required.add('m5can::BleElmTransport::writeTo(')
+        assert required.issubset(frames), f'{env}: missing functions {required-set(frames)}'
         # Stack depth depends on one call chain, NOT the sum of every
         # mutually exclusive session callback. Conservatively bound paths:
         # bleAppTask -> poll -> event -> onLine -> advanceBatch
@@ -87,7 +92,9 @@ for env in sys.argv[1:]:
         estimate = (sz('::bleAppTask(') +
                     sz('m5can::DualBleElm::poll(') +
                     max(event_path,result_path,dispatch_path) +
-                    sz('m5can::BleElmTransport::writeTo(') + 2048)
+                    max(sz('m5can::BleElmTransport::writeTo('),
+                        sz('m5can::BleElmTransport::queueTo('),
+                        sz('m5can::BleElmTransport::pollTx(')) + 2048)
         assert estimate <= 8192, f'{env}: worst BLE chain+reserve {estimate}>8192'
         print(f'PASS {env}: frames {frames}; worst chain+reserve={estimate}/8192')
     else:

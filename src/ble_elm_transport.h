@@ -31,6 +31,8 @@ struct BleStats {
   uint32_t notify_retries = 0;
   uint32_t notify_failures = 0;
   uint32_t mbuf_alloc_failures=0,notify_api_failures=0;
+  uint32_t credit_waits=0,tx_queue_overflows=0,tx_stalls=0;
+  uint16_t tx_queue_peak=0,host_pending_peak=0;
   uint32_t memory_error_ms=0;
   uint16_t memory_error_conn=0,msys_min_free=UINT16_MAX;
   int32_t memory_error_code=0;
@@ -96,8 +98,15 @@ class BleElmTransport {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   bool pollClientEvent(BleClientEvent& event);
   bool isClientConnected(uint16_t connection_id, uint32_t generation) const;
+#if defined(M5CAN_SYNC_NOTIFY_DIAGNOSTIC)
+  // Old producer for cause-isolation fixtures only, absent from normal dual builds.
   size_t writeTo(uint16_t connection_id, uint32_t generation,
                  const uint8_t* data, size_t length);
+#endif
+  // Accept ordered output into bounded application RAM, not into NimBLE.
+  size_t queueTo(uint16_t connection_id,uint32_t generation,
+                 const uint8_t* data,size_t length);
+  void pollTx(); // BLE application worker only; at most one chunk per peer.
   uint8_t connectedClientCount() const;
   BlePeersSnapshot peerTraffic() const;
   bool pollDiagnostic(BleDiagnosticEvent& event);
@@ -141,10 +150,15 @@ class BleElmTransport {
     bool active = false;
     bool gap_disconnect_seen = false;
     BlePeerTraffic traffic{};
+    uint8_t pending[4096]{};
+    uint16_t pending_head=0,pending_size=0;
+    uint32_t progress_ms=0;
+    bool stalled_reported=false,tx_aborted=false;
   };
   static constexpr size_t kMaxClients = 2;
   static constexpr size_t kEventBufferSize = 2048;
   Client clients_[kMaxClients]{};
+  uint8_t tx_round_robin_=0;
   BleClientEvent events_[kEventBufferSize]{};
   size_t event_head_ = 0;
   size_t event_tail_ = 0;

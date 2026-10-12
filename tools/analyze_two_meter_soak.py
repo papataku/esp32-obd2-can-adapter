@@ -56,6 +56,18 @@ def analyze(root):
             if re.fullmatch(r'#BLE_DUAL,clients=\d+,connects=\d+,disconnects=\d+,rx_overflow=\d+,notify=\d+,retries=\d+,failed=\d+', line):
                 for k in keys: counters.setdefault('adapter:'+k, []).append((row['monotonic'], int(d[k])))
             else: invalid('dual')
+        for tag, pattern, counter_keys, range_keys in [
+            ('#BLE_MEMORY,', r'#BLE_MEMORY,alloc_failed=\d+,api_failed=\d+,min_free=\d+,last_ms=\d+,last_conn=\d+,last_rc=-?\d+',
+             ['alloc_failed', 'api_failed'], ['min_free']),
+            ('#BLE_FLOW,', r'#BLE_FLOW,waits=\d+,queue_peak=\d+,host_peak=\d+,overflow=\d+,stalls=\d+',
+             ['waits', 'overflow', 'stalls'], ['queue_peak', 'host_peak'])]:
+            if line.startswith(tag):
+                if re.fullmatch(pattern, line):
+                    for k in counter_keys:
+                        counters.setdefault('adapter:'+k, []).append((row['monotonic'], int(d[k])))
+                    for k in range_keys:
+                        series.setdefault('adapter:'+k, []).append(int(d[k]))
+                else: invalid(tag[1:-1])
         if line.startswith('POLL '):
             match = re.match(r'POLL (\d+) ', line)
             if match and re.fullmatch(r'POLL \d+ enabled=[01] period=\d+ ok=\d+ timeout=\d+ error=\d+ latency=\d+', line):

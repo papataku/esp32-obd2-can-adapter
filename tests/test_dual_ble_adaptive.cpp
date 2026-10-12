@@ -109,12 +109,14 @@ struct Bench {
     write(a,"ATH1"); write(b,"ATH1"); dual.poll();
     write(a,"ATL0"); write(b,"ATL0"); dual.poll();
     write(a,"ATS1"); write(b,"ATS1"); dual.poll();
+    flushTx();
     test_notifications.clear();
   }
   void batchBoth() {
     write(a,"ATM5B00:010C,010D,0105");
     write(b,"ATM5B00:010C,010D,0105");
   }
+  void flushTx() {for(int i=0;i<256;++i)ble.pollTx();}
   void drain() {for(int i=0;i<40;++i){dual.poll();g_test_millis+=50;}}
   size_t groups() const {
     size_t n=0;for(const auto& r:requests) if(r.length==3 && r.data[0]==1)++n;
@@ -231,9 +233,11 @@ int main() {
    write(bench.b,"ATM5B00:010D,0105");
    bench.dual.poll();bench.dual.poll();bench.dual.poll();
    assert(bench.groups()==1 && requests.size()==2);
+   bench.flushTx();
    assert(output(7).find("M5ITEM:00:010C\r18DAF101 04 41 0C 13 88")!=std::string::npos);
    assert(output(7).find("M5ITEM:00:010D")==std::string::npos);
    assert(output(19).find("M5ITEM:00:010D\r18DAF101 03 41 0D 50")!=std::string::npos);
+   bench.flushTx();
    assert(output(19).find("M5ITEM:00:010C")==std::string::npos);
    // Both parameters are cached individually: reusing RPM in a different
    // BLE session within the TTL does not generate a new CAN transaction.
@@ -241,6 +245,7 @@ int main() {
    write(bench.b,"ATM5B00:010C,0105");
    bench.dual.poll();bench.dual.poll();
    assert(requests.size()==2);
+   bench.flushTx();
    assert(output(19).find("M5ITEM:00:010C")!=std::string::npos);
   }
   // Matching pending requests from two peers should also fan out one
@@ -250,6 +255,7 @@ int main() {
    write(bench.b,"ATM5B00:0105,010D");
    bench.dual.poll();bench.dual.poll();bench.dual.poll();
    assert(requests.size()==2 && bench.groups()==0);
+   bench.flushTx();
    assert(output(7).find("M5ITEM:00:0105")!=std::string::npos);
    assert(output(19).find("M5ITEM:00:0105")!=std::string::npos);
   }

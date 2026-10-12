@@ -95,7 +95,7 @@ void DualBleElm::event(const BleClientEvent& event) {
 void DualBleElm::flush(Session& s) {
   if (!s.output_size) return;
   if (s.active && ble_.isClientConnected(s.conn_id,s.generation))
-    ble_.writeTo(s.conn_id,s.generation,s.output,s.output_size);
+    ble_.queueTo(s.conn_id,s.generation,s.output,s.output_size);
   s.output_size = 0;
 }
 
@@ -230,7 +230,7 @@ void DualBleElm::onLine(Session& s,const char* line) {
     // Exactly one outstanding command per BLE client; the other client's
     // independent ELM session remains free to enqueue a request.
     static const uint8_t busy[]={'B','U','S','Y','\r','>'};
-    ble_.writeTo(s.conn_id,s.generation,busy,sizeof(busy));
+    ble_.queueTo(s.conn_id,s.generation,busy,sizeof(busy));
     return;
   }
   char compact[96]{};
@@ -750,6 +750,7 @@ void DualBleElm::poll() {
     event(event_item);
   onResult();
   dispatch();
+  ble_.pollTx();
 }
 } // namespace m5can
 

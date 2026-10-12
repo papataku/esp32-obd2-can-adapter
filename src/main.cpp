@@ -210,6 +210,9 @@ void loop() {
         static_cast<unsigned long>(stats.notify_api_failures),stats.msys_min_free,
         static_cast<unsigned long>(stats.memory_error_ms),stats.memory_error_conn,
         static_cast<long>(stats.memory_error_code));
+    Serial.printf("#BLE_FLOW,waits=%lu,queue_peak=%u,host_peak=%u,overflow=%lu,stalls=%lu\n",
+        static_cast<unsigned long>(stats.credit_waits),stats.tx_queue_peak,stats.host_pending_peak,
+        static_cast<unsigned long>(stats.tx_queue_overflows),static_cast<unsigned long>(stats.tx_stalls));
     Serial.printf("#BLE_TASK,core=%d,poll_peak_us=%lu,stack_free_bytes=%u,ui_loop_peak_us=%lu\n",
         M5CAN_DUAL_BLE_APP_CORE,
         static_cast<unsigned long>(g_ble_poll_peak_us.exchange(0)),

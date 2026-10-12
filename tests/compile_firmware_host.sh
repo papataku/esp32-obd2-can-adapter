@@ -103,6 +103,7 @@ echo "PASS all Phase 3C firmware translation units + demo drive + screen toggle"
 
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  -DM5CAN_SYNC_NOTIFY_DIAGNOSTIC=1 \
   "$ROOT/tests/test_dual_ble_transport.cpp" "$ROOT/src/ble_elm_transport.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-transport-test
 /tmp/m5can-dual-transport-test
@@ -125,6 +126,7 @@ echo "PASS dual BLE targeted chunks and disconnect isolation"
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   -DM5CAN_DUAL_NOTIFY_CHUNK_BYTES=244 \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  -DM5CAN_SYNC_NOTIFY_DIAGNOSTIC=1 \
   "$ROOT/tests/test_dual_ble_transport.cpp" "$ROOT/src/ble_elm_transport.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-mtu-transport-test
 /tmp/m5can-dual-mtu-transport-test
@@ -178,3 +180,11 @@ g++ -std=c++17 -Wall -Wextra -Werror \
 /tmp/m5can-ble-notify-chunk-test
 
 echo "PASS all Phase 3C firmware translation units + demo drive + screen toggle + BLE notify chunk"
+
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_ble_tx_flow.cpp" "$ROOT/src/ble_elm_transport.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-tx-flow-test
+/tmp/m5can-tx-flow-test
+echo "PASS bounded BLE output, fairness, pool reserve, exact recovery, generation, overflow and stall"

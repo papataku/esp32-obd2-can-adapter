@@ -17,17 +17,22 @@ struct os_mbuf { size_t length=0; std::vector<uint8_t> data; };
 struct TestNotify {uint16_t conn; size_t length;std::vector<uint8_t> data;};
 inline std::vector<TestNotify> test_notifications;
 inline int test_notify_busy=0;
-inline int os_msys_num_free(){return 12;}
+inline uint16_t test_busy_conn=UINT16_MAX;
+inline int test_msys_free=12,test_alloc_failures=0;
+inline int os_msys_num_free(){return test_msys_free;}
+inline uint16_t test_blocked_conn=UINT16_MAX;
+inline bool test_notify_credit(uint16_t conn,uint16_t& pending){pending=conn==test_blocked_conn?4:0;return pending<4;}
 inline std::vector<uint16_t> test_disconnect_requests;
 inline constexpr int BLE_HS_ENOMEM=6, BLE_HS_EAGAIN=1, BLE_HS_EBUSY=15;
 inline os_mbuf* ble_hs_mbuf_from_flat(const void* data,size_t length) {
+  if(test_alloc_failures>0){--test_alloc_failures;return nullptr;}
   static os_mbuf buffer;
   buffer.length=length;
   const auto* bytes=static_cast<const uint8_t*>(data);
   buffer.data.assign(bytes,bytes+length);
   return &buffer;
 }
-inline int ble_gattc_notify_custom(uint16_t conn,uint16_t,os_mbuf* packet) { if(test_notify_busy>0){--test_notify_busy;return BLE_HS_ENOMEM;} test_notifications.push_back({conn,packet->length,packet->data}); return 0; }
+inline int ble_gattc_notify_custom(uint16_t conn,uint16_t,os_mbuf* packet) { if(test_notify_busy>0 && (test_busy_conn==UINT16_MAX || test_busy_conn==conn)){--test_notify_busy;return BLE_HS_ENOMEM;} test_notifications.push_back({conn,packet->length,packet->data}); return 0; }
 namespace NIMBLE_PROPERTY {
   static constexpr uint32_t WRITE = 1;
   static constexpr uint32_t WRITE_NR = 2;
