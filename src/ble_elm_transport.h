@@ -14,6 +14,10 @@ struct BleStats {
   uint64_t rx_bytes = 0;
   uint64_t tx_bytes = 0;
   uint32_t rx_overflow = 0;
+  uint32_t connect_count = 0;
+  uint32_t disconnect_count = 0;
+  uint32_t last_connect_ms = 0;
+  uint32_t last_disconnect_ms = 0;
 };
 
 class BleElmTransport {
