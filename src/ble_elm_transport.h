@@ -53,13 +53,15 @@ struct BlePeersSnapshot {
 };
 
 struct BleDiagnosticEvent {
-  enum class Kind : uint8_t { Connect, Disconnect, Reject };
+  enum class Kind : uint8_t { Connect, Disconnect, Reject, Error };
   Kind kind = Kind::Connect;
   uint32_t sequence = 0, uptime_ms = 0, generation = 0;
   uint16_t connection_id = 0, address_suffix = 0, mtu = 23;
   uint16_t interval = 0, latency = 0, supervision = 0;
   int reason = 0;
   bool reason_known = false;
+  uint16_t error_code = 0;
+  uint32_t error_detail = 0;
   uint32_t retries = 0, failed = 0;
   uint64_t rx_bytes = 0, tx_bytes = 0;
 };
@@ -90,6 +92,8 @@ class BleElmTransport {
   BlePeersSnapshot peerTraffic() const;
   bool pollDiagnostic(BleDiagnosticEvent& event);
   uint32_t diagnosticDrops() const;
+  void recordDiagnosticError(uint16_t connection_id,uint32_t generation,
+                             uint16_t code,uint32_t detail=0);
 #endif
   BleStats stats() const;
   const char* lastError() const { return last_error_; }
@@ -113,7 +117,8 @@ class BleElmTransport {
   void pushDiagnostic(BleDiagnosticEvent::Kind kind, uint16_t connection_id,
                       int reason = 0, bool known = false,
                       uint16_t interval = 0, uint16_t latency = 0,
-                      uint16_t supervision = 0);
+                      uint16_t supervision = 0,
+                      uint16_t code=0,uint32_t detail=0);
   void pushEvent(BleClientEvent::Type type, uint16_t connection_id,
                  uint32_t generation, uint8_t byte);
   struct Client {
