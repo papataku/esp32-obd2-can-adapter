@@ -81,7 +81,7 @@ radio-controller failure cannot be assigned an invented NimBLE cause.
 | Notify retry/backpressure, definitive failure | `103` / `104`, `524` / `522` | retry count; raw NimBLE host error as `detail`, counter deltas |
 | GATT stale connection/generation / asynchronous result to old peer | `105` / `404` | **old** generation; no invented new peer identity |
 | GAP diagnostic ring drops | `106` | total lost and stream sequence gaps |
-| Read result (NoData, Busy, lease, policy, rate, driver, BusOff, mode, ISO-TP) | `201..209` | specific `DiagnosticStatus` and transaction duration, not just aggregate `CAN ERROR` |
+| Read result (NoData, Busy, lease, policy, rate, driver, BusOff, mode, ISO-TP) | `201..209` | specific `DiagnosticStatus` and transaction duration, not just aggregate `CAN ERROR`. CAN owner also retains a 10-status outcome histogram **including USB-originated requests** |
 | Grouped PID rejected/stopped or lost peer | `301..303` | CAN status, response count, raw-frame count; PR #25 will add ECU-selection *reason* and original CAN evidence |
 | ELM pending command, too-long input, parser error, old peer result | `401..404` | per-session error, not a global reset |
 | CAN health counters | `501..508` | timeouts, query failures, queue drops, TWAI RX missed/overrun/bus error/arbitration; init failure |
@@ -112,3 +112,9 @@ pass must add grouped ECU choice/fallback reason, grouped RAW-frame timestamps
 and status to a shared offline timeline export, and verify both journals
 survive a physical cold boot without overwriting one another. Tests must
 also check CAN stack budget and CPU1 BLE latency after NVS commits.
+
+A dedicated `#BLELOG,CAN_STATUS` row emits CAN owner's monotonic result
+histogram by status 0..9. This captures results that never reach a BLE peer
+(e.g. USB-originated reads or a result completed after disconnect). Both
+the per-peer error event and the owner histogram may represent the same
+physical transaction; **do not sum them** as independent failure counts.
