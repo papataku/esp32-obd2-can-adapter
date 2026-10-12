@@ -82,6 +82,9 @@ class DualBleElm {
   DiagnosticPidCache pid_cache_{};
   // Avoid allocating a multi-KiB DiagnosticResult on the BLE task stack.
   DiagnosticResult cache_workspace_{};
+  // Separately retained return buffer for the physical CAN transaction.
+  // Never reserve the ~1.7 KiB DiagnosticResult on the BLE worker stack.
+  DiagnosticResult query_result_workspace_{};
   CanMonitor& can_;
   BleElmTransport& ble_;
   SerialProtocol& demo_source_;
