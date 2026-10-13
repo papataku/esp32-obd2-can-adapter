@@ -3,12 +3,17 @@
 #include <algorithm>
 #include <Preferences.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "app_config.h"
 #include "elm_response_formatter.h"
 #include "demo_drive.h"
 #include "drive_log.h"
+#include "log_storage_probe.h"
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#include "ble_evidence_journal.h"
+#endif
 
 namespace m5can {
 namespace {
@@ -486,6 +491,59 @@ void SerialProtocol::handleUsbLine(const char* line) {
     emitTextHello();
   } else if (!std::strcmp(command, "DRIVELOG")) {
     if (drive_log_ble_) driveLog().dump(monitor_,*drive_log_ble_,demoActive());
+#if defined(M5CAN_DEMO_FAULT_FIXTURE) && defined(M5CAN_CAN_MODE_DRY_RUN) && defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  } else if (!std::strcmp(command,"LOGTEST")) {
+    if(!demoActive() || monitor_.queryPending() ||
+       (drive_log_ble_ && drive_log_ble_->connectedClientCount())) {
+      Serial.println("#LOGTEST,ERR,requires=TX_DISABLED_DEMO_AND_NO_PEERS");return;
+    }
+    static DiagnosticResult fixture; // fixed test-only storage, never task stack
+    fixture.status=DiagnosticStatus::Ok;fixture.response_count=5;
+    fixture.raw_frame_count=kDiagnosticMaxRawFrames;
+    fixture.transaction_us=10000;fixture.tx_to_first_response_us=100;
+    for(unsigned i=0;i<kDiagnosticMaxRawFrames;++i) {
+      auto& f=fixture.raw_frames[i];f.can_id=0x18DAF101U+(i%5);f.dlc=8;
+      for(unsigned b=0;b<8;++b)f.data[b]=static_cast<uint8_t>(i+b);
+      fixture.raw_rx_offsets_us[i]=100+i*137;
+    }
+    driveLog().recordFirstProbe(0,fixture,0x18DAF101U,0,0,true);
+    fixture.status=DiagnosticStatus::NoData;
+    driveLog().recordFirstFailure(0,fixture,0x18DAF101U,1,5,true);
+    bleEvidenceJournal().appendError(DiagnosticError::FixtureEvidence,48);
+    Serial.println("#LOGTEST,QUEUED,origin=SYNTHETIC,raw_per_record=48,physical_TX=COMPILED_OUT");
+#endif
+  } else if (!std::strcmp(command, "LOGCAP")) {
+    // An operator explicitly asks for NVS capacity diagnostics. Never
+    // spend serial/NVS inspection time during any active vehicle traffic.
+    bool active=monitor_.queryPending();
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    if(drive_log_ble_ && drive_log_ble_->connectedClientCount())
+      active=true;
+#else
+    if(drive_log_ble_ && drive_log_ble_->connected())
+      active=true;
+#endif
+    if(active)Serial.println("#LOGCAP,ERR,ACTIVE_TRAFFIC,decision=BLOCK");
+    else reportLogStorageCapacity();
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  } else if (!std::strcmp(command, "BLELOG INDEX")) {
+    if (drive_log_ble_) bleEvidenceJournal().index(monitor_,*drive_log_ble_);
+  } else if (!std::strcmp(command, "BLELOG") ||
+             !std::strncmp(command, "BLELOG ",7)) {
+    if (drive_log_ble_) {
+      uint32_t boot=0;
+      if(command[6]==' ') {
+        char* end=nullptr;
+        const unsigned long parsed=std::strtoul(command+7,&end,10);
+        if(end==command+7 || *end || !parsed || parsed>0xFFFFFFFFUL) {
+          Serial.println("#BLELOG,ERR,INVALID_BOOT");
+          return;
+        }
+        boot=static_cast<uint32_t>(parsed);
+      }
+      bleEvidenceJournal().dump(monitor_,*drive_log_ble_,boot);
+    }
+#endif
   } else if (!std::strcmp(command, "STATS")) {
     emitStats(true);
   } else if (!std::strcmp(command, "STREAM ON")) {
@@ -509,7 +567,7 @@ void SerialProtocol::handleUsbLine(const char* line) {
   } else if (!std::strcmp(command, "HELP") ||
              !std::strcmp(command, "?")) {
     Serial.println(
-        "#HELP,INFO STATS DRIVELOG HELP STREAM ON STREAM OFF NATIVE ON; "
+        "#HELP,INFO STATS DRIVELOG LOGCAP BLELOG [boot] BLELOG INDEX HELP STREAM ON STREAM OFF NATIVE ON; "
         "BLE exposes ELM only; DEMO AUTO/ON/OFF (USB)");
   } else if (command[0]) {
     Serial.printf("#ERR,UNKNOWN_COMMAND,%s\n", command);
@@ -719,7 +777,7 @@ void SerialProtocol::emitStats(bool forced) {
       "#STATS,rx=%llu,std=%llu,ext=%llu,rtr=%llu,"
       "drop=%llu,tx=%llu/%llu,q=%llu,to=%llu,"
       "missed=%lu,overrun=%lu,buserr=%lu,arb_lost=%lu,"
-      "driver_q=%lu,state=%s,lease_ms=%lu,ble=%s,stream=%s\n",
+      "driver_q=%lu,state=%s,lease_ms=%lu,ble=%s,stream=%s,demo=%s\n",
       static_cast<unsigned long long>(s.rx_frames),
       static_cast<unsigned long long>(s.std_frames),
       static_cast<unsigned long long>(s.ext_frames),

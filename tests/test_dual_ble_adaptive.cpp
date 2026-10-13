@@ -14,7 +14,8 @@
 using namespace m5can;
 namespace {
 enum class Ecu { Full, Partial, Negative, Silent, Split, FirstFrame, Foreign,
-                 Lease, BusOff, Driver };
+                 Lease, BusOff, Driver, MultiAgree, MultiConflict, MultiPartial,
+                 PinnedOther, LongRaw };
 Ecu mode=Ecu::Full;
 bool demo=false, hold=false, ready=false;
 DiagnosticRequest queued{};
@@ -41,6 +42,23 @@ DiagnosticResult ecuReply(const DiagnosticRequest& r) {
   if(r.length==3 && r.data[0]==1) {
     switch(mode) {
       case Ecu::Full: feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50}); break;
+      case Ecu::MultiAgree:
+        // Five simulated complete responses, in non-CAN-ID order.
+        feed(tx,0x18DAF105,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF102,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF108,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF107,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        break;
+      case Ecu::MultiConflict:
+      case Ecu::PinnedOther:
+        feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF102,{0x41,0x0C,0x13,0x89,0x0D,0x50});
+        break;
+      case Ecu::MultiPartial:
+        feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0x50});
+        feed(tx,0x18DAF102,{0x41,0x0D,0x50});
+        break;
       case Ecu::Foreign: feed(tx,0x18DAF102,{0x41,0x0C,0x13,0x88,0x0D,0x50}); break;
       case Ecu::Partial: feed(tx,0x18DAF101,{0x41,0x0C,0x13,0x88}); break;
       case Ecu::Negative: feed(tx,0x18DAF101,{0x7F,1,0x12}); break;
@@ -59,6 +77,11 @@ DiagnosticResult ecuReply(const DiagnosticRequest& r) {
     if(mode==Ecu::Lease) result.status=DiagnosticStatus::LeaseRequired;
     if(mode==Ecu::BusOff) result.status=DiagnosticStatus::BusOff;
     if(mode==Ecu::Driver) result.status=DiagnosticStatus::ModeError;
+  }
+  if(mode==Ecu::LongRaw && result.status==DiagnosticStatus::Ok) {
+    for(unsigned n=1;n<kDiagnosticMaxRawFrames;++n)
+      result.raw_frames[n]=result.raw_frames[0];
+    result.raw_frame_count=kDiagnosticMaxRawFrames;
   }
   return result;
 }
@@ -91,12 +114,14 @@ struct Bench {
     write(a,"ATH1"); write(b,"ATH1"); dual.poll();
     write(a,"ATL0"); write(b,"ATL0"); dual.poll();
     write(a,"ATS1"); write(b,"ATS1"); dual.poll();
+    flushTx();
     test_notifications.clear();
   }
   void batchBoth() {
     write(a,"ATM5B00:010C,010D,0105");
     write(b,"ATM5B00:010C,010D,0105");
   }
+  void flushTx() {for(int i=0;i<256;++i)ble.pollTx();}
   void drain() {for(int i=0;i<40;++i){dual.poll();g_test_millis+=50;}}
   size_t groups() const {
     size_t n=0;for(const auto& r:requests) if(r.length==3 && r.data[0]==1)++n;
@@ -140,6 +165,26 @@ bool CanMonitor::pollQueryResult(DiagnosticResult& result) {
 }
 }
 int main() {
+#ifdef M5CAN_DEMO_FAULT_FIXTURE
+  Bench bench; demo=true;
+  for (const auto& item:std::vector<std::pair<const char*,const char*>>{
+      {"22FFFF","NO DATA"}, {"22FFFD","7F2231"},
+      {"22FFFC","7F2233"}, {"222012","BUFFER FULL"}}) {
+    test_notifications.clear(); write(bench.a,item.first); bench.drain();
+    assert(output(7).find(item.second)!=std::string::npos);
+    assert(output(7).find('>')!=std::string::npos);
+    assert(output(19).empty());
+  }
+  test_notifications.clear(); write(bench.a,"22FFFE"); bench.drain();
+  assert(output(7).empty());
+  write(bench.a,"010C"); write(bench.b,"010D"); bench.drain();
+  assert(output(7).find("41 0C")!=std::string::npos);
+  assert(output(19).find("41 0D")!=std::string::npos);
+  assert(requests.empty());
+  std::cout << "PASS DEMO fault replies, silent timeout, peer isolation and fresh recovery without CAN submission\n";
+  return 0;
+#endif
+
 #ifndef M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL
   mode=Ecu::Full; Bench stable; stable.batchBoth(); stable.drain(); stable.values();
   assert(stable.groups()==0 && requests.size()==6);
@@ -151,6 +196,30 @@ int main() {
    assert(driveLog().snapshot().grouped==1 && driveLog().snapshot().group_ok==1);
    assert(driveLog().snapshot().individual==1);
    bench.batchBoth();bench.drain();assert(bench.groups()==2 && requests.size()==4);}
+  // Real dual-BLE routing of a five-ECU agreement: selected ECU is
+  // deterministic; both client envelopes are intact, without extra CAN TX.
+  {mode=Ecu::MultiAgree;Bench bench;bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==1 && requests.size()==2);
+   assert(driveLog().snapshot().group_ok==1 && driveLog().snapshot().fallback==0);
+   bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==2);
+  }
+  // An initial disagreeing or incomplete ECU rejects grouped probing once.
+  // Each BLE peer subsequently obtains only its independently requested data.
+  for(Ecu initial:{Ecu::MultiConflict,Ecu::MultiPartial}) {
+    mode=initial;Bench bench;bench.batchBoth();bench.drain();bench.values();
+    assert(bench.groups()==1 && driveLog().snapshot().fallback==1);
+    bench.batchBoth();bench.drain();assert(bench.groups()==1);
+  }
+  // After one successful probe, an extraneous ECU with different values is
+  // harmless; the learned ECU alone determines both cache entries.
+  {mode=Ecu::Full;Bench bench;bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==1 && driveLog().snapshot().group_ok==1);
+   g_test_millis+=150;test_notifications.clear();
+   mode=Ecu::PinnedOther;bench.batchBoth();bench.drain();bench.values();
+   assert(bench.groups()==2 && driveLog().snapshot().group_ok==2);
+   assert(driveLog().snapshot().fallback==0);
+  }
   for(Ecu failure:{Ecu::Partial,Ecu::Negative,Ecu::Silent,Ecu::Split,Ecu::FirstFrame}) {
     mode=failure;Bench bench;bench.batchBoth();bench.drain();bench.values();
     // A single complete RPM value from a partial grouped reply is cached;
@@ -169,9 +238,11 @@ int main() {
    write(bench.b,"ATM5B00:010D,0105");
    bench.dual.poll();bench.dual.poll();bench.dual.poll();
    assert(bench.groups()==1 && requests.size()==2);
+   bench.flushTx();
    assert(output(7).find("M5ITEM:00:010C\r18DAF101 04 41 0C 13 88")!=std::string::npos);
    assert(output(7).find("M5ITEM:00:010D")==std::string::npos);
    assert(output(19).find("M5ITEM:00:010D\r18DAF101 03 41 0D 50")!=std::string::npos);
+   bench.flushTx();
    assert(output(19).find("M5ITEM:00:010C")==std::string::npos);
    // Both parameters are cached individually: reusing RPM in a different
    // BLE session within the TTL does not generate a new CAN transaction.
@@ -179,6 +250,7 @@ int main() {
    write(bench.b,"ATM5B00:010C,0105");
    bench.dual.poll();bench.dual.poll();
    assert(requests.size()==2);
+   bench.flushTx();
    assert(output(19).find("M5ITEM:00:010C")!=std::string::npos);
   }
   // Matching pending requests from two peers should also fan out one
@@ -188,6 +260,7 @@ int main() {
    write(bench.b,"ATM5B00:0105,010D");
    bench.dual.poll();bench.dual.poll();bench.dual.poll();
    assert(requests.size()==2 && bench.groups()==0);
+   bench.flushTx();
    assert(output(7).find("M5ITEM:00:0105")!=std::string::npos);
    assert(output(19).find("M5ITEM:00:0105")!=std::string::npos);
   }
@@ -366,8 +439,123 @@ int main() {
     Preferences::storage["m5can_trip/trip0"].resize(sizeof(saved));
     std::memcpy(Preferences::storage["m5can_trip/trip0"].data(),&saved,sizeof(saved));
     DriveLog version_recover;version_recover.begin(1);assert(version_recover.snapshot().sequence==16);
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.a);
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.b);
     journal.dump(bench.can,bench.ble,false); // Never deletes older entries.
     assert(Preferences::storage.size()==DriveLog::kSlots);
+  }
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+  // First multi-ECU CAN probe must survive reboot even when the regular
+  // eight-event ring rolls over from unrelated BLE disconnects. Not just a
+  // USB printf: persist all original accepted diagnostic frames in NVS.
+  {
+    Bench bench;Preferences::storage.clear();Preferences::writes=0;
+    g_test_millis=1000;
+    DriveLog journal;journal.begin(1,21);
+    DiagnosticResult first{};
+    first.status=DiagnosticStatus::Ok;
+    first.response_count=5;first.raw_frame_count=5;
+    first.transaction_us=16317;first.tx_to_first_response_us=656;
+    const uint32_t ids[]={0x18DAF1EF,0x18DAF10E,0x18DAF101,
+                          0x18DAF102,0x18DAF103};
+    const uint8_t payload[]={6,0x41,0x0C,0,0,0x0D,0,0};
+    for(unsigned i=0;i<5;++i) {
+      auto& f=first.raw_frames[i];
+      f.can_id=ids[i];f.dlc=8;
+      std::memcpy(f.data,payload,8);
+      first.raw_rx_offsets_us[i]=656+i*137U;
+    }
+    journal.submitted(DiagnosticRequest{
+        0x18DB33F1,3,{1,0x0C,0x0D},200});
+    journal.recordFirstProbe(7,first,0x18DAF101,0,0);
+    assert(!journal.probeSaved());
+    // An in-flight CAN owner transaction must block flash writes.
+    hold=true;write(bench.a,"ATM5B00:010C,010D,0105");bench.dual.poll();
+    assert(bench.can.queryPending());
+    journal.poll(bench.can,bench.ble,false);
+    assert(!journal.probeSaved());
+    hold=false;bench.drain();
+    ++g_test_millis;
+    journal.poll(bench.can,bench.ble,false);
+    assert(journal.probeSaved());
+    // A later grouped fallback has its OWN CRC-protected evidence slot.
+    // The original successful probe must remain unchanged.
+    DiagnosticResult later=first;
+    later.raw_frames[1].data[4]=0x01; // Synthetic conflicting ECU value
+    journal.recordFirstFailure(7,later,0,1,5);
+    journal.outcome(DriveLog::Kind::GroupFallback,7,later,0);
+    journal.poll(bench.can,bench.ble,false);
+    for(unsigned i=0;i<12;++i)
+      journal.event(DriveLog::Kind::Disconnect,7);
+    g_test_millis+=3000;
+    journal.poll(bench.can,bench.ble,false);
+    assert(journal.snapshot().event_count==8);
+    Preferences nvs;assert(nvs.begin("m5can_trip",true));
+    DriveLog::ProbeRecord probe{};
+    assert(nvs.getBytes("probe1",&probe,sizeof(probe))==sizeof(probe));
+    assert(probe.sequence==1 && probe.version==1 &&
+           probe.responses==5);
+    assert(probe.raw_count==5 && probe.raw_saved==5 && !probe.truncated);
+    assert(probe.decision==0 && probe.reject_reason==0);
+    DriveLog::ProbeRecord failure{};
+    assert(nvs.getBytes("fail1",&failure,sizeof(failure))==sizeof(failure));
+    assert(failure.sequence==1 && failure.raw_saved==5 &&
+           failure.decision==1 && failure.reject_reason==5);
+    assert(failure.raw[1].data[4]==0x01);
+    for(unsigned i=0;i<5;++i) {
+      assert(probe.raw[i].can_id==ids[i]);
+      assert(probe.rx_offset_us[i]==656+i*137U);
+      assert(std::memcmp(probe.raw[i].data,payload,8)==0);
+    }
+    nvs.end();
+    DriveLog after_reboot;after_reboot.begin(9,21);
+    assert(after_reboot.snapshot().sequence==2);
+    // Original full first-probe evidence from the prior boot is intact.
+    Preferences reload;assert(reload.begin("m5can_trip",true));
+    DriveLog::ProbeRecord saved{};
+    assert(reload.getBytes("probe1",&saved,sizeof(saved))==sizeof(saved));
+    assert(saved.sequence==1 && saved.raw_saved==5);
+    assert(saved.raw[4].can_id==0x18DAF103);
+    SerialStub::capture=true;SerialStub::captured.clear();
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.a);
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.b);
+    after_reboot.dump(bench.can,bench.ble,false);
+    const std::string valid_dump=SerialStub::captured;
+    assert(valid_dump.find("#DRIVELOG,PROBE,boot=1,state=persisted")!=std::string::npos);
+    assert(valid_dump.find("#DRIVELOG,PROBE_RAW,boot=1,index=4,id=18DAF103")!=std::string::npos);
+    assert(valid_dump.find("rx_tx_us=1204")!=std::string::npos);
+    assert(valid_dump.find("#DRIVELOG,GROUPFAIL,boot=1,state=persisted")!=std::string::npos);
+    assert(valid_dump.find("#DRIVELOG,GROUPFAIL_RAW,boot=1,index=4,id=18DAF103")!=std::string::npos);
+    // A corrupted NVS record must be rejected visibly rather than
+    // presenting incomplete evidence as valid after a future restart.
+    auto& bytes=Preferences::storage["m5can_trip/probe1"];
+    bytes[sizeof(saved)-1]^=0x80;
+    SerialStub::captured.clear();
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.a);
+    NimBLEServer::callbacks->onDisconnect(NimBLEDevice::createServer(),&bench.b);
+    after_reboot.dump(bench.can,bench.ble,false);
+    assert(SerialStub::captured.find("#DRIVELOG,PROBE,boot=1,state=MISSING")!=std::string::npos);
+    assert(SerialStub::captured.find("#DRIVELOG,PROBE_RAW,boot=1")==std::string::npos);
+    SerialStub::capture=false;SerialStub::captured.clear();
+    reload.end();
+  }
+#endif
+  // Check the true ISO-TP reception-time evidence propagation, rather
+  // than only synthetic manually populated timestamps.
+  {
+    DiagnosticTransaction tx;
+    DiagnosticRequest rq{};
+    rq.can_id=0x18DB33F1;rq.length=3;
+    rq.data[0]=1;rq.data[1]=0x0C;rq.data[2]=0x0D;
+    tx.begin(rq,1000000);
+    TransactionFrame one{};
+    one.extended=true;one.can_id=0x18DAF10E;one.dlc=8;
+    one.timestamp_us=1000656;
+    const uint8_t payload[]={6,0x41,0x0C,0,0,0x0D,0,0};
+    std::memcpy(one.data,payload,8);
+    assert(tx.onFrame(one).event==TransactionEvent::Completed);
+    assert(tx.result().raw_frame_count==1 &&
+           tx.result().raw_rx_offsets_us[0]==656);
   }
   { // Coordinator metrics persist independently of the v2 trip layout.
     Bench bench;Preferences::storage.clear();DriveLog journal;
@@ -383,4 +571,25 @@ int main() {
     assert(coord.hits==10 && coord.misses==20 && coord.joins==3 && coord.groups==4 && coord.cross==2 && coord.singles==7);
   }
   std::cout << "PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO\n";
+  // A maximum RAW-result batch is streamed while the second peer keeps moving.
+  // Repeated frames are synthetic output-volume fixtures, not physical CAN.
+  {mode=Ecu::LongRaw;Bench bench;
+   write(bench.a,"ATM5B00:0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105,0105");
+   for(unsigned n=0;n<2400;++n) {
+     if(n%20==0)write(bench.b,"010D");
+     bench.dual.poll();g_test_millis+=1;
+   }
+   bench.flushTx();
+   assert(output(7).find("M5DONE\r>")!=std::string::npos);
+   assert(output(19).find("41 0D 50")!=std::string::npos);
+   size_t items=0,pos=0;const auto stream=output(7);
+   while((pos=stream.find("M5ITEM:00:0105",pos))!=std::string::npos){++items;++pos;}
+   assert(items==16);
+   size_t frames=0;pos=0;
+   while((pos=stream.find("18DAF101 03 41 05 67",pos))!=std::string::npos){++frames;++pos;}
+   assert(frames==16*kDiagnosticMaxRawFrames);
+   assert(bench.ble.stats().notify_failures==0);
+   assert(bench.ble.stats().tx_queue_overflows==0);
+  }
+
 }

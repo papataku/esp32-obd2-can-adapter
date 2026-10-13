@@ -15,9 +15,13 @@ void DiagnosticTransaction::begin(const DiagnosticRequest& request,
 
 bool DiagnosticTransaction::appendRaw(const TransactionFrame& frame) {
   if (result_.raw_frame_count >= kDiagnosticMaxRawFrames) return false;
-  DiagnosticRawFrame& out = result_.raw_frames[result_.raw_frame_count++];
+  const uint8_t index=result_.raw_frame_count++;
+  DiagnosticRawFrame& out = result_.raw_frames[index];
   out.can_id = frame.can_id;
   out.dlc = frame.dlc;
+  result_.raw_rx_offsets_us[index] = frame.timestamp_us >= tx_us_ &&
+      frame.timestamp_us-tx_us_ < UINT32_MAX
+      ? static_cast<uint32_t>(frame.timestamp_us-tx_us_) : UINT32_MAX;
   std::memcpy(out.data, frame.data, frame.dlc);
   if (!result_.tx_to_first_response_us && frame.timestamp_us >= tx_us_) {
     result_.tx_to_first_response_us =

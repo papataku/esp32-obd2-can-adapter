@@ -1,4 +1,7 @@
 #include "dual_ble_elm.h"
+#if defined(M5CAN_DEMO_FAULT_FIXTURE) && !defined(M5CAN_CAN_MODE_DRY_RUN)
+#error "DEMO fault fixture requires physical CAN TX compiled out"
+#endif
 #include <esp_timer.h>
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include <algorithm>
@@ -10,6 +13,7 @@
 #include "elm_response_formatter.h"
 #include "serial_protocol.h"
 #include "drive_log.h"
+#include "diagnostic_error_catalog.h"
 
 namespace m5can {
 namespace {
@@ -22,6 +26,7 @@ void upperNoSpaces(const char* source, char* dest, size_t capacity) {
   }
   dest[n] = 0;
 }
+
 }
 
 DualBleElm::Session* DualBleElm::find(uint16_t conn_id, uint32_t generation) {
@@ -68,6 +73,9 @@ void DualBleElm::event(const BleClientEvent& event) {
   }
   if (event.byte == '\r' || event.byte == '\n') {
     if (s->input_overflow) {
+      ble_.recordDiagnosticError(s->conn_id,s->generation,
+          static_cast<uint16_t>(DiagnosticError::ElmInputOverflow),
+          static_cast<uint32_t>(s->input_size));
       emitLine(*s, "?");
       prompt(*s);
     } else if (s->input_size) {
@@ -87,7 +95,7 @@ void DualBleElm::event(const BleClientEvent& event) {
 void DualBleElm::flush(Session& s) {
   if (!s.output_size) return;
   if (s.active && ble_.isClientConnected(s.conn_id,s.generation))
-    ble_.writeTo(s.conn_id,s.generation,s.output,s.output_size);
+    ble_.queueTo(s.conn_id,s.generation,s.output,s.output_size);
   s.output_size = 0;
 }
 
@@ -155,6 +163,9 @@ DiagnosticRequest DualBleElm::requestOf(const ElmVehicleRequest& item,
 
 void DualBleElm::advanceBatch(Session& s) {
   while (s.active && s.batch && s.batch_next < s.batch_count) {
+    // The 512-byte staging buffer is included in responseReady() reserve.
+    // Keep packing adjacent small PID results into full notification chunks.
+    if(!ble_.responseReady(s.conn_id,s.generation))return;
     const ElmVehicleRequest& item=s.items[s.batch_next];
     // Probe ONLY in the separately opted-in grouped CAN build (never in DEMO).
     // A failed probe disables this exact functional PID pair until reboot.
@@ -217,10 +228,12 @@ void DualBleElm::advanceBatch(Session& s) {
 
 void DualBleElm::onLine(Session& s,const char* line) {
   if (s.pending || s.batch) {
+    ble_.recordDiagnosticError(s.conn_id,s.generation,
+        static_cast<uint16_t>(DiagnosticError::ElmBusy));
     // Exactly one outstanding command per BLE client; the other client's
     // independent ELM session remains free to enqueue a request.
     static const uint8_t busy[]={'B','U','S','Y','\r','>'};
-    ble_.writeTo(s.conn_id,s.generation,busy,sizeof(busy));
+    ble_.queueTo(s.conn_id,s.generation,busy,sizeof(busy));
     return;
   }
   char compact[96]{};
@@ -231,16 +244,27 @@ void DualBleElm::onLine(Session& s,const char* line) {
   switch (parsed.action) {
     case ElmAction::ReplyOnly:
       if (parsed.reply[0]) {
+        if(!std::strcmp(parsed.reply,"?") ||
+           !std::strcmp(parsed.reply,"ERROR"))
+          ble_.recordDiagnosticError(s.conn_id,s.generation,
+              static_cast<uint16_t>(DiagnosticError::ElmInvalidCommand));
         if (!std::strcmp(compact,"ATM5CAP")) {
           char caps[200]{};
           std::snprintf(caps,sizeof(caps),"%s DEMO=1 MODE=%s",
                         parsed.reply,demo_source_.demoActive()?"DEMO":"CAN");
+#if defined(M5CAN_DEMO_FAULT_FIXTURE)
+          std::strncat(caps," FAULTS=1",sizeof(caps)-std::strlen(caps)-1);
+#endif
           emitLine(s,caps);
         } else emitLine(s,parsed.reply);
       }
       break;
     case ElmAction::BatchRead:
-      if (can_.faultLocked()) emitLine(s,"M5CAN TX LOCKED");
+      if (can_.faultLocked()) {
+        ble_.recordDiagnosticError(s.conn_id,s.generation,
+            static_cast<uint16_t>(DiagnosticError::CanModeError));
+        emitLine(s,"M5CAN TX LOCKED");
+      }
       else {
         s.batch_count=parsed.batch_count;
         s.batch_next=0;
@@ -252,22 +276,59 @@ void DualBleElm::onLine(Session& s,const char* line) {
       break;
     case ElmAction::VehicleRead:
       s.request=requestOf(parsed.request,s.elm);
-      if (!DiagnosticPolicy::allowedReadRequest(s.request)) emitLine(s,"?");
+      if (!DiagnosticPolicy::allowedReadRequest(s.request)) {
+        ble_.recordDiagnosticError(s.conn_id,s.generation,
+            static_cast<uint16_t>(DiagnosticError::CanInvalidRequest),
+            s.request.can_id);
+        emitLine(s,"?");
+      }
       else if (demo_source_.demoActive()) {
+#if defined(M5CAN_DEMO_FAULT_FIXTURE)
+        // Explicit TX-disabled bench only. No CAN ownership/query changes.
+        if (s.request.length==3 && s.request.data[0]==0x22) {
+          const uint16_t did=(static_cast<uint16_t>(s.request.data[1])<<8)|s.request.data[2];
+          if (did==0xFFFE) {
+            ble_.recordDiagnosticError(s.conn_id,s.generation,
+                static_cast<uint16_t>(DiagnosticError::DemoNoPrompt),diagnosticRequestIdentity(s.request,true));
+            prompt_now=false;break;
+          } // no bytes/prompt
+          if (did==0xFFFD || did==0xFFFC) {
+            ble_.recordDiagnosticError(s.conn_id,s.generation,
+                static_cast<uint16_t>(DiagnosticError::DemoNrc),diagnosticRequestIdentity(s.request,true));
+            emitLine(s,did==0xFFFD?"18DAF101037F2231":"18DAF101037F2233");break;
+          }
+          if (did==0x2012) {
+            emitLine(s,"18DAF101100A622012AABBCC");
+            emitLine(s,"BUFFER FULL"); break;
+          }
+        }
+#endif
         DiagnosticRawFrame frames[2]{};
         const uint8_t n=parsed.request.length==2 && parsed.request.data[0]==0x01
             ? DemoDrive::frames(parsed.request.data[1],millis(),frames):0;
-        if (!n) emitLine(s,"NO DATA");
+        if (!n) {
+          ble_.recordDiagnosticError(s.conn_id,s.generation,
+              static_cast<uint16_t>(DiagnosticError::DemoNoData),diagnosticRequestIdentity(s.request,true));
+          emitLine(s,"NO DATA");
+        }
         for(uint8_t i=0;i<n;++i) appendFrame(s,frames[i]);
-      } else if (can_.faultLocked()) emitLine(s,"M5CAN TX LOCKED");
+      } else if (can_.faultLocked()) {
+        ble_.recordDiagnosticError(s.conn_id,s.generation,
+            static_cast<uint16_t>(DiagnosticError::CanModeError));
+        emitLine(s,"M5CAN TX LOCKED");
+      }
       else {
         s.pending=true;
         prompt_now=false;
       }
       break;
-    case ElmAction::LeaseAcquire:
-      emitLine(s,can_.acquireLease(cfg::kTxLeaseDefaultMs)?"OK":"CAN ERROR");
+    case ElmAction::LeaseAcquire: {
+      const bool granted=can_.acquireLease(cfg::kTxLeaseDefaultMs);
+      if(!granted)ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::CanLeaseRequired));
+      emitLine(s,granted?"OK":"CAN ERROR");
       break;
+    }
     case ElmAction::LeaseRevoke:
       can_.revokeLease();
       emitLine(s,"OK");
@@ -340,6 +401,29 @@ void DualBleElm::onResult() {
   // Reuse fixed object storage rather than a large local result.
   DiagnosticResult& result=query_result_workspace_;
   if (!can_.pollQueryResult(result)) return;
+  if(result.status!=DiagnosticStatus::Ok) {
+    const uint16_t error=diagnosticStatusErrorCode(result.status);
+    const int original=active_query_owner_;
+    if(original>=0 && original<2)
+      ble_.recordDiagnosticError(sessions_[original].conn_id,
+           sessions_[original].generation,error,result.transaction_us);
+    if(original>=0 && original<2)
+      ble_.recordDiagnosticError(sessions_[original].conn_id,
+          sessions_[original].generation,static_cast<uint16_t>(DiagnosticError::RequestContext),
+          diagnosticRequestIdentity(sessions_[original].request));
+  }
+  if(active_query_owner_>=0 && active_query_owner_<2) {
+    const auto& owner=sessions_[active_query_owner_];
+    for(unsigned i=0;i<result.response_count && i<kDiagnosticMaxResponses;++i) {
+      const auto& message=result.responses[i];
+      if(message.length>=3 && message.data[0]==0x7F && message.data[1]==owner.request.data[0]) {
+        ble_.recordDiagnosticError(owner.conn_id,owner.generation,
+            static_cast<uint16_t>(DiagnosticError::RequestContext),diagnosticRequestIdentity(owner.request));
+        ble_.recordDiagnosticError(owner.conn_id,owner.generation,
+            static_cast<uint16_t>(DiagnosticError::ResponseSource),message.can_id);
+      }
+    }
+  }
   const int index=active_query_owner_;
   const int second=active_secondary_owner_;
   const uint32_t secondary_generation=active_secondary_generation_;
@@ -364,6 +448,10 @@ void DualBleElm::onResult() {
     // Losing one peer invalidates the speculative support decision. The
     // other peer retains its individual pending request for normal retry.
     if (!primary_live || !other_live) {
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::GroupPeerGone));
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::GroupPeerGone));
       adaptive_multi_pid_.disable();
       return;
     }
@@ -371,6 +459,7 @@ void DualBleElm::onResult() {
     uint32_t responder=0;
     const bool first_success=
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
+    (void)first_success; // consumed only by the grouped-profile sidecar
     auto decision=
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
     const bool s_rpm=s.request.data[1]==0x0C;
@@ -382,9 +471,27 @@ void DualBleElm::onResult() {
             rpm,speed,virtual_frames,acquired_us)) {
       // A previously identified ECU differs from this grouped responder.
       // Do not send or cache ambiguous signals as successful readings.
-      adaptive_multi_pid_.disable();
+      adaptive_multi_pid_.rejectCacheEcuConflict();
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
+#endif
+    if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(decision==AdaptiveMultiPid::Decision::Stop ?
+              DiagnosticError::GroupStopped:DiagnosticError::GroupRejected),
+          (static_cast<uint32_t>(adaptive_multi_pid_.lastRejectReason())<<24) |
+          (static_cast<uint32_t>(result.status)<<16) |
+          (static_cast<uint32_t>(result.response_count)<<8) |
+          static_cast<uint32_t>(result.raw_frame_count));
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    if(first_success)
+      driveLog().recordFirstProbe(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
+    else if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      driveLog().recordFirstFailure(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
 #endif
     driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
         ? DriveLog::Kind::GroupEnabled
@@ -398,9 +505,6 @@ void DualBleElm::onResult() {
       appendFrame(*other,virtual_frames[s_rpm?1:0]);
       s.pending=false;
       other->pending=false;
-      if (first_success)
-        Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
-                      static_cast<unsigned long>(responder));
       if (s.batch) {
         ++s.batch_next;
         advanceBatch(s);
@@ -427,6 +531,9 @@ void DualBleElm::onResult() {
   }
 
   if (!primary_live) {
+    ble_.recordDiagnosticError(s.conn_id,s.generation,
+        static_cast<uint16_t>(DiagnosticError::AppPeerGone),
+        static_cast<uint32_t>(result.status));
     if (other_live) finishSingle(*other,result);
     return;
   }
@@ -437,6 +544,7 @@ void DualBleElm::onResult() {
     uint32_t responder=0;
     const bool first_success=
         adaptive_multi_pid_.support()==AdaptiveMultiPid::Support::Unknown;
+    (void)first_success; // consumed only by the grouped-profile sidecar
     auto decision=
         adaptive_multi_pid_.evaluate(result,virtual_frames,responder);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
@@ -445,9 +553,27 @@ void DualBleElm::onResult() {
     if (decision==AdaptiveMultiPid::Decision::UseGrouped &&
         !pid_cache_.rememberApprovedPair(
             rpm,speed,virtual_frames,acquired_us)) {
-      adaptive_multi_pid_.disable();
+      adaptive_multi_pid_.rejectCacheEcuConflict();
       decision=AdaptiveMultiPid::Decision::RetryLegacy;
     }
+#endif
+    if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(decision==AdaptiveMultiPid::Decision::Stop ?
+              DiagnosticError::GroupStopped:DiagnosticError::GroupRejected),
+          (static_cast<uint32_t>(adaptive_multi_pid_.lastRejectReason())<<24) |
+          (static_cast<uint32_t>(result.status)<<16) |
+          (static_cast<uint32_t>(result.response_count)<<8) |
+          static_cast<uint32_t>(result.raw_frame_count));
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+    if(first_success)
+      driveLog().recordFirstProbe(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
+    else if(decision!=AdaptiveMultiPid::Decision::UseGrouped)
+      driveLog().recordFirstFailure(
+          s.conn_id,result,responder,static_cast<uint8_t>(decision),
+          static_cast<uint8_t>(adaptive_multi_pid_.lastRejectReason()));
 #endif
     driveLog().outcome(decision==AdaptiveMultiPid::Decision::UseGrouped
         ? DriveLog::Kind::GroupEnabled
@@ -460,13 +586,7 @@ void DualBleElm::onResult() {
       emitLine(s,"M5ITEM:00:010D");
       appendFrame(s,virtual_frames[1]);
       s.batch_next=static_cast<uint8_t>(s.batch_next+2);
-      if (first_success)
-        Serial.printf("#MULTIPID,enabled,ecu=%08lX\n",
-                      static_cast<unsigned long>(responder));
     } else {
-      Serial.printf("#MULTIPID,disabled,status=%u,ecu=%08lX\n",
-                    static_cast<unsigned>(result.status),
-                    static_cast<unsigned long>(responder));
       if (decision==AdaptiveMultiPid::Decision::Stop) {
         emitLine(s,"M5ITEM:00:010C");
         appendResult(s,result);
@@ -501,9 +621,12 @@ void DualBleElm::dispatch() {
     const int i=(round_robin_+scan)%2;
     Session& s=sessions_[i];
     if (!s.active || !s.pending ||
-        !ble_.isClientConnected(s.conn_id,s.generation)) continue;
+        !ble_.isClientConnected(s.conn_id,s.generation) ||
+        !ble_.responseReady(s.conn_id,s.generation)) continue;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     if (can_.faultLocked()) {
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::CanModeError));
       // A cached sample is not authorization for a fresh diagnostic read.
       // Do not report fresh values while the physical bus is fault locked.
       pid_cache_.clear();
@@ -563,7 +686,8 @@ void DualBleElm::dispatch() {
     Session& peer=sessions_[j];
     const bool other_pending=peer.active && peer.pending &&
         !peer.multi_pid_pair &&
-        ble_.isClientConnected(peer.conn_id,peer.generation);
+        ble_.isClientConnected(peer.conn_id,peer.generation) &&
+        ble_.responseReady(peer.conn_id,peer.generation);
     const DiagnosticRequest* other=
         other_pending && !s.multi_pid_pair &&
         !pid_cache_.hasFresh(peer.request,now_us) ? &peer.request : nullptr;
@@ -575,6 +699,9 @@ void DualBleElm::dispatch() {
 #endif
 
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
+      ble_.recordDiagnosticError(s.conn_id,s.generation,
+          static_cast<uint16_t>(DiagnosticError::CanLeaseRequired),
+          outgoing.can_id);
       driveLog().event(DriveLog::Kind::LeaseDenied,s.conn_id);
       s.pending=false;
       if (s.multi_pid_pair) {
@@ -627,7 +754,10 @@ void DualBleElm::poll() {
   for(int i=0;i<512 && ble_.pollClientEvent(event_item);++i)
     event(event_item);
   onResult();
+  for(auto& s:sessions_)
+    if(s.active && s.batch && !s.pending)advanceBatch(s);
   dispatch();
+  ble_.pollTx();
 }
 } // namespace m5can
 

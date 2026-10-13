@@ -162,6 +162,104 @@ int main() {
            AdaptiveMultiPid::Decision::RetryLegacy);
     assert(!probe.eligible(rpm,speed));
   }
+  // Actual 2026-10-12 raw examples: 18DAF1EF and 18DAF10E both
+  // supplied the complete '41 0C 00 00 0D 00' payload. The other three
+  // replies were NOT preserved. These additional three entries are SYNTHETIC,
+  // not claimed as actual vehicle observations.
+  {
+    AdaptiveMultiPid probe;
+    auto many=reply(0x18DAF1EFU,{0x41,0x0C,0,0,0x0D,0});
+    const uint32_t ids[]={0x18DAF10EU,0x18DAF105U,0x18DAF1F0U,0x18DAF101U};
+    for(unsigned i=0;i<4;++i)
+      many.responses[i+1]=reply(ids[i],{0x41,0x0C,0,0,0x0D,0}).responses[0];
+    many.response_count=5;
+    assert(probe.evaluate(many,frames,responder)==
+           AdaptiveMultiPid::Decision::UseGrouped);
+    assert(responder==0x18DAF101U);
+    assert(frames[0].can_id==responder && frames[1].can_id==responder);
+    assert(frames[0].data[3]==0 && frames[1].data[3]==0);
+    assert(probe.lastRejectReason()==AdaptiveMultiPid::RejectReason::None);
+    // Reverse the arrival order and prove deterministic ECU selection.
+    AdaptiveMultiPid reverse_probe;
+    auto reversed=many;
+    for(unsigned i=0;i<2;++i) {
+      const auto tmp=reversed.responses[i];
+      reversed.responses[i]=reversed.responses[4-i];
+      reversed.responses[4-i]=tmp;
+    }
+    assert(reverse_probe.evaluate(reversed,frames,responder)==
+           AdaptiveMultiPid::Decision::UseGrouped);
+    assert(responder==0x18DAF101U);
+
+    // Subsequent grouped reads must stay pinned to the chosen ECU even
+    // when additional ECU responses differ from the chosen ECU.
+    many.responses[0]=reply(0x18DAF1EFU,
+        {0x41,0x0C,0x30,0x30,0x0D,0x40}).responses[0];
+    many.responses[1]=reply(0x18DAF10EU,
+        {0x41,0x0D,0x70}).responses[0]; // extraneous partial ECU
+    assert(probe.evaluate(many,frames,responder)==
+           AdaptiveMultiPid::Decision::UseGrouped);
+    assert(responder==0x18DAF101U);
+
+    // The pinned responder may not disappear and be replaced by another,
+    // even if that other ECU provides a fully valid pair.
+    many.responses[4]=reply(0x18DAF103U,
+        {0x41,0x0C,0,0,0x0D,0}).responses[0];
+    assert(probe.evaluate(many,frames,responder)==
+           AdaptiveMultiPid::Decision::RetryLegacy);
+    assert(probe.lastRejectReason()==
+           AdaptiveMultiPid::RejectReason::LearnedEcuMissing);
+    assert(responder==0 && !probe.eligible(rpm,speed));
+  }
+  // Unproven ECU mixes must NEVER be accepted merely because one response
+  // happens to be complete. Arrival order does not select the winner.
+  {
+    AdaptiveMultiPid probe;
+    auto differing=good;
+    differing.responses[1]=reply(0x18DAF102U,
+        {0x41,0x0C,0x13,0x89,0x0D,0x50}).responses[0];
+    differing.response_count=2;
+    assert(probe.evaluate(differing,frames,responder)==
+           AdaptiveMultiPid::Decision::RetryLegacy);
+    assert(probe.lastRejectReason()==
+           AdaptiveMultiPid::RejectReason::ValuesDisagree);
+    assert(responder==0 && !probe.eligible(rpm,speed));
+    // CAN physically received a complete pair, while the application
+    // correctly refused to learn an ambiguous grouped ECU profile.
+    uint32_t transport_positive=0;
+    assert(AdaptiveMultiPid::hasCompletePositivePair(
+        differing,transport_positive));
+    assert(transport_positive==0x18DAF101U);
+  }
+  {
+    AdaptiveMultiPid probe;
+    auto duplicates=good;
+    duplicates.responses[1]=good.responses[0];
+    duplicates.response_count=2;
+    assert(probe.evaluate(duplicates,frames,responder)==
+           AdaptiveMultiPid::Decision::RetryLegacy);
+    assert(probe.lastRejectReason()==
+           AdaptiveMultiPid::RejectReason::DuplicateEcu);
+  }
+  {
+    AdaptiveMultiPid probe;
+    auto incomplete=good;
+    incomplete.responses[1]=reply(0x18DAF102U,
+        {0x41,0x0D,0x50}).responses[0];
+    incomplete.response_count=2;
+    assert(probe.evaluate(incomplete,frames,responder)==
+           AdaptiveMultiPid::Decision::RetryLegacy);
+    assert(probe.lastRejectReason()==
+           AdaptiveMultiPid::RejectReason::InvalidPair);
+    assert(!probe.eligible(rpm,speed));
+  }
+  {
+    AdaptiveMultiPid probe;
+    auto all=good;
+    all.response_count=static_cast<uint8_t>(kDiagnosticMaxResponses+1);
+    assert(!probe.decode(all,frames,responder)); // bounded array guard
+    assert(responder==0);
+  }
   // Reject a response with an unexpected extra PID, not only truncation.
   assert(!fresh.decode(reply(0x18DAF101U,
       {0x41,0x0C,0x12,0x34,0x0D,0x60,0x05,0x44}),frames,responder));

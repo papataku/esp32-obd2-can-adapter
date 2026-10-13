@@ -1,6 +1,7 @@
 #include <cassert>
 #include <NimBLEDevice.h>
 #include "ble_elm_transport.h"
+#include "diagnostic_error_catalog.h"
 #ifndef M5CAN_DUAL_NOTIFY_CHUNK_BYTES
 #define M5CAN_DUAL_NOTIFY_CHUNK_BYTES 20
 #endif
@@ -68,6 +69,25 @@ int main() {
   assert(transport.stats().notify_failures==0);
   for(const auto& n:test_notifications) {assert(n.conn==7); assert(n.length<=limit);}
   test_notifications.clear();
+  m5can::BleDiagnosticEvent diag;
+  assert(transport.pollDiagnostic(diag) && diag.connection_id==7);
+  assert(transport.pollDiagnostic(diag) && diag.connection_id==19);
+  assert(transport.pollDiagnostic(diag));
+  assert(diag.kind==m5can::BleDiagnosticEvent::Kind::Error);
+  assert(diag.error_code==static_cast<uint16_t>(
+      m5can::DiagnosticError::BleNotifyBackpressure));
+  assert(diag.error_detail==3 && diag.generation==ea.generation);
+  assert(!transport.pollDiagnostic(diag));
+  ble_gap_event drop;
+  drop.disconnect.conn=a; drop.disconnect.reason=0x208;
+  assert(NimBLEDevice::gap_handler(&drop,nullptr)==0);
+  assert(transport.pollDiagnostic(diag));
+  assert(diag.kind==m5can::BleDiagnosticEvent::Kind::Disconnect);
+  assert(diag.connection_id==7 && diag.generation==ea.generation);
+  assert(diag.reason_known && diag.reason==0x208 && diag.mtu==247);
+  assert(diag.retries==3 && diag.tx_bytes==sizeof(data)+21);
+  // Logging a raw GAP observation cannot tear down a session itself.
+  assert(transport.connectedClientCount()==2);
   NimBLEServer::callbacks->onDisconnect(server,&a);
   assert(transport.connectedClientCount()==1);
   assert(!transport.peerTraffic().peers[0].connected);
@@ -90,4 +110,77 @@ int main() {
   assert(after_reconnect.peers[0].rx_bytes==0);
   assert(after_reconnect.peers[0].tx_bytes==0);
   assert(transport.writeTo(7,ea.generation,data,1)==0);
+  bool saw_stale=false;
+  while(transport.pollDiagnostic(diag)) {
+    if(diag.error_code==static_cast<uint16_t>(
+        m5can::DiagnosticError::BlePeerGenerationStale)) {
+      assert(diag.generation==ea.generation);
+      assert(diag.address_suffix==0); // never attribute to reused peer
+      saw_stale=true;
+    }
+  }
+  assert(saw_stale);
+  // Diagnostic overflow stays bounded and never touches protocol events.
+  for(unsigned n=0;n<70;++n) {
+    drop.disconnect.reason=0x300+static_cast<int>(n);
+    NimBLEDevice::gap_handler(&drop,nullptr);
+  }
+  assert(transport.diagnosticDrops()==7);
+  unsigned logged=0;
+  int last_reason=0;
+  while(transport.pollDiagnostic(diag)) {
+    ++logged;
+    assert(diag.kind==m5can::BleDiagnosticEvent::Kind::Disconnect);
+    last_reason=diag.reason;
+  }
+  // Never retain only the 63 oldest events while silently losing the
+  // actual latest disconnection. Loss count remains explicit.
+  assert(last_reason==0x300+69);
+  assert(logged==63 && transport.connectedClientCount()==2);
+  // If NimBLE's server callback fires without a corresponding GAP observer
+  // notification, the journal must still report DISCONNECT reason_unknown.
+  NimBLEServer::callbacks->onDisconnect(server,&b);
+  assert(transport.pollDiagnostic(diag));
+  assert(diag.kind==m5can::BleDiagnosticEvent::Kind::Disconnect);
+  assert(diag.connection_id==19 && diag.generation==eb.generation);
+  assert(!diag.reason_known && transport.connectedClientCount()==1);
+
+  // Reproduce the physical ENOMEM -> locally requested disconnect path.
+  // GAP delivery is asynchronous: assert the disconnect request separately.
+  m5can::BleElmTransport fault_transport;
+  assert(fault_transport.begin());
+  NimBLEServer::callbacks->onConnect(server,&a);
+  NimBLEServer::callbacks->onConnect(server,&b);
+  m5can::BleClientEvent fa{},fb{};
+  assert(fault_transport.pollClientEvent(fa));
+  assert(fault_transport.pollClientEvent(fb));
+  while(fault_transport.pollDiagnostic(diag)) {}
+  test_disconnect_requests.clear();
+  test_notifications.clear();
+  test_notify_busy=99;
+  const auto recover_start=millis();
+  assert(fault_transport.writeTo(7,fa.generation,data,1)==1);
+  assert(millis()-recover_start==99);
+  assert(test_disconnect_requests.empty());
+  while(fault_transport.pollDiagnostic(diag)) {}
+  test_notify_busy=101;
+  const auto failure_start=millis();
+  assert(fault_transport.writeTo(7,fa.generation,data,1)==0);
+  assert(millis()-failure_start==100);
+  assert(test_disconnect_requests.size()==1);
+  assert(test_disconnect_requests[0]==7);
+  assert(fault_transport.pollDiagnostic(diag));
+  assert(diag.error_code==static_cast<uint16_t>(
+      m5can::DiagnosticError::BleNotifyBackpressure));
+  assert(diag.error_detail==100);
+  assert(fault_transport.pollDiagnostic(diag));
+  assert(diag.error_code==static_cast<uint16_t>(
+      m5can::DiagnosticError::BleNotifySendFailed));
+  assert(diag.error_detail==BLE_HS_ENOMEM);
+  assert(diag.connection_id==7 && diag.generation==fa.generation);
+  test_notify_busy=0;
+  assert(fault_transport.writeTo(19,fb.generation,data,1)==1);
+  assert(test_disconnect_requests.size()==1); // Other peer not disconnected.
+  // The synchronous caller cannot service the other peer during those 100ms.
+
 }

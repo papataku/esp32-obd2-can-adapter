@@ -103,14 +103,30 @@ echo "PASS all Phase 3C firmware translation units + demo drive + screen toggle"
 
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  -DM5CAN_SYNC_NOTIFY_DIAGNOSTIC=1 \
   "$ROOT/tests/test_dual_ble_transport.cpp" "$ROOT/src/ble_elm_transport.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-transport-test
 /tmp/m5can-dual-transport-test
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_ble_evidence_journal.cpp" "$ROOT/src/ble_evidence_journal.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-ble-evidence-journal-test
+/tmp/m5can-ble-evidence-journal-test
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_log_storage_probe.cpp" "$ROOT/src/log_storage_probe.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-logcap-test
+/tmp/m5can-logcap-test
+echo "PASS read-only LOGCAP sizing with legacy NVS settings unchanged"
+
+echo "PASS BLE persisted disconnect/CRC/reboot/overflow and CAN-idle checkpoint"
+
 echo "PASS dual BLE targeted chunks and disconnect isolation"
 
 g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   -DM5CAN_DUAL_NOTIFY_CHUNK_BYTES=244 \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  -DM5CAN_SYNC_NOTIFY_DIAGNOSTIC=1 \
   "$ROOT/tests/test_dual_ble_transport.cpp" "$ROOT/src/ble_elm_transport.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-mtu-transport-test
 /tmp/m5can-dual-mtu-transport-test
@@ -133,3 +149,42 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   "$ROOT/src/isotp_reassembler.cpp" "$ROOT/src/diagnostic_policy.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-legacy-test
 /tmp/m5can-dual-legacy-test
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_CAN_MODE_DRY_RUN=1 -DM5CAN_DEMO_FAULT_FIXTURE=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_dual_ble_adaptive.cpp" "$ROOT/src/dual_ble_elm.cpp" \
+  "$ROOT/src/ble_elm_transport.cpp" "$ROOT/src/drive_log.cpp" "$ROOT/src/elm_compat.cpp" \
+  "$ROOT/src/elm_response_formatter.cpp" "$ROOT/src/diagnostic_transaction.cpp" \
+  "$ROOT/src/isotp_reassembler.cpp" "$ROOT/src/diagnostic_policy.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-dual-fault-test
+/tmp/m5can-dual-fault-test
+
+# Real flash backend tests; existing Preferences tests retain legacy ABI coverage.
+g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_evidence_store.cpp" "$ROOT/src/evidence_store.cpp" \
+  -o /tmp/m5can-evidence-store-test
+/tmp/m5can-evidence-store-test
+g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -DM5CAN_EVIDENCE_FLASH_TEST=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_combined_evidence.cpp" "$ROOT/src/drive_log.cpp" \
+  "$ROOT/src/ble_evidence_journal.cpp" "$ROOT/src/evidence_store.cpp" \
+  "$ROOT/src/ble_elm_transport.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-combined-evidence-test
+/tmp/m5can-combined-evidence-test
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -I"$ROOT/include" \
+  "$ROOT/tests/test_ble_notify_chunk.cpp" \
+  -o /tmp/m5can-ble-notify-chunk-test
+/tmp/m5can-ble-notify-chunk-test
+
+echo "PASS all Phase 3C firmware translation units + demo drive + screen toggle + BLE notify chunk"
+
+
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_ble_tx_flow.cpp" "$ROOT/src/ble_elm_transport.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-tx-flow-test
+/tmp/m5can-tx-flow-test
+echo "PASS bounded BLE output, fairness, pool reserve, exact recovery, generation, overflow and stall"

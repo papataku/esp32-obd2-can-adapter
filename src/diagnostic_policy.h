@@ -51,6 +51,9 @@ struct DiagnosticResult {
   DiagnosticMessage responses[kDiagnosticMaxResponses]{};
   uint8_t raw_frame_count = 0;
   DiagnosticRawFrame raw_frames[kDiagnosticMaxRawFrames]{};
+  // DiagnosticResult is transient, never persisted as the legacy trip ABI.
+  // Physical accepted CAN-frame RX times relative to request TX.
+  uint32_t raw_rx_offsets_us[kDiagnosticMaxRawFrames]{};
 };
 
 class DiagnosticPolicy {

@@ -1,3 +1,4 @@
+#include "evidence_store.h"
 #include <Arduino.h>
 #include <atomic>
 #if defined(ARDUINO_ARCH_ESP32)
@@ -10,15 +11,28 @@
 #include "can_monitor.h"
 #include "serial_protocol.h"
 #include "ui.h"
+#ifndef M5CAN_BUILD_SHA
+#define M5CAN_BUILD_SHA "unknown"
+#endif
 #include "drive_log.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "dual_ble_elm.h"
+#include "ble_evidence_journal.h"
 #ifndef M5CAN_DUAL_BLE_APP_CORE
 #define M5CAN_DUAL_BLE_APP_CORE 1
 #endif
 #endif
 
 namespace {
+#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+uint32_t bootFreeHeapBytes() {
+#if defined(ARDUINO_ARCH_ESP32)
+  return ESP.getFreeHeap();
+#else
+  return 0;
+#endif
+}
+#endif
 m5can::CanMonitor g_can;
 m5can::BleElmTransport g_ble;
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -57,15 +71,34 @@ void setup() {
 #else
   m5can::driveLog().begin(0);
 #endif
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  const bool log_store_ready=m5can::initializeEvidenceStore();
+  Serial.printf("#LOGSTORE,ready=%u,sectors=%lu,foreign=%u\n",log_store_ready?1U:0U,
+      static_cast<unsigned long>(m5can::evidenceStore().status().sectors),
+      m5can::evidenceStore().status().foreign?1U:0U);
+  m5can::bleEvidenceJournal().begin(m5can::driveLog().bootSequence(),
+                                    M5CAN_BUILD_SHA);
+#endif
 
   g_ble_ok = g_ble.begin();
+#if defined(ARDUINO_ARCH_ESP32)
+  Serial.printf("#BOOT,git=%s,reset=%u,rom_reset=%u,stack=NimBLE_dual_if_enabled\n",
+      M5CAN_BUILD_SHA, static_cast<unsigned>(esp_reset_reason()),
+      static_cast<unsigned>(rtc_get_reset_reason(0)));
+#endif
   if (!g_ble_ok) {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    m5can::bleEvidenceJournal().appendError(m5can::DiagnosticError::BleInitFailure);
+#endif
     Serial.printf("#WARN,BLE_INIT,%s\n", g_ble.lastError());
   } else {
     Serial.println("#BLE,ADVERTISING,M5CAN-Dial");
   }
 
   if (!g_can.begin()) {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    m5can::bleEvidenceJournal().appendError(m5can::DiagnosticError::CanInitFailed);
+#endif
     Serial.printf("#FATAL,CAN_INIT,%s\n", g_can.lastError());
     g_ui.showFatal("CAN INIT FAIL", g_can.lastError());
     return;
@@ -75,6 +108,8 @@ void setup() {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   if (xTaskCreatePinnedToCore(bleAppTask,"m5can-ble-elm",8192,
           nullptr,4,&g_ble_app_task,M5CAN_DUAL_BLE_APP_CORE)!=pdPASS) {
+    m5can::bleEvidenceJournal().appendError(
+        m5can::DiagnosticError::AppTaskCreateFailed);
     Serial.println("#FATAL,BLE_TASK_CREATE");
     g_ui.showFatal("BLE TASK FAIL","core1 unavailable");
     g_can_ok=false;
@@ -88,6 +123,28 @@ void setup() {
 
 void loop() {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  m5can::BleDiagnosticEvent event{};
+  m5can::bleEvidenceJournal().observeQueueDrops(g_ble.diagnosticDrops());
+  for (unsigned n=0;n<8 && g_ble.pollDiagnostic(event);++n) {
+    m5can::bleEvidenceJournal().append(event,g_ble.diagnosticDrops());
+    // Long CDC serial writes during a dual-peer session compete with
+    // the Arduino loop and can skew the very latencies being diagnosed.
+    // Persist complete bounded evidence now; dump it after the run.
+    if(g_ble.connectedClientCount()!=0 || g_can.queryPending())continue;
+    const char* kind=event.kind==m5can::BleDiagnosticEvent::Kind::Connect ? "CONNECT"
+        : event.kind==m5can::BleDiagnosticEvent::Kind::Disconnect ? "DISCONNECT"
+        : event.kind==m5can::BleDiagnosticEvent::Kind::Reject ? "REJECT" : "ERROR";
+    Serial.printf("#BLE_EVENT,kind=%s,seq=%lu,ms=%lu,id=%u,gen=%lu,addr=%04X,reason_known=%u,reason=%d,mtu=%u,interval=%u,latency=%u,supervision=%u,rx=%llu,tx=%llu,retries=%lu,failed=%lu,drops=%lu,code=%u,error=%s,detail=%lu\n",
+        kind,static_cast<unsigned long>(event.sequence),static_cast<unsigned long>(event.uptime_ms),
+        event.connection_id,static_cast<unsigned long>(event.generation),event.address_suffix,
+        event.reason_known?1U:0U,event.reason,event.mtu,event.interval,event.latency,event.supervision,
+        static_cast<unsigned long long>(event.rx_bytes),static_cast<unsigned long long>(event.tx_bytes),
+        static_cast<unsigned long>(event.retries),static_cast<unsigned long>(event.failed),
+        static_cast<unsigned long>(g_ble.diagnosticDrops()),
+        event.error_code,m5can::diagnosticErrorName(event.error_code),
+        static_cast<unsigned long>(event.error_detail));
+  }
+
   static uint32_t last_loop_us=0,loop_peak_us=0;
   const uint32_t loop_now=micros();
   if (last_loop_us && loop_now-last_loop_us>loop_peak_us)
@@ -100,16 +157,62 @@ void loop() {
     g_serial.toggleDemoAuto();
   }
   g_serial.pollInput();
+#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  if (g_ble_ok) {
+    // Emit callback events from loop(), never from the BLE stack callback.
+    // Match these uptime values against iPad BLE_STATE session timestamps.
+    static uint32_t seen_connects = 0;
+    static uint32_t seen_disconnects = 0;
+    const auto stats = g_ble.stats();
+    if (stats.connect_count != seen_connects) {
+      seen_connects = stats.connect_count;
+      Serial.printf("#BLE,CONNECT,count=%lu,conn_id=%u,uptime_ms=%lu,free_heap=%lu\n",
+                    static_cast<unsigned long>(seen_connects),
+                    static_cast<unsigned>(stats.last_connect_conn_id),
+                    static_cast<unsigned long>(stats.last_connect_ms),
+                    static_cast<unsigned long>(bootFreeHeapBytes()));
+    }
+    if (stats.disconnect_count != seen_disconnects) {
+      seen_disconnects = stats.disconnect_count;
+      Serial.printf("#BLE,DISCONNECT,count=%lu,conn_id=%u,reason_known=%u,reason=0x%02X,uptime_ms=%lu,free_heap=%lu\n",
+                    static_cast<unsigned long>(seen_disconnects),
+                    static_cast<unsigned>(stats.last_disconnect_conn_id),
+                    stats.last_disconnect_reason_known ? 1U : 0U,
+                    static_cast<unsigned>(stats.last_disconnect_reason),
+                    static_cast<unsigned long>(stats.last_disconnect_ms),
+                    static_cast<unsigned long>(bootFreeHeapBytes()));
+    }
+  }
+#endif
+
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   // BLE worker owns DualBleElm; do not poll sessions from the LCD loop.
   static uint32_t last_dual_stats=0;
   if (millis()-last_dual_stats>=5000) {
     last_dual_stats=millis();
     const auto stats=g_ble.stats();
-    Serial.printf("#BLE_DUAL,clients=%u,rx_overflow=%lu,notify=%lu,retries=%lu,failed=%lu\n",
-        g_ble.connectedClientCount(),static_cast<unsigned long>(stats.rx_overflow),
+    static uint32_t seen_storage_errors=0;
+    const uint32_t storage_errors=m5can::driveLog().storageErrors();
+    if(storage_errors!=seen_storage_errors) {
+      m5can::bleEvidenceJournal().appendError(m5can::DiagnosticError::DriveStorageFailure,storage_errors);
+      seen_storage_errors=storage_errors;
+    }
+    // Counter snapshots catch CAN owner and GATT failures even when an
+    // individual event ring overflows; compare monotonic counters.
+    m5can::bleEvidenceJournal().observeHealth(g_can.stats(),stats);
+    Serial.printf("#BLE_DUAL,clients=%u,connects=%lu,disconnects=%lu,rx_overflow=%lu,notify=%lu,retries=%lu,failed=%lu\n",
+        g_ble.connectedClientCount(),static_cast<unsigned long>(stats.connect_count),
+        static_cast<unsigned long>(stats.disconnect_count),static_cast<unsigned long>(stats.rx_overflow),
         static_cast<unsigned long>(stats.targeted_notifications),
         static_cast<unsigned long>(stats.notify_retries),static_cast<unsigned long>(stats.notify_failures));
+    Serial.printf("#BLE_MEMORY,alloc_failed=%lu,api_failed=%lu,min_free=%u,last_ms=%lu,last_conn=%u,last_rc=%ld\n",
+        static_cast<unsigned long>(stats.mbuf_alloc_failures),
+        static_cast<unsigned long>(stats.notify_api_failures),stats.msys_min_free,
+        static_cast<unsigned long>(stats.memory_error_ms),stats.memory_error_conn,
+        static_cast<long>(stats.memory_error_code));
+    Serial.printf("#BLE_FLOW,waits=%lu,queue_peak=%u,host_peak=%u,host_queue_peak=%u,overflow=%lu,stalls=%lu\n",
+        static_cast<unsigned long>(stats.credit_waits),stats.tx_queue_peak,stats.host_pending_peak,stats.host_queue_peak,
+        static_cast<unsigned long>(stats.tx_queue_overflows),static_cast<unsigned long>(stats.tx_stalls));
     Serial.printf("#BLE_TASK,core=%d,poll_peak_us=%lu,stack_free_bytes=%u,ui_loop_peak_us=%lu\n",
         M5CAN_DUAL_BLE_APP_CORE,
         static_cast<unsigned long>(g_ble_poll_peak_us.exchange(0)),
@@ -155,6 +258,10 @@ void loop() {
   }
 #endif
   if (!g_can_ok) {
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+    // Initialisation may fail before normal loop journaling is reached.
+    m5can::bleEvidenceJournal().poll(g_can);
+#endif
     delay(20);
     return;
   }
@@ -171,6 +278,28 @@ void loop() {
   }
 
   g_serial.emitStats(false);
+#if defined(M5CAN_BLE_MTU_EXPERIMENTAL) || defined(M5CAN_BLE_NOTIFY_DIAG)
+  // Bench-only USB telemetry: counters are queued notifications, not peer ACKs.
+  static uint32_t last_ble_diag_ms = 0;
+  const uint32_t now = millis();
+  if (now - last_ble_diag_ms >= 5000) {
+    last_ble_diag_ms = now;
+    const m5can::BleStats b = g_ble.stats();
+    Serial.printf(
+        "#BLE_MTU_BENCH,mode=%s,mtu=%u,max_chunk=%u,notifications=%lu,tx_bytes=%llu,rx_overflow=%lu\n",
+#if defined(M5CAN_BLE_MTU_EXPERIMENTAL)
+        "MTU247",
+#else
+        "MTU23",
+#endif
+        static_cast<unsigned>(b.peer_mtu),
+        static_cast<unsigned>(b.max_notify_chunk),
+        static_cast<unsigned long>(b.tx_notifications),
+        static_cast<unsigned long long>(b.tx_bytes),
+        static_cast<unsigned long>(b.rx_overflow));
+  }
+#endif
+
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   const auto coord_log=g_dual.coordinatorStats();
   m5can::driveLog().coordinator(coord_log.cache_hits,coord_log.cache_misses,
@@ -179,11 +308,16 @@ void loop() {
 #endif
   m5can::driveLog().poll(g_can,g_ble,g_serial.demoActive());
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  // Flash only from Arduino loop and only at CAN-idle checkpoints.
+  // Never block NimBLE GAP callbacks or CPU0 CAN owner with NVS writes.
+  m5can::bleEvidenceJournal().poll(g_can);
+#endif
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   const auto peers=g_ble.peerTraffic();
-  g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
+  g_ui.update(g_can,g_ble.stats(),g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
               g_serial.demoAutoEnabled(),g_serial.demoActive(),&peers);
 #else
-  g_ui.update(g_can,g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
+  g_ui.update(g_can,g_ble.stats(),g_ble_ok,g_ble.connected(),g_serial.elmOverBle(),
               g_serial.demoAutoEnabled(),g_serial.demoActive());
 #endif
   delay(1);
