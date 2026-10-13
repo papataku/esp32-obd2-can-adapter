@@ -65,10 +65,24 @@ caused recorded warm recoveries. Both journals exported8 retained boots plus
 RAM with CRC/ACK validation and0 collector/corruption errors; old core dumps
 have different ELF prefixes from the current meter image.
 
-A fresh JC-first2h run is in progress. Its bench preset is volatile and is
-reapplied if UI operations change acquisition policy; each reapplication is
-recorded. Completion, capture coverage and fault counters must be assessed
-before merging. Green CI or a short error-free sample does not satisfy this.
+The fresh JC-first run completed7200.204s with0 unexpected cuts, allocation/API
+failures, FIFO overflow/stalls, RX overflow, PID timeout/errors and MCU resets.
+Capture errors were0; MSYS observed minimum4, RAM FIFO peak203, controller+host
+peak8, host queue peak3. Both peers kept the confirmed high preset throughout;
+policy reapplications0. BLELOG boot65 retains the full86466b8 SHA and8 events,
+no eviction/queue drop/sequence gap. Its4 disconnect records are the2 ordered
+setup cuts plus2 post-window cleanup cuts, all remote-termination531; none
+is an unexpected measured-window cut. Durable journal reports6 commits and
+0 errors/corrupt/uncommitted records.
+
+This passes the packet-pool/disconnect regression, not universal rate/visual
+acceptance. Ring RPM averaged9.860Hz (worst5m9.143, observed age211ms);
+JC averaged9.200Hz (worst5m3.946, observed age539ms). JC rate drops after70m
+without a policy change, reaching a live3.6Hz/RTT244-347ms observation.
+No root cause for that rate variation is established; keep meter98/92 open.
+BLE worker window peak36348us, median1073us; observed free heap and stacks
+stay bounded, meter save failures0. See ble_memory_fixed_2h_20261013.json.
+The test excludes physical CAN/vehicle, iPad and human optical/touch review.
 
 Host regressions cover shared-pool reserve, real queue-credit predicates,
 one blocked peer while the other progresses,200ms recovery, byte ordering,

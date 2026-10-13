@@ -186,3 +186,21 @@ explicit cleanup andwarm recovery were retained. Queue lifecycle callbacks
 independently of sampled state (meterIssue98). Old core ELF prefixes differ
 from current firmware; never count these as crashes in this test. New RAM
 rates returned to10/2/2/2/2 after volatile high-load control andwarm reset.
+
+
+## Packet-pool fix and completed requalification
+
+The failed544268b run above is preserved as historical evidence. Its BLE
+stability blocker is superseded by the bounded output fix86466b8: the latest
+JC-first7200.204s actual two-meter run has0 cuts/allocation/API failures,
+0 overflow/stalls/resets and min MSYS free4. Retained boot65 confirms full SHA,
+8 events with0 gaps/drops/eviction and0 durable errors/corrupt/uncommitted.
+Software/CI gates pass. Full evidence: ble_memory_debug_20261013.md and
+ble_memory_fixed_2h_20261013.json. This qualifies the disconnect fix for the
+experimental integration; it does not promote grouped CAN/MTU vehicle gates.
+
+Rate performance remains PARTIAL: Ring9.860Hz, JC9.200Hz overall; JC worst
+5m3.946Hz under an unchanged high policy. Preserve meter98/92. This is distinct
+from the earlier user-confirmed SPEED/auto UI policy change. Other residuals
+and iPad exclusion above remain. New Defi SPEED draftPR100 is separate,
+unqualified display work and is not part of this memory regression image.
