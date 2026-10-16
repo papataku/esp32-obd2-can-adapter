@@ -69,19 +69,18 @@ class RawCanJournal {
       }
       if(erased(header,sizeof(header))) {
         // Also reject partially written sectors with an erased prefix.
-        if(!blank(sector)) {
-          status_.corrupt=true;return false;
-        }
+        if(!blank(sector))status_.corrupt=true;
         break;
       }
       if(!validRecord(offset,header)) {
-        status_.corrupt=true;return false;
+        // Preserve CRC-verified earlier blocks for explicit USB rescue.
+        // Never append across a torn/foreign sector or erase it on reboot.
+        status_.corrupt=true;break;
       }
-      if(status_.blocks && get32(header+12)!=status_.blocks) {
-        status_.corrupt=true;return false;
-      }
-      if(status_.session && get32(header+8)!=status_.session) {
-        status_.corrupt=true;return false;
+      if(get32(header+12)!=status_.blocks ||
+         (status_.session && get32(header+8)!=status_.session) ||
+         status_.completed) {
+        status_.corrupt=true;break;
       }
       status_.session=get32(header+8);
       status_.last_dropped=get32(header+28);
@@ -101,7 +100,7 @@ class RawCanJournal {
   // before a second recording may overwrite the existing session.
   bool append(uint32_t session,RecordType type,const uint8_t* bytes,
               uint16_t length,uint32_t dropped) {
-    if(!status_.ready || !session || status_.full ||
+    if(!status_.ready || status_.corrupt || !session || status_.full ||
        (status_.session && status_.session!=session) ||
        status_.completed || (type!=Data && type!=End) ||
        length>RawCanBlockCodec::kMaxBytes ||
