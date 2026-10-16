@@ -40,7 +40,7 @@ This is a synthetic reconstruction of issue #31's numerical example. **The entir
 
 The user selected PR #32 as the main continuing implementation (Draft, **open**).
 Do not close or merge this PR as a stale experiment. Default PlatformIO
-configuration now selects `m5dial_dual_ble_multipid_bench`, with two BLE peers,
+configuration now selects `m5dial`, inheriting `m5dial_dual_ble_multipid_bench`, with two BLE peers,
 the *existing* retained diagnostic EvidenceStore, and CAN read-only
 `01 0C 0D` grouped RPM+speed request plus safe single-PID fallback compiled
 in. This is a **build-time default change**, not proof of successful real-ECU
