@@ -7,6 +7,7 @@
 #include "diagnostic_request_pacer.h"
 #include "diagnostic_result_cache.h"
 #include "diagnostic_transaction.h"
+#include "raw_can_capture.h"
 
 namespace m5can {
 
@@ -55,6 +56,8 @@ class CanMonitor {
   bool begin();
   bool pop(CapturedFrame& frame, TickType_t wait_ticks = 0);
   CanStats stats() const;
+  RawCanCapture& rawCapture() { return raw_capture_; }
+  const RawCanCapture& rawCapture() const { return raw_capture_; }
   bool running() const { return running_; }
   const char* lastError() const { return last_error_; }
   bool faultLocked() const { return fault_locked_; }
@@ -120,6 +123,7 @@ class CanMonitor {
   mutable portMUX_TYPE stats_mux_ = portMUX_INITIALIZER_UNLOCKED;
   mutable portMUX_TYPE lease_mux_ = portMUX_INITIALIZER_UNLOCKED;
   CanStats stats_{};
+  RawCanCapture raw_capture_{}; // CAN-owner producer, Arduino writer consumer
   volatile bool running_ = false;
   volatile bool fault_locked_ = false;
   volatile bool query_in_flight_ = false;
