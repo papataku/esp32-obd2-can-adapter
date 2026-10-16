@@ -1,0 +1,13 @@
+# PREFERRED EVALUATION ONLY: no OTA; ONE 2MiB factory app; 4.375MiB raw CAN log
+# DO NOT FLASH an in-service M5Dial with this CSV without full 8MiB backup,
+# selected OTA slot/otadata migration and validated USB recovery.
+# Existing evidence spiffs remains unchanged at 0x670000..0x7F0000.
+# The new canlog overlaps BOTH previous OTA apps; it is NOT automatically
+# erased, formatted, owned, or safe to overwrite.
+# Name,    Type, SubType, Offset,   Size,      Flags
+nvs,       data, nvs,     0x9000,   0x5000,
+otadata,   data, ota,     0xE000,   0x2000,
+factory,   app,  factory, 0x10000,  0x200000,
+canlog,    data, 0x40,    0x210000, 0x460000,
+spiffs,    data, spiffs,  0x670000,0x180000,
+coredump,  data, coredump,0x7F0000,0x10000,
