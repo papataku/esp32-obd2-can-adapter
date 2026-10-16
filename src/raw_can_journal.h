@@ -129,7 +129,7 @@ class RawCanJournal {
     if(!flash_->write(offset,header,24) ||
        !flash_->write(offset+28,header+28,4) ||
        (length && !flash_->write(offset+kHeader,bytes,length)) ||
-       !flash_->write(offset+24,&kCommit,sizeof(kCommit))) {
+       !flash_->write(offset+24,commitBytes(),4)) {
       ++status_.errors;return false;
     }
     uint8_t verified[kHeader]{};
@@ -162,6 +162,10 @@ class RawCanJournal {
   }
 
  private:
+  static const uint8_t* commitBytes() {
+    static const uint8_t marker[4]={0x54,0x4D,0x4F,0x43};
+    return marker; // LE 0x434F4D54
+  }
   static void put16(uint8_t* p,uint16_t x) {
     p[0]=static_cast<uint8_t>(x);p[1]=static_cast<uint8_t>(x>>8);
   }
