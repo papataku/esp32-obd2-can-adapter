@@ -97,11 +97,38 @@ static void test_fail_closed_foreign_and_torn() {
   assert(!first.append(9,RawCanJournal::Data,
       encoded.data(),static_cast<uint16_t>(encoded.size()),0));
   RawCanJournal reboot;
-  assert(!reboot.begin(raw));
+  assert(reboot.begin(raw));
   assert(reboot.status().corrupt);
+  assert(reboot.status().ready);
+  assert(reboot.status().blocks==0);
+  assert(!reboot.append(9,RawCanJournal::Data,
+      encoded.data(),static_cast<uint16_t>(encoded.size()),0));
   // Already-written evidence must never be erased as recovery.
   assert(raw.bytes[2*4096]=='C');
 }
+static void test_torn_tail_salvage() {
+  MockFlash raw(8);
+  RawCanJournal first;
+  assert(first.begin(raw));
+  const auto encoded=block(10);
+  assert(first.append(9,RawCanJournal::Data,encoded.data(),
+                      static_cast<uint16_t>(encoded.size()),0));
+  raw.fail_at=raw.calls+3; // torn non-committed second block
+  assert(!first.append(9,RawCanJournal::Data,encoded.data(),
+                      static_cast<uint16_t>(encoded.size()),0));
+  RawCanJournal reboot;
+  assert(reboot.begin(raw));
+  assert(reboot.status().corrupt);
+  assert(reboot.status().blocks==1);
+  std::vector<uint8_t> out(RawCanBlockCodec::kMaxBytes);
+  uint16_t len=0;
+  RawCanJournal::RecordType type=RawCanJournal::End;
+  assert(reboot.readBlock(0,out.data(),out.size(),len,type));
+  assert(type==RawCanJournal::Data && len==encoded.size());
+  assert(!reboot.append(9,RawCanJournal::Data,encoded.data(),
+                        static_cast<uint16_t>(encoded.size()),0));
+}
+
 static void test_full_and_session_guard() {
   MockFlash raw(4); // owner x2, data x2
   RawCanJournal journal;
@@ -117,6 +144,7 @@ static void test_full_and_session_guard() {
 int main() {
   test_blank_initialization_and_readback();
   test_fail_closed_foreign_and_torn();
+  test_torn_tail_salvage();
   test_full_and_session_guard();
   std::cout<<"raw journal CRC, ownership, reboot, power-cut PASS\n";
 }
