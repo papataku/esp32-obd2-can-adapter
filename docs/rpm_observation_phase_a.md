@@ -34,3 +34,37 @@ This is a synthetic reconstruction of issue #31's numerical example. **The entir
 5. **Physical gate:** real M5Dial power-cut and recovery, then isolated CAN bench, then RP8 vehicle acceptance; separate synthetic/DEMO from actual CAN evidence.
 
 **Never claim Issue #31 accepted or merge into production from this Phase A test alone.**
+
+
+## 2026-10-16 user decision: always-compiled features and paired SD export
+
+The user selected PR #32 as the main continuing implementation (Draft, **open**).
+Do not close or merge this PR as a stale experiment. Default PlatformIO
+configuration now selects `m5dial_dual_ble_multipid_bench`, with two BLE peers,
+the *existing* retained diagnostic EvidenceStore, and CAN read-only
+`01 0C 0D` grouped RPM+speed request plus safe single-PID fallback compiled
+in. This is a **build-time default change**, not proof of successful real-ECU
+acceptance. The separate historical `m5dial` environment remains only for
+compatibility/regression. No end-user compile/off toggle is proposed.
+
+**RPM session recording/export is still NOT implemented by changing default_envs.**
+There is no off switch for the future recording feature; the user's
+START LOG / STOP/SAVE buttons explicitly define capture intervals.
+M5Dial has no SD; it will hold data in protected internal flash, accept
+LOG_BEGIN/LOG_END over Bluetooth and provide immutable chunked LOG_READ with
+CRC/ACK/resume. The meter pauses polling/animation (not the BLE link nor
+SD writer) during export. Never silently erase adapter logs after download;
+require meter-side SD flush/readback and complete checksum before ACK.
+
+Paired meter work:
+https://github.com/papataku/TacoTacoMeter/pull/119
+- LILYGO T4-S3 onboard SPI SD always compiled by default:
+  MISO=4 MOSI=2 SCK=3 CS=1, 4MHz; NOT SDMMC.
+- T4-S3 also compiles M5CAN batch client by default, reuses the common
+  SdSessionLogger; SmartRing/JC retain their SDMMC HAL; M5Dial none.
+- T4-S3 SPI card readback and BLE export receiver still need actual tests.
+
+Status: phase A tests/CI for the RPM RAM data structure are separate from
+the unimplemented flash persistence, LOG GATT transfer, and physical acceptance.
+CAN TX lease, listen-only initial state, fault lockout, ECU pinning and
+fallback policies must remain unchanged.
