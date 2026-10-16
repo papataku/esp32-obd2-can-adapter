@@ -33,6 +33,69 @@ bool RawCanRecordingService::queueStopFromBle(
   return requested_stop_.compare_exchange_strong(
       expected,true,std::memory_order_acq_rel);
 }
+bool RawCanRecordingService::queueReadFromBle(
+    uint32_t index,uint32_t offset,uint16_t peer,uint32_t generation) {
+  const auto s=state();
+  if(!peer || !generation ||
+     (s!=State::Complete && s!=State::RecoveryRequired) ||
+     !rawCanJournal().status().ready)return false;
+  uint8_t expected=ReadIdle;
+  if(!read_state_.compare_exchange_strong(
+      expected,ReadFilling,std::memory_order_acq_rel))return false;
+  read_reply_=ExportReply{};
+  read_reply_.peer=peer;
+  read_reply_.generation=generation;
+  read_reply_.index=index;
+  read_reply_.offset=offset;
+  read_state_.store(ReadQueued,std::memory_order_release);
+  return true;
+}
+
+bool RawCanRecordingService::takeReadForBle(ExportReply& reply) {
+  if(read_state_.load(std::memory_order_acquire)!=ReadReady)return false;
+  reply=read_reply_;
+  read_state_.store(ReadIdle,std::memory_order_release);
+  return true;
+}
+
+// Called ONLY by Arduino loop, never by BLE poll/notify callback.
+void RawCanRecordingService::pollRead() {
+  if(read_state_.load(std::memory_order_acquire)!=ReadQueued)return;
+  // Reuse the CAN-idle reservation also used by evidence and RAW writes.
+  // CAN queries take priority. The queued request is retried on next poll.
+  if(!can_.tryBeginLogCheckpoint())return;
+  read_state_.store(ReadProcessing,std::memory_order_release);
+  auto& reply=read_reply_;
+  const auto state_now=state();
+  const auto& status=rawCanJournal().status();
+  if((state_now!=State::Complete && state_now!=State::RecoveryRequired) ||
+     !status.ready) {
+    reply.error=1; // export unavailable
+  } else if(reply.index>=status.blocks) {
+    reply.error=2; // unknown committed block
+  } else {
+    uint16_t total=0;
+    RawCanJournal::RecordType type=RawCanJournal::End;
+    if(!rawCanJournal().readBlock(reply.index,read_buffer_,
+          sizeof(read_buffer_),total,type)) {
+      reply.error=3; // damaged or unreadable block; no unverified bytes
+    } else if(reply.offset>total) {
+      reply.error=4; // beyond end of block
+    } else {
+      reply.total=total;
+      reply.type=static_cast<uint8_t>(type);
+      const uint32_t left=static_cast<uint32_t>(total)-reply.offset;
+      reply.count=static_cast<uint8_t>(
+          left>raw_ble::kChunkBytes?raw_ble::kChunkBytes:left);
+      if(reply.count)
+        std::memcpy(reply.bytes,read_buffer_+reply.offset,reply.count);
+      reply.crc=raw_ble::crc32(reply.bytes,reply.count);
+    }
+  }
+  can_.endLogCheckpoint();
+  read_state_.store(ReadReady,std::memory_order_release);
+}
+
 bool RawCanRecordingService::start(uint32_t session_id) {
   // No auto-overwrite, no "record on boot", and no start before a verified
   // partition migration. A previous session must be exported and explicit
@@ -95,6 +158,8 @@ void RawCanRecordingService::poll() {
   if(requested_stop_.exchange(false,std::memory_order_acq_rel)) {
     if(!stop())last_control_error_.store(2,std::memory_order_release);
   }
+  // Never read flash from the BLE worker; reply to one queued chunk per tick.
+  pollRead();
   if((!recording_ && !stopping_)||fault_)return;
   // Never spend unbounded time draining the queue on the display/USB owner.
   for(unsigned i=0;i<48;++i) {
