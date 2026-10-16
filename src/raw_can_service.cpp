@@ -65,7 +65,7 @@ void RawCanRecordingService::poll() {
     if(!commit())return;
   }
   if(stopping_ && !has_pending_frame_ && !encoder_.count() &&
-     !can_.rawCapture().queued()) {
+     can_.rawCapture().quiescent() && !can_.rawCapture().queued()) {
     if(!can_.tryBeginLogCheckpoint())return;
     const bool success=rawCanJournal().append(session_id_,
         RawCanJournal::End,nullptr,0,can_.rawCapture().lost());
