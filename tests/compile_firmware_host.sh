@@ -203,3 +203,10 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -o /tmp/m5can-raw-codec-test
 /tmp/m5can-raw-codec-test
 echo "PASS PR32 CAN RX/TX SPSC ring, sequence gaps and lossless block codec"
+
+# PR #32 independent NOR flash journal; foreign OTA contents must fail closed.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_raw_can_journal.cpp" \
+  -o /tmp/m5can-raw-journal-test
+/tmp/m5can-raw-journal-test
+echo "PASS PR32 append-only journal ownership, CRC, torn commits and reboot"
