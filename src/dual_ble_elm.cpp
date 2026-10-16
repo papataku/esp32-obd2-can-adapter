@@ -818,12 +818,15 @@ void DualBleElm::poll() {
   onResult();
 #if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
   if(raw_service_) {
-    RawCanRecordingService::ExportReply reply{};
+    // BLE app task has a strict 128-byte stack frame budget. Static storage
+    // is safe here: only the single BLE ELM worker ever executes poll().
+    static RawCanRecordingService::ExportReply reply{};
     if(raw_service_->takeReadForBle(reply)) {
       Session* recipient=find(reply.peer,reply.generation);
       // Never route a response to a reused BLE connection id after reconnect.
       if(recipient) {
-        char line[250]{};
+        static char line[250]{};
+        line[0]='\0';
         if(reply.error) {
           std::snprintf(line,sizeof(line),
               "M5LOG READ ERROR BLOCK=%lu OFFSET=%lu CODE=%u",
@@ -831,7 +834,7 @@ void DualBleElm::poll() {
               static_cast<unsigned long>(reply.offset),
               static_cast<unsigned>(reply.error));
         } else {
-          char hex[raw_ble::kChunkBytes*2+1]{};
+          static char hex[raw_ble::kChunkBytes*2+1]{};
           if(!raw_ble::hexEncode(reply.bytes,reply.count,
                                  hex,sizeof(hex))) {
             emitLine(*recipient,"M5LOG READ INTERNAL");
