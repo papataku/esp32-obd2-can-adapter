@@ -509,6 +509,51 @@ void SerialProtocol::handleUsbLine(const char* line) {
         static_cast<unsigned long>(raw_service_->storageErrors()));
     return;
   }
+  if (!std::strcmp(command,"CANLOG INDEX")) {
+    const auto& j=rawCanJournal().status();
+    Serial.printf("#CANLOG,INDEX,ready=%u,session=%lu,blocks=%lu,bytes=%lu,complete=%u,full=%u,corrupt=%u,foreign=%u,dropped=%lu\n",
+        j.ready?1U:0U,
+        static_cast<unsigned long>(j.session),
+        static_cast<unsigned long>(j.blocks),
+        static_cast<unsigned long>(j.bytes),
+        j.completed?1U:0U,j.full?1U:0U,j.corrupt?1U:0U,
+        j.foreign?1U:0U,static_cast<unsigned long>(j.last_dropped));
+    return;
+  }
+  if (!std::strncmp(command,"CANLOG READ ",12)) {
+    // USB emergency recovery only, no BLE peers nor ongoing recording/query.
+    if(!raw_service_ || raw_service_->recording() ||
+        raw_service_->stopping() || monitor_.queryPending() ||
+        (drive_log_ble_ && drive_log_ble_->connectedClientCount())) {
+      Serial.println("#CANLOG,ERR,RECOVERY_NEEDS_IDLE_NO_PEERS");
+      return;
+    }
+    char* end=nullptr;
+    const unsigned long index=std::strtoul(command+12,&end,10);
+    if(end==command+12 || *end || index>0xFFFFFFFFUL) {
+      Serial.println("#CANLOG,ERR,INVALID_INDEX");
+      return;
+    }
+    static uint8_t buffer[RawCanBlockCodec::kMaxBytes];
+    uint16_t size=0;
+    RawCanJournal::RecordType type=RawCanJournal::End;
+    if(!rawCanJournal().readBlock(static_cast<uint32_t>(index),buffer,
+                                   sizeof(buffer),size,type)) {
+      Serial.println("#CANLOG,ERR,BLOCK_NOT_FOUND_OR_INVALID");
+      return;
+    }
+    Serial.printf("#CANLOG,BLOCK,index=%lu,type=%u,length=%u\n",
+                  index,static_cast<unsigned>(type),static_cast<unsigned>(size));
+    for(uint16_t i=0;i<size;i+=32) {
+      const uint16_t n=static_cast<uint16_t>(size-i<32?size-i:32);
+      Serial.printf("#CANLOG,DATA,index=%lu,offset=%u,hex=",index,
+                    static_cast<unsigned>(i));
+      for(uint16_t j=0;j<n;++j)Serial.printf("%02X",buffer[i+j]);
+      Serial.println("");
+    }
+    Serial.printf("#CANLOG,BLOCKEND,index=%lu\n",index);
+    return;
+  }
   if (!std::strncmp(command,"CANLOG START ",13)) {
     if(!raw_service_ || (drive_log_ble_ &&
         drive_log_ble_->connectedClientCount()!=0)) {
