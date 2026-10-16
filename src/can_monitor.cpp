@@ -141,6 +141,18 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   if (frame.rtr) ++stats_.rtr_frames;
   portEXIT_CRITICAL(&stats_mux_);
 
+  // Independent from GUI/USB frame_queue_ consumption. The CAN owner is
+  // always the single producer, including inside active ISO-TP transactions.
+  RawCanFrame raw{};
+  raw.timestamp_us=frame.timestamp_us;
+  raw.identifier=frame.identifier;
+  raw.dlc=frame.dlc;
+  raw.flags=static_cast<uint8_t>((frame.extended?1U:0U) |
+      (frame.rtr?2U:0U) | (frame.self?4U:0U));
+  std::memcpy(raw.data,frame.data,sizeof(raw.data));
+  raw.direction=RawCanDirection::Rx;
+  raw_capture_.push(raw);
+
   if (xQueueSend(frame_queue_, &frame, 0) != pdTRUE) {
     portENTER_CRITICAL(&stats_mux_);
     ++stats_.app_queue_drops;
@@ -344,6 +356,18 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
 
   const esp_err_t result =
       twai_transmit(&message, pdMS_TO_TICKS(wait_ms));
+  // A TX result is one software submission event, not a physical wire
+  // timestamp. Cache responses and dry-run TX are never fabricated as TX.
+  RawCanFrame raw{};
+  raw.timestamp_us=static_cast<uint64_t>(esp_timer_get_time());
+  raw.identifier=message.identifier;
+  raw.dlc=message.data_length_code>8?8:message.data_length_code;
+  raw.flags=static_cast<uint8_t>((message.extd?1U:0U) |
+      (message.rtr?2U:0U) | (message.self?4U:0U));
+  if(!message.rtr)std::memcpy(raw.data,message.data,raw.dlc);
+  raw.direction=result==ESP_OK?RawCanDirection::TxSubmitted:
+                                    RawCanDirection::TxSubmitFailed;
+  raw_capture_.push(raw);
   if (result == ESP_OK) {
     portENTER_CRITICAL(&stats_mux_);
     ++stats_.tx_success;
