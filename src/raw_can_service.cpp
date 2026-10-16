@@ -7,8 +7,9 @@ bool RawCanRecordingService::begin() {
   const bool ready=initializeRawCanJournal();
   const auto& status=rawCanJournal().status();
   const State initial=!ready ? State::Unavailable :
-      status.blocks==0 ? State::Idle :
-      status.completed ? State::Complete : State::RecoveryRequired;
+      status.corrupt || (status.blocks && !status.completed)
+          ? State::RecoveryRequired :
+      status.blocks==0 ? State::Idle : State::Complete;
   state_.store(initial,std::memory_order_release);
   return ready;
 }
