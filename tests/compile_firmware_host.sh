@@ -188,3 +188,11 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-tx-flow-test
 /tmp/m5can-tx-flow-test
 echo "PASS bounded BLE output, fairness, pool reserve, exact recovery, generation, overflow and stall"
+
+
+# Issue #31 Phase A: independent RPM evidence compression, with sanitizers.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_rpm_observation_log.cpp" \
+  -o /tmp/m5can-rpm-observation-test
+/tmp/m5can-rpm-observation-test
+echo "PASS Issue31 RAM-only RPM provenance/compression gate (no firmware hook)"
