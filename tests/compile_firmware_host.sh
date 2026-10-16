@@ -196,3 +196,10 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -o /tmp/m5can-rpm-observation-test
 /tmp/m5can-rpm-observation-test
 echo "PASS Issue31 RAM-only RPM provenance/compression gate (no firmware hook)"
+
+# PR #32 CAN RAW source ring and lossless on-wire observation codec.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_raw_can_codec.cpp" \
+  -o /tmp/m5can-raw-codec-test
+/tmp/m5can-raw-codec-test
+echo "PASS PR32 CAN RX/TX SPSC ring, sequence gaps and lossless block codec"
