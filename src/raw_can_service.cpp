@@ -4,7 +4,33 @@
 namespace m5can {
 
 bool RawCanRecordingService::begin() {
-  return initializeRawCanJournal();
+  const bool ready=initializeRawCanJournal();
+  const auto& status=rawCanJournal().status();
+  const State initial=!ready ? State::Unavailable :
+      status.blocks==0 ? State::Idle :
+      status.completed ? State::Complete : State::RecoveryRequired;
+  state_.store(initial,std::memory_order_release);
+  return ready;
+}
+bool RawCanRecordingService::queueStartFromBle(
+    uint32_t session,uint16_t peer,uint32_t generation) {
+  if(!session || !peer || !generation || state()!=State::Idle ||
+     requested_session_.load(std::memory_order_acquire))return false;
+  // DualBleElm is the only BLE producer; release publishes both peer fields.
+  requested_peer_.store(peer,std::memory_order_relaxed);
+  requested_generation_.store(generation,std::memory_order_relaxed);
+  requested_session_.store(session,std::memory_order_release);
+  return true;
+}
+bool RawCanRecordingService::queueStopFromBle(
+    uint16_t peer,uint32_t generation) {
+  if(!peer || !generation || state()!=State::Recording ||
+     owner_peer_.load(std::memory_order_acquire)!=peer ||
+     owner_generation_.load(std::memory_order_acquire)!=generation)
+    return false;
+  bool expected=false;
+  return requested_stop_.compare_exchange_strong(
+      expected,true,std::memory_order_acq_rel);
 }
 bool RawCanRecordingService::start(uint32_t session_id) {
   // No auto-overwrite, no "record on boot", and no start before a verified
@@ -15,18 +41,22 @@ bool RawCanRecordingService::start(uint32_t session_id) {
      recording_ || stopping_ || fault_ || has_pending_frame_)return false;
   encoder_.reset();
   if(!can_.rawCapture().start(session_id))return false;
-  session_id_=session_id;last_flush_ms_=millis();recording_=true;
+  session_id_.store(session_id,std::memory_order_release);
+  last_flush_ms_=millis();recording_=true;
+  state_.store(State::Recording,std::memory_order_release);
   return true;
 }
 bool RawCanRecordingService::stop() {
   if(!recording_ || stopping_)return false;
   can_.rawCapture().stop();
   recording_=false;stopping_=true;
+  state_.store(State::Stopping,std::memory_order_release);
   return true;
 }
 void RawCanRecordingService::fail() {
   can_.rawCapture().stop();
   recording_=false;stopping_=false;fault_=true;
+  state_.store(State::Fault,std::memory_order_release);
 }
 
 bool RawCanRecordingService::commit() {
@@ -45,6 +75,25 @@ bool RawCanRecordingService::commit() {
   return true;
 }
 void RawCanRecordingService::poll() {
+  const uint32_t queued=requested_session_.exchange(
+      0,std::memory_order_acq_rel);
+  if(queued) {
+    owner_peer_.store(requested_peer_.load(std::memory_order_relaxed),
+                      std::memory_order_release);
+    owner_generation_.store(
+        requested_generation_.load(std::memory_order_relaxed),
+        std::memory_order_release);
+    if(!start(queued)) {
+      owner_peer_.store(0,std::memory_order_release);
+      owner_generation_.store(0,std::memory_order_release);
+      last_control_error_.store(1,std::memory_order_release);
+    } else {
+      last_control_error_.store(0,std::memory_order_release);
+    }
+  }
+  if(requested_stop_.exchange(false,std::memory_order_acq_rel)) {
+    if(!stop())last_control_error_.store(2,std::memory_order_release);
+  }
   if((!recording_ && !stopping_)||fault_)return;
   // Never spend unbounded time draining the queue on the display/USB owner.
   for(unsigned i=0;i<48;++i) {
@@ -72,6 +121,7 @@ void RawCanRecordingService::poll() {
     can_.endLogCheckpoint();
     if(!success){fail();return;}
     stopping_=false;
+    state_.store(State::Complete,std::memory_order_release);
   }
 }
 } // namespace m5can
