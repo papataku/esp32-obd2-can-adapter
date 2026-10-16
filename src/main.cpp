@@ -71,6 +71,9 @@ void setup() {
   g_serial.setDriveLogTransport(&g_ble);
 #if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
   g_serial.setRawCanRecorder(&g_raw);
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  g_dual.setRawCanRecorder(&g_raw);
+#endif
 #endif
   g_ui.begin();
   g_serial.begin();
