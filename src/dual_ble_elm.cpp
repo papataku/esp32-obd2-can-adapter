@@ -255,18 +255,35 @@ void DualBleElm::onLine(Session& s,const char* line) {
     // PENDING is NOT a durable recording ACK. No raw data is exposed here.
     if(!raw_service_)emitLine(s,"M5LOG UNAVAILABLE");
     else if(!std::strcmp(compact,"ATM5LOGCAP")) {
-      emitLine(s,raw_service_->ready()?"M5LOG CAP V1 READY=1":
-                                       "M5LOG CAP V1 READY=0");
+      emitLine(s,raw_service_->ready()?
+          "M5LOG CAP V1 READY=1 READ=1 CHUNK=48 CRC=CRC32":
+          "M5LOG CAP V1 READY=0 READ=0 CHUNK=48 CRC=CRC32");
     } else if(!std::strcmp(compact,"ATM5LOGSTATUS")) {
-      char info[128]{};
+      char info[200]{};
       std::snprintf(info,sizeof(info),
-          "M5LOG STATUS STATE=%u SESSION=%lu Q=%lu LOST=%lu ERR=%lu",
+          "M5LOG STATUS STATE=%u SESSION=%lu Q=%lu LOST=%lu BLOCKS=%lu BYTES=%lu STORE_ERR=%lu CTRL_ERR=%lu",
           static_cast<unsigned>(raw_service_->state()),
           static_cast<unsigned long>(raw_service_->session()),
           static_cast<unsigned long>(raw_service_->pending()),
           static_cast<unsigned long>(raw_service_->dropped()),
+          static_cast<unsigned long>(raw_service_->committedBlocks()),
+          static_cast<unsigned long>(raw_service_->committedBytes()),
+          static_cast<unsigned long>(raw_service_->storageErrors()),
           static_cast<unsigned long>(raw_service_->lastControlError()));
       emitLine(s,info);
+    } else if(!std::strncmp(compact,raw_ble::kReadPrefix,
+                            std::strlen(raw_ble::kReadPrefix))) {
+      uint32_t index=0,offset=0;
+      const bool valid=raw_ble::parseReadArgs(
+          compact+std::strlen(raw_ble::kReadPrefix),index,offset);
+      if(valid && raw_service_->queueReadFromBle(
+          index,offset,s.conn_id,s.generation)) {
+        // Exactly one pending request, peer+generation bound. The Arduino
+        // owner reads and CRC-checks flash; its eventual reply ends with '>'.
+        // No speculative "success" ACK before verified data is available.
+        return;
+      }
+      emitLine(s,"M5LOG READ REJECTED");
     } else if(!std::strncmp(compact,"ATM5LOGSTART",12)) {
       char* end=nullptr;
       const unsigned long id=std::strtoul(compact+12,&end,10);
@@ -799,6 +816,45 @@ void DualBleElm::poll() {
   for(int i=0;i<512 && ble_.pollClientEvent(event_item);++i)
     event(event_item);
   onResult();
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  if(raw_service_) {
+    RawCanRecordingService::ExportReply reply{};
+    if(raw_service_->takeReadForBle(reply)) {
+      Session* recipient=find(reply.peer,reply.generation);
+      // Never route a response to a reused BLE connection id after reconnect.
+      if(recipient) {
+        char line[250]{};
+        if(reply.error) {
+          std::snprintf(line,sizeof(line),
+              "M5LOG READ ERROR BLOCK=%lu OFFSET=%lu CODE=%u",
+              static_cast<unsigned long>(reply.index),
+              static_cast<unsigned long>(reply.offset),
+              static_cast<unsigned>(reply.error));
+        } else {
+          char hex[raw_ble::kChunkBytes*2+1]{};
+          if(!raw_ble::hexEncode(reply.bytes,reply.count,
+                                 hex,sizeof(hex))) {
+            emitLine(*recipient,"M5LOG READ INTERNAL");
+            prompt(*recipient);
+          } else {
+            std::snprintf(line,sizeof(line),
+                "M5LOG DATA BLOCK=%lu OFFSET=%lu SIZE=%u TOTAL=%u TYPE=%u CRC=%08lX HEX=%s",
+                static_cast<unsigned long>(reply.index),
+                static_cast<unsigned long>(reply.offset),
+                static_cast<unsigned>(reply.count),
+                static_cast<unsigned>(reply.total),
+                static_cast<unsigned>(reply.type),
+                static_cast<unsigned long>(reply.crc),hex);
+          }
+        }
+        if(line[0]) {
+          emitLine(*recipient,line);
+          prompt(*recipient);
+        }
+      }
+    }
+  }
+#endif
   for(auto& s:sessions_)
     if(s.active && s.batch && !s.pending)advanceBatch(s);
   dispatch();
