@@ -1,0 +1,18 @@
+# EXPERIMENTAL layout — NEVER flash a previously programmed device without a full
+# 8 MiB backup, OTA metadata inspection, and tested non-destructive migration.
+# Reference default_8MB.csv has two 0x330000-byte OTA app slots,
+# spiffs/evidence at 0x670000..0x7F0000, coredump 0x7F0000..0x800000.
+#
+# This proposal preserves ALL old NVS, otadata, evidence spiffs and coredump
+# offsets/sizes. It moves app1 (previously 0x340000) to 0x210000,
+# shrinks app0/app1 to 2MiB each, and creates a NEW owned raw-CAN partition.
+# The new canlog region may contain OLD app1 firmware, so never auto-erase,
+# initialize or mount it! A user-approved migration/erasure is required.
+# Name,    Type, SubType, Offset,   Size,      Flags
+nvs,       data, nvs,     0x9000,   0x5000,
+otadata,   data, ota,     0xE000,   0x2000,
+app0,      app,  ota_0,   0x10000,  0x200000,
+app1,      app,  ota_1,   0x210000, 0x200000,
+canlog,    data, 0x40,    0x410000, 0x260000,
+spiffs,    data, spiffs,  0x670000, 0x180000,
+coredump,  data, coredump,0x7F0000,0x10000,
