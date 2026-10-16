@@ -6,7 +6,11 @@
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+#include "raw_can_service.h"
+#endif
 #include "app_config.h"
 #include "diagnostic_policy.h"
 #include "diagnostic_batch_planner.h"
@@ -63,6 +67,11 @@ void DualBleElm::event(const BleClientEvent& event) {
            &sessions_[active_secondary_owner_] == s))))
       adaptive_multi_pid_.disable();
     driveLog().event(DriveLog::Kind::Disconnect,s->conn_id);
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+    // Losing the recording meter requests a clean cut-off. If power dies,
+    // the immutable committed blocks remain recoverable after reboot.
+    if(raw_service_)raw_service_->queueStopFromBle(s->conn_id,s->generation);
+#endif
     s->multi_pid_pair = false;
     s->active = false;
     s->pending = false;
@@ -239,6 +248,42 @@ void DualBleElm::onLine(Session& s,const char* line) {
   char compact[96]{};
   upperNoSpaces(line,compact,sizeof(compact));
   if (s.elm.echo()) emitLine(s,line);
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  if(!std::strncmp(compact,"ATM5LOG",7)) {
+    // This ELM-compatible control plane is deliberately distinct from
+    // arbitrary CAN requests. The writer acts on the next Arduino poll:
+    // PENDING is NOT a durable recording ACK. No raw data is exposed here.
+    if(!raw_service_)emitLine(s,"M5LOG UNAVAILABLE");
+    else if(!std::strcmp(compact,"ATM5LOGCAP")) {
+      emitLine(s,raw_service_->ready()?"M5LOG CAP V1 READY=1":
+                                       "M5LOG CAP V1 READY=0");
+    } else if(!std::strcmp(compact,"ATM5LOGSTATUS")) {
+      char info[128]{};
+      std::snprintf(info,sizeof(info),
+          "M5LOG STATUS STATE=%u SESSION=%lu Q=%lu LOST=%lu ERR=%lu",
+          static_cast<unsigned>(raw_service_->state()),
+          static_cast<unsigned long>(raw_service_->session()),
+          static_cast<unsigned long>(raw_service_->pending()),
+          static_cast<unsigned long>(raw_service_->dropped()),
+          static_cast<unsigned long>(raw_service_->lastControlError()));
+      emitLine(s,info);
+    } else if(!std::strncmp(compact,"ATM5LOGSTART",12)) {
+      char* end=nullptr;
+      const unsigned long id=std::strtoul(compact+12,&end,10);
+      const bool valid=compact[12] && end!=compact+12 &&
+          end && !*end && id && id<=0xFFFFFFFFUL;
+      const bool accepted=valid && raw_service_->queueStartFromBle(
+          static_cast<uint32_t>(id),s.conn_id,s.generation);
+      emitLine(s,accepted?"M5LOG START PENDING":"M5LOG START REJECTED");
+    } else if(!std::strcmp(compact,"ATM5LOGSTOP")) {
+      const bool accepted=raw_service_->queueStopFromBle(
+          s.conn_id,s.generation);
+      emitLine(s,accepted?"M5LOG STOP PENDING":"M5LOG STOP REJECTED");
+    } else emitLine(s,"M5LOG ?");
+    prompt(s);
+    return;
+  }
+#endif
   const ElmResult parsed=s.elm.execute(line);
   bool prompt_now=true;
   switch (parsed.action) {
