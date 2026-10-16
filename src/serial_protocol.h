@@ -11,6 +11,8 @@
 
 namespace m5can {
 
+class RawCanRecordingService;
+
 class SerialProtocol {
  public:
   explicit SerialProtocol(CanMonitor& monitor,
@@ -18,6 +20,9 @@ class SerialProtocol {
       : monitor_(monitor), ble_(ble), drive_log_ble_(ble) {}
 
   void setDriveLogTransport(BleElmTransport* ble) { drive_log_ble_=ble; }
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  void setRawCanRecorder(RawCanRecordingService* service) { raw_service_=service; }
+#endif
   void begin();
   void pollInput();
   void emitFrame(const CapturedFrame& frame);
@@ -86,6 +91,9 @@ class SerialProtocol {
   CanMonitor& monitor_;
   BleElmTransport* ble_ = nullptr;
   BleElmTransport* drive_log_ble_ = nullptr;
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  RawCanRecordingService* raw_service_ = nullptr;
+#endif
   ElmCompat elm_{};
   ElmLink elm_link_ = ElmLink::None;
   bool elm_mode_ = false;
