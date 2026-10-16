@@ -1,6 +1,7 @@
 #pragma once
 #include "can_monitor.h"
 #include "raw_can_codec.h"
+#include "raw_can_ble_protocol.h"
 #include "raw_can_partition.h"
 #include <atomic>
 
@@ -43,6 +44,21 @@ class RawCanRecordingService {
   uint32_t committedBytes() const { return rawCanJournal().status().bytes; }
   uint32_t storageErrors() const { return rawCanJournal().status().errors; }
 
+  // One outstanding bounded read. BLE core queues; Arduino core owns flash
+  // reads and replies with a CRC32 per chunk. No RAW data is read in GAP/GATT.
+  // Competing requests fail closed; client retries after receiving a reply.
+  struct ExportReply {
+    uint16_t peer=0;
+    uint32_t generation=0, index=0, offset=0;
+    uint16_t total=0;
+    uint8_t type=0, count=0, error=0;
+    uint32_t crc=0;
+    uint8_t bytes[raw_ble::kChunkBytes]{};
+  };
+  bool queueReadFromBle(uint32_t index,uint32_t offset,
+                        uint16_t peer,uint32_t generation);
+  bool takeReadForBle(ExportReply& reply);
+
  private:
   bool commit();
   void fail();
@@ -57,6 +73,14 @@ class RawCanRecordingService {
   std::atomic<bool> requested_stop_{false};
   std::atomic<uint32_t> last_control_error_{0};
   uint32_t last_flush_ms_=0;
+  // BLE request owner core1 -> Arduino owner core1 loop. The state machine
+  // is a release/acquire mailbox and prevents a torn result on reconnect.
+  enum : uint8_t { ReadIdle=0, ReadFilling=1, ReadQueued=2,
+                   ReadProcessing=3, ReadReady=4 };
+  std::atomic<uint8_t> read_state_{ReadIdle};
+  ExportReply read_reply_{};
+  uint8_t read_buffer_[RawCanBlockCodec::kMaxBytes]{};
+  void pollRead();
   bool has_pending_frame_=false;
   bool recording_=false,stopping_=false,fault_=false;
 };
