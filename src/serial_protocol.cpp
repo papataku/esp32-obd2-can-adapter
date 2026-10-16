@@ -11,6 +11,9 @@
 #include "demo_drive.h"
 #include "drive_log.h"
 #include "log_storage_probe.h"
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+#include "raw_can_service.h"
+#endif
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "ble_evidence_journal.h"
 #endif
@@ -487,6 +490,46 @@ void SerialProtocol::handleUsbLine(const char* line) {
 
   char command[129]{};
   uppercaseCopy(line, command, sizeof(command));
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  if (!std::strcmp(command,"CANLOG STATUS")) {
+    if(!raw_service_) {
+      Serial.println("#CANLOG,ERR,NO_SERVICE");
+      return;
+    }
+    Serial.printf("#CANLOG,ready=%u,recording=%u,stopping=%u,fault=%u,session=%lu,queued=%lu,drop=%lu,blocks=%lu,bytes=%lu,store_err=%lu\n",
+        raw_service_->ready()?1U:0U,
+        raw_service_->recording()?1U:0U,
+        raw_service_->stopping()?1U:0U,
+        raw_service_->fault()?1U:0U,
+        static_cast<unsigned long>(raw_service_->session()),
+        static_cast<unsigned long>(raw_service_->pending()),
+        static_cast<unsigned long>(raw_service_->dropped()),
+        static_cast<unsigned long>(raw_service_->committedBlocks()),
+        static_cast<unsigned long>(raw_service_->committedBytes()),
+        static_cast<unsigned long>(raw_service_->storageErrors()));
+    return;
+  }
+  if (!std::strncmp(command,"CANLOG START ",13)) {
+    if(!raw_service_ || (drive_log_ble_ &&
+        drive_log_ble_->connectedClientCount()!=0)) {
+      Serial.println("#CANLOG,ERR,NO_SERVICE_OR_ACTIVE_BLE");return;
+    }
+    char* end=nullptr;
+    const unsigned long session=std::strtoul(command+13,&end,10);
+    if(!session || session>0xFFFFFFFFUL || !end || *end) {
+      Serial.println("#CANLOG,ERR,INVALID_SESSION");return;
+    }
+    Serial.println(raw_service_->start(static_cast<uint32_t>(session))?
+        "#CANLOG,START_ACK":"#CANLOG,ERR,START_REJECTED");
+    return;
+  }
+  if (!std::strcmp(command,"CANLOG STOP")) {
+    if(!raw_service_) {Serial.println("#CANLOG,ERR,NO_SERVICE");return;}
+    Serial.println(raw_service_->stop()?
+        "#CANLOG,STOP_PENDING":"#CANLOG,ERR,NOT_RECORDING");
+    return;
+  }
+#endif
   if (!std::strcmp(command, "INFO")) {
     emitTextHello();
   } else if (!std::strcmp(command, "DRIVELOG")) {
