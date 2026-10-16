@@ -1,5 +1,8 @@
 # M5CAN 8MiB flash repartition proposal — DO NOT DEPLOY YET
 
+> **2026-10-16 recommended alternative:** M5Dial's visible application sources contain no OTA update workflow; development firmware is loaded by wired USB. The user's priority is all-CAN trace retention, so the preferred *evaluation* design is a **single 2MiB factory application (no OTA)** and separate **4.375MiB raw CAN partition**, while the original **1.5MiB protected evidence area stays unchanged**. Total flash devoted to logs: **5.875MiB**, versus 3.875MiB for the dual-OTA proposal below. See [the single-app candidate](../partitions/m5can_8mb_single_app_canlog_proposed.csv) and `pio run -e m5dial_single_app_layout_eval`. Full 8MiB backup, old active OTA slot and bootloader/otadata selection inspection, a tested complete migration and safe USB recovery are **mandatory** before any device is flashed. Do not infer readiness from a compile pass. If the firmware binary does not fit 2MiB, measure its actual size and revise only after analysis. Regular `m5dial` remains on the deployed partition table for now.
+
+
 This is a read-only design and compile feasibility exercise on Draft PR #32.
 The normal m5dial environment retains the **original** partition table until
 hardware backup, migration and power-loss acceptance are completed.
