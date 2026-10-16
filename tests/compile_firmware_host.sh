@@ -210,3 +210,10 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -o /tmp/m5can-raw-journal-test
 /tmp/m5can-raw-journal-test
 echo "PASS PR32 append-only journal ownership, CRC, torn commits and reboot"
+
+# Non-destructive BLE RAW export framing and offset/CRC32 guard.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_raw_can_ble_protocol.cpp" \
+  -o /tmp/m5can-raw-ble-protocol-test
+/tmp/m5can-raw-ble-protocol-test
+echo "PASS PR32 BLE journal read chunk protocol, CRC32 and resume"
