@@ -7,6 +7,12 @@ for source in "$ROOT"/src/*.cpp; do
   g++ -std=c++17 -Wall -Wextra -Werror     -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"     -fsyntax-only "$source"
 done
 
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_raw_can_service_recovery.cpp" "$ROOT/src/raw_can_service.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-raw-service-recovery-test
+/tmp/m5can-raw-service-recovery-test
+
 g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"   "$ROOT/tests/test_native_protocol.cpp"   "$ROOT/src/native_protocol.cpp"   "$ROOT/tests/host_stubs/stubs.cpp"   -o /tmp/m5can-native-test
 /tmp/m5can-native-test
 
@@ -188,3 +194,32 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-tx-flow-test
 /tmp/m5can-tx-flow-test
 echo "PASS bounded BLE output, fairness, pool reserve, exact recovery, generation, overflow and stall"
+
+
+# Issue #31 Phase A: independent RPM evidence compression, with sanitizers.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_rpm_observation_log.cpp" \
+  -o /tmp/m5can-rpm-observation-test
+/tmp/m5can-rpm-observation-test
+echo "PASS Issue31 RAM-only RPM provenance/compression gate (no firmware hook)"
+
+# PR #32 CAN RAW source ring and lossless on-wire observation codec.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_raw_can_codec.cpp" \
+  -o /tmp/m5can-raw-codec-test
+/tmp/m5can-raw-codec-test
+echo "PASS PR32 CAN RX/TX SPSC ring, sequence gaps and lossless block codec"
+
+# PR #32 independent NOR flash journal; foreign OTA contents must fail closed.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_raw_can_journal.cpp" \
+  -o /tmp/m5can-raw-journal-test
+/tmp/m5can-raw-journal-test
+echo "PASS PR32 append-only journal ownership, CRC, torn commits and reboot"
+
+# Non-destructive BLE RAW export framing and offset/CRC32 guard.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_raw_can_ble_protocol.cpp" \
+  -o /tmp/m5can-raw-ble-protocol-test
+/tmp/m5can-raw-ble-protocol-test
+echo "PASS PR32 BLE journal read chunk protocol, CRC32 and resume"

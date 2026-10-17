@@ -10,6 +10,9 @@
 
 namespace m5can {
 class SerialProtocol;
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+class RawCanRecordingService;
+#endif
 
 // Experimental two-client BLE ELM front-end. All state lives in this class,
 // which is polled from the Arduino loop. CAN continues on the existing
@@ -20,6 +23,9 @@ class DualBleElm {
              SerialProtocol& demo_source)
       : can_(can), ble_(ble), demo_source_(demo_source) {}
   void poll();
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  void setRawCanRecorder(RawCanRecordingService* service) { raw_service_=service; }
+#endif
   struct CoordinatorStats {
     uint32_t cache_hits=0, cache_misses=0, joins=0;
     uint32_t grouped_submissions=0, cross_group_submissions=0;
@@ -91,6 +97,9 @@ class DualBleElm {
   CanMonitor& can_;
   BleElmTransport& ble_;
   SerialProtocol& demo_source_;
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  RawCanRecordingService* raw_service_=nullptr;
+#endif
   Session sessions_[2]{};
   // Atomics are published from BLE core1 and read by the Arduino/UI
   // task without exposing non-thread-safe cache internals.

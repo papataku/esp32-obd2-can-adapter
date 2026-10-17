@@ -35,6 +35,16 @@ jobs:
         run: python -m pip install --upgrade platformio
       - name: Build M5Dial firmware
         run: pio run -e m5dial
+      - name: Validate proposed 8MiB CAN log partition (build only; no flashing)
+        run: |
+          python tools/check_canlog_partition.py partitions/m5can_8mb_dual_ota_canlog_proposed.csv
+          pio run -e m5dial_flash_layout_eval
+          python tools/check_canlog_partition.py partitions/m5can_8mb_dual_ota_canlog_proposed.csv --firmware-bin .pio/build/m5dial_flash_layout_eval/firmware.bin
+      - name: Validate no-OTA single-app layout (compile/size check only, never flash)
+        run: |
+          python tools/check_single_app_canlog_partition.py partitions/m5can_8mb_single_app_canlog_proposed.csv
+          pio run -e m5dial_single_app_layout_eval
+          python tools/check_single_app_canlog_partition.py partitions/m5can_8mb_single_app_canlog_proposed.csv --firmware-bin .pio/build/m5dial_single_app_layout_eval/firmware.bin
       - name: Build two-client BLE opt-in bench
         run: pio run -e m5dial_dual_ble_bench
       - name: Build matched MTU247 two-client bench

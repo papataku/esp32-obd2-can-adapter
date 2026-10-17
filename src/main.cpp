@@ -9,6 +9,9 @@
 
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+#include "raw_can_service.h"
+#endif
 #include "serial_protocol.h"
 #include "ui.h"
 #ifndef M5CAN_BUILD_SHA
@@ -34,6 +37,9 @@ uint32_t bootFreeHeapBytes() {
 }
 #endif
 m5can::CanMonitor g_can;
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+m5can::RawCanRecordingService g_raw(g_can);
+#endif
 m5can::BleElmTransport g_ble;
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 m5can::SerialProtocol g_serial(g_can, nullptr); // USB only, separate ELM state
@@ -63,8 +69,23 @@ bool g_ble_ok = false;
 
 void setup() {
   g_serial.setDriveLogTransport(&g_ble);
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  g_serial.setRawCanRecorder(&g_raw);
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  g_dual.setRawCanRecorder(&g_raw);
+#endif
+#endif
   g_ui.begin();
   g_serial.begin();
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  // Must run before starting TWAI/BLE. If the proposed 'canlog' partition
+  // is absent or still contains old OTA bytes, this fails closed.
+  const bool raw_ready=g_raw.begin();
+  Serial.printf("#CANLOG,boot_ready=%u,reason=%s,blocks=%lu,foreign=%u\n",
+      raw_ready?1U:0U,raw_ready?"OK":"ABSENT_OR_UNOWNED",
+      static_cast<unsigned long>(m5can::rawCanJournal().status().blocks),
+      m5can::rawCanJournal().status().foreign?1U:0U);
+#endif
 #if defined(ARDUINO_ARCH_ESP32)
   m5can::driveLog().begin(static_cast<uint32_t>(esp_reset_reason()),
       static_cast<uint32_t>(rtc_get_reset_reason(0)));
@@ -157,6 +178,9 @@ void loop() {
     g_serial.toggleDemoAuto();
   }
   g_serial.pollInput();
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  if(g_can_ok)g_raw.poll(); // bounded consumer, only Arduino CPU1 writes flash
+#endif
 #if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   if (g_ble_ok) {
     // Emit callback events from loop(), never from the BLE stack callback.
