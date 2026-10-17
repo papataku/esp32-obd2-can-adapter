@@ -39,7 +39,11 @@ class RawCanRecordingService {
   bool fault() const { return fault_; }
   uint32_t session() const { return session_id_.load(std::memory_order_acquire); }
   uint32_t pending() const { return can_.rawCapture().queued(); }
-  uint32_t dropped() const { return can_.rawCapture().lost(); }
+  uint32_t dropped() const {
+    const uint32_t live=can_.rawCapture().lost();
+    const uint32_t saved=retained_dropped_.load(std::memory_order_acquire);
+    return live>saved?live:saved;
+  }
   uint32_t committedBlocks() const { return rawCanJournal().status().blocks; }
   uint32_t committedBytes() const { return rawCanJournal().status().bytes; }
   uint32_t storageErrors() const { return rawCanJournal().status().errors; }
@@ -66,6 +70,7 @@ class RawCanRecordingService {
   RawCanBlockCodec encoder_{};
   RawCanFrame pending_frame_{};
   std::atomic<uint32_t> session_id_{0};
+  std::atomic<uint32_t> retained_dropped_{0};
   std::atomic<State> state_{State::Unavailable};
   std::atomic<uint32_t> requested_session_{0};
   std::atomic<uint16_t> requested_peer_{0}, owner_peer_{0};

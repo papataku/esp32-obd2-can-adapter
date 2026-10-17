@@ -6,6 +6,9 @@ namespace m5can {
 bool RawCanRecordingService::begin() {
   const bool ready=initializeRawCanJournal();
   const auto& status=rawCanJournal().status();
+  session_id_.store(ready?status.session:0,std::memory_order_release);
+  retained_dropped_.store(ready?status.last_dropped:0,
+                          std::memory_order_release);
   const State initial=!ready ? State::Unavailable :
       status.corrupt || (status.blocks && !status.completed)
           ? State::RecoveryRequired :
@@ -105,6 +108,7 @@ bool RawCanRecordingService::start(uint32_t session_id) {
      recording_ || stopping_ || fault_ || has_pending_frame_)return false;
   encoder_.reset();
   if(!can_.rawCapture().start(session_id))return false;
+  retained_dropped_.store(0,std::memory_order_release);
   session_id_.store(session_id,std::memory_order_release);
   last_flush_ms_=millis();recording_=true;
   state_.store(State::Recording,std::memory_order_release);

@@ -7,6 +7,12 @@ for source in "$ROOT"/src/*.cpp; do
   g++ -std=c++17 -Wall -Wextra -Werror     -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"     -fsyntax-only "$source"
 done
 
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_raw_can_service_recovery.cpp" "$ROOT/src/raw_can_service.cpp" \
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-raw-service-recovery-test
+/tmp/m5can-raw-service-recovery-test
+
 g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"   "$ROOT/tests/test_native_protocol.cpp"   "$ROOT/src/native_protocol.cpp"   "$ROOT/tests/host_stubs/stubs.cpp"   -o /tmp/m5can-native-test
 /tmp/m5can-native-test
 
