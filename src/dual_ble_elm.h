@@ -94,6 +94,7 @@ class DualBleElm {
   uint16_t log_stream_peer_=0;
   uint32_t log_stream_generation_=0;
   m5can_log_stream_v2::ProgressWatchdog log_stream_progress_{};
+  m5can_log_stream_v2::BlockFetchWatchdog log_stream_fetch_watchdog_{};
   bool log_stream_active_=false,log_stream_fetch_pending_=false;
 #endif
   AdaptiveMultiPid adaptive_multi_pid_{};
