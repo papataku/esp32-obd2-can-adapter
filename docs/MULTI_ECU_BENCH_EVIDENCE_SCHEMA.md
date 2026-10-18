@@ -186,6 +186,56 @@ must be based on independent analyzer status, not guessed.
 As elsewhere in this document, test logs created in CI are synthetic,
 not proof that a hardware capture exists.
 
+## Import actual M5CAN Native USB capture (device-side corroboration)
+
+M5CAN already implements a binary Native USB protocol with COBS framing,
+CRC32, packet sequence numbers, `CAN_FRAME` timestamps, `HELLO`
+device/firmware metadata and `STATS` drop/overrun counters.
+A **previously captured** Native byte stream may be converted offline:
+
+```bash
+python3 tools/import_m5can_native_capture.py \
+  original_m5can_native.bin m5can_device_rx.jsonl
+sha256sum original_m5can_native.bin m5can_device_rx.jsonl
+```
+
+The converter enforces packet framing, CRC, sequence continuity (including
+65535 → 0), timestamp ordering, Classical CAN DLC and ID ranges, HELLO
+identity, nonzero frame count, and STATS completeness. Any reported dropped
+frames, overruns, driver errors or invalid data cause failure. It retains
+the input file's SHA-256, CAN IDs, bytes, device times, and `self_reception`
+flags. It refuses to replace an existing evidence file.
+
+**Critical provenance distinction:** The result deliberately has a
+`"type":"device_capture_meta"` header and
+`"independent_analyzer":false`; it is **not** compatible with the
+`capture_meta` input required by
+`reconcile_multi_ecu_can_capture.py`. That is intentional: a
+device-originated RX capture cannot serve as independent proof of TX
+permission, CAN frame emission, absence of unexpected FC, or actual BLE
+peer delivery. The `HELLO.tx_enabled` field is only a declaration from
+firmware, and `self_reception` is not a trustworthy external TX witness.
+
+The existing `#DRIVELOG` NVS journal holds counters, the first grouped
+probe/failure and up to eight state/fault events. It **does not** contain
+a complete per-transaction CAN TX/RX stream or connection generation for
+every BLE request. Do not fabricate missing events or pass that journal
+through the full bench checker as if it were continuous hardware evidence.
+
+For a true isolated bench, collect all three independently:
+
+1. Actual M5CAN Native stream and/or detailed instrumented session events,
+   including BLE connection generation, request identity and delivery.
+2. Raw bus capture from a **separate physical CAN analyzer**, converted with
+   the offline `candump -L` importer when applicable.
+3. Clock-sync evidence, externally measured drop counters, matching firmware
+   hash, and independent QA signoff.
+
+Until source-side request/peer instrumentation is available, the Native RX
+import is *partial corroborating evidence*, not a substitute for full
+`capture_events.jsonl`. No vehicle TX or firmware change is introduced by
+this converter. All tests here use fabricated Native packets.
+
 ## Open items before independent hardware test
 
 - Design an export adapter that creates this JSONL from the actual
