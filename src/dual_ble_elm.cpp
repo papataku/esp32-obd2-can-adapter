@@ -67,6 +67,13 @@ void DualBleElm::event(const BleClientEvent& event) {
            &sessions_[active_secondary_owner_] == s))))
       adaptive_multi_pid_.disable();
     driveLog().event(DriveLog::Kind::Disconnect,s->conn_id);
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+    if(log_stream_active_ && log_stream_peer_==s->conn_id &&
+       log_stream_generation_==s->generation) {
+      log_stream_sender_.cancel();
+      log_stream_active_=log_stream_fetch_pending_=false;
+    }
+#endif
 #if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
     // Losing the recording meter requests a clean cut-off. If power dies,
     // the immutable committed blocks remain recoverable after reboot.
@@ -811,6 +818,93 @@ void DualBleElm::dispatch() {
   }
 }
 
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+void DualBleElm::pollLogV2() {
+  if(!raw_service_)return;
+  // Never process external control bytes on NimBLE's GATT host task.
+  BleElmTransport::LogControlMessage control{};
+  for(unsigned n=0;n<4 && ble_.pollLogControl(control);++n) {
+    m5can_log_stream_v2::Control request{};
+    if(!m5can_log_stream_v2::decodeControl(
+            control.data,control.count,request))continue;
+    if(!ble_.logPeerReady(control.peer,control.generation))continue;
+    if(request.kind==m5can_log_stream_v2::ControlKind::Start) {
+      // Explicit trigger only; never start on BLE connect / device boot.
+      if(log_stream_active_ || raw_service_->state()!=
+           RawCanRecordingService::State::Complete ||
+         !raw_service_->ready() ||
+         raw_service_->session()!=request.start.session ||
+         raw_service_->committedBlocks()!=request.start.blocks)continue;
+      if(!log_stream_sender_.begin(request.start.session,
+                                  request.start.blocks))continue;
+      log_stream_peer_=control.peer;
+      log_stream_generation_=control.generation;
+      log_stream_active_=true;
+      log_stream_fetch_pending_=false;
+      log_stream_progress_ms_=millis();
+    } else if(request.kind==m5can_log_stream_v2::ControlKind::Ack) {
+      if(!log_stream_active_ || control.peer!=log_stream_peer_ ||
+         control.generation!=log_stream_generation_)continue;
+      if(log_stream_sender_.acknowledge(request.ack))
+        log_stream_progress_ms_=millis();
+    }
+  }
+  if(!log_stream_active_)return;
+  if(!ble_.logPeerReady(log_stream_peer_,log_stream_generation_) ||
+     log_stream_sender_.failed()) {
+    log_stream_sender_.cancel();
+    log_stream_active_=log_stream_fetch_pending_=false;
+    return;
+  }
+  // A single flash-owning Arduino-loop poll produces verified staging.
+  // No GATT callback, BLE worker or TWAI ISR touches journal flash.
+  static RawCanRecordingService::StreamBlockReply received{};
+  if(raw_service_->takeStreamBlockForBle(received)) {
+    log_stream_fetch_pending_=false;
+    if(received.peer!=log_stream_peer_ ||
+       received.generation!=log_stream_generation_ ||
+       received.index!=log_stream_sender_.expectedBlock() ||
+       received.error ||
+       !log_stream_sender_.stage(
+         static_cast<uint16_t>(received.index),
+         received.total?received.bytes:nullptr,
+         received.total,received.type==2)) {
+      log_stream_sender_.cancel();
+      log_stream_active_=false;
+      return;
+    }
+    log_stream_progress_ms_=millis();
+  }
+  if(log_stream_sender_.completed()) {
+    log_stream_active_=false;return;
+  }
+  if(log_stream_sender_.needsBlock() && !log_stream_fetch_pending_) {
+    log_stream_fetch_pending_=raw_service_->queueStreamBlockFromBle(
+        log_stream_sender_.expectedBlock(),
+        log_stream_peer_,log_stream_generation_);
+  }
+  // Scheduling QoS: CAN PID dispatch and ASCII queues ran first.
+  // Only ONE V2 packet per iteration, with actual encrypted connection,
+  // ATT 247, host credit and mbuf checks performed in BleElmTransport.
+  uint8_t frame[m5can_log_stream_v2::kMaxNotification]{};
+  const size_t n=log_stream_sender_.peek(frame,sizeof(frame));
+  if(n && ble_.notifyLogFrame(log_stream_peer_,log_stream_generation_,
+                               frame,n)) {
+    if(!log_stream_sender_.queued()) {
+      log_stream_sender_.cancel();log_stream_active_=false;return;
+    }
+  }
+  // Withhold credit indefinitely only until a bounded ACK deadline.
+  // Retransmission reconstructs the original immutable staged block.
+  if(log_stream_sender_.outstanding() &&
+     static_cast<uint32_t>(millis()-log_stream_progress_ms_)>=1200) {
+    if(!log_stream_sender_.retryUnacked()) {
+      log_stream_sender_.cancel();log_stream_active_=false;
+    } else log_stream_progress_ms_=millis();
+  }
+}
+#endif
+
 void DualBleElm::poll() {
   BleClientEvent event_item{};
   for(int i=0;i<512 && ble_.pollClientEvent(event_item);++i)
@@ -862,6 +956,9 @@ void DualBleElm::poll() {
     if(s.active && s.batch && !s.pending)advanceBatch(s);
   dispatch();
   ble_.pollTx();
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  pollLogV2();
+#endif
 }
 } // namespace m5can
 
