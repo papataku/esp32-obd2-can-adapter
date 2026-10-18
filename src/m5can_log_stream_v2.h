@@ -139,7 +139,7 @@ class WindowGate {
        ((offset==0)!=(total==0)) ||
        (offset && offset>=total) || sequence==UINT32_MAX)return false;
     session_=session;acked_=sent_=sequence;
-    durable_={block,offset,total};
+    durable_.block=block;durable_.offset=offset;durable_.total=total;
     pending_=durable_;
     ended_=false;end_sequence_=0;
     return true;
