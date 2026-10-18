@@ -230,3 +230,9 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -o /tmp/m5can-log-stream-v2-test
 /tmp/m5can-log-stream-v2-test
 echo "PASS V2 stream wire contract (bench-only; not wired to BLE)"
+
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_stream_roundtrip.cpp" \
+  -o /tmp/m5can-stream-roundtrip-test
+/tmp/m5can-stream-roundtrip-test
+echo "PASS deterministic 64KiB windowed stream loss/corruption recovery simulation"
