@@ -98,6 +98,9 @@ class DualBleElm {
   std::atomic<uint32_t> grouped_submissions_{0},cross_groups_{0};
   std::atomic<uint32_t> single_submissions_{0};
   int active_query_owner_ = -1;
+  // Immutable read identity captured when the single CAN owner accepts TX.
+  // A later BLE connection generation must not change what the reply means.
+  DiagnosticRequest active_query_request_{};
   // A second pending request may join the same physical CAN transaction.
   int active_secondary_owner_ = -1;
   uint32_t active_secondary_generation_ = 0;

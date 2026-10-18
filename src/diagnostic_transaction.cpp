@@ -14,7 +14,10 @@ void DiagnosticTransaction::begin(const DiagnosticRequest& request,
 }
 
 bool DiagnosticTransaction::appendRaw(const TransactionFrame& frame) {
-  if (result_.raw_frame_count >= kDiagnosticMaxRawFrames) return false;
+  // Defence in depth: copies must never use an untrusted DLC as a size
+  // without bounding it to Classical CAN's fixed eight-byte storage.
+  if (frame.dlc > sizeof(frame.data) ||
+      result_.raw_frame_count >= kDiagnosticMaxRawFrames) return false;
   const uint8_t index=result_.raw_frame_count++;
   DiagnosticRawFrame& out = result_.raw_frames[index];
   out.can_id = frame.can_id;
@@ -38,7 +41,7 @@ bool DiagnosticTransaction::appendMessage(const DiagnosticMessage& message) {
 
 TransactionStep DiagnosticTransaction::onFrame(const TransactionFrame& frame) {
   TransactionStep step{};
-  if (frame.timestamp_us < tx_us_) return step;
+  if (frame.timestamp_us < tx_us_ || frame.dlc > sizeof(frame.data)) return step;
 
   const IsoTpEvent event =
       assembler_.feed(frame.can_id, frame.extended, frame.rtr,

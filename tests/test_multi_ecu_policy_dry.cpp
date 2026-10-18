@@ -48,6 +48,24 @@ static void testAbnormalTraffic(uint32_t header,
   assert(step.event == TransactionEvent::Ignored);
   assert(tx.result().raw_frame_count == 0);
 
+  // Impossible Classical CAN DLC must not overflow an eight-byte raw
+  // frame buffer or be interpreted as a First Frame.
+  auto oversizedDlc = frame(reply, 1'000'005,
+                           {0x10, 0x0A, 0x62, 0x20, 0x12, 1, 2, 3});
+  oversizedDlc.dlc = 9;
+  step = tx.onFrame(oversizedDlc);
+  assert(step.event == TransactionEvent::Ignored);
+  assert(tx.result().raw_frame_count == 0);
+  oversizedDlc.dlc = 255;
+  step = tx.onFrame(oversizedDlc);
+  assert(step.event == TransactionEvent::Ignored);
+  assert(!tx.hasActiveIsoTp());
+
+  // 7F 22 without its NRC is malformed and must not be marked complete.
+  step = tx.onFrame(frame(reply, 1'000'008, {0x02, 0x7F, 0x22}));
+  assert(step.event == TransactionEvent::Ignored);
+  assert(tx.result().response_count == 0);
+
   // NRC 0x78 is pending from our ECU, not a completed usable DID.
   step = tx.onFrame(frame(reply, 1'000'010, {0x03, 0x7F, 0x22, 0x78}));
   assert(step.event == TransactionEvent::ResponsePending);

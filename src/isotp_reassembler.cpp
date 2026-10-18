@@ -44,7 +44,10 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
                                 const uint8_t* data, uint8_t dlc,
                                 uint64_t timestamp_us) {
   IsoTpEvent event{};
-  if (!extended || rtr || !data || dlc == 0 ||
+  // Classical CAN frames carry at most eight data bytes. Reject invalid
+  // DLC before any payload inspection or raw-frame copy; a corrupt host
+  // fixture must never cause out-of-bounds access in the transaction layer.
+  if (!extended || rtr || !data || dlc == 0 || dlc > 8 ||
       !DiagnosticPolicy::responseBelongsToRequest(request_, can_id)) {
     return event;
   }
