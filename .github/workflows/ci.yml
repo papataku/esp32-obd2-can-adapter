@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   host-tests:
-    runs-on: [self-hosted, linux, ARM64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,7 +26,7 @@ jobs:
 
   v2-isolated-build:
     name: V2 encrypted GATT and CAN-idle owner compile-only
-    runs-on: [self-hosted, linux, ARM64]
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +43,7 @@ jobs:
           test -s .pio/build/m5dial_v2_owner_compile/firmware.bin
 
   platformio-build:
-    runs-on: [self-hosted, linux, ARM64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
