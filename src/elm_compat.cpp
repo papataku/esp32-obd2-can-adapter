@@ -1,5 +1,8 @@
 #include "elm_compat.h"
 #include "app_config.h"
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+#include "diagnostic_policy.h"
+#endif
 
 #include <cstdio>
 #include <cstring>
@@ -215,6 +218,44 @@ ElmResult ElmCompat::execute(const char* command) {
                   cfg::kFirmwareVersion);
     return result;
   }
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+  // Phase B parser experiment, TX API compiled out. No real CAN requests.
+  // Strict fixed-length routing: ATM5R12:<ECU>:<DID>, e.g. ATM5R12:02:2012.
+  // This is NOT advertised via ATM5CAP, nor enabled in production firmware.
+  if (startsWith(cmd, "ATM5R12")) {
+    if (std::strlen(cmd) != 15 || cmd[7] != ':' || cmd[10] != ':') {
+      setReply(result, "?");
+      return result;
+    }
+    uint8_t source = 0;
+    char ecu_text[3] = {cmd[8], cmd[9], '\0'};
+    uint8_t did_bytes[2]{};
+    uint8_t did_length = 0;
+    if (!parseHexByte(ecu_text, source) ||
+        !parseHexBytes(cmd + 11, did_bytes, 2, did_length) ||
+        did_length != 2) {
+      setReply(result, "?");
+      return result;
+    }
+    DiagnosticRequest candidate{};
+    candidate.can_id = 0x18DA00F1U | (static_cast<uint32_t>(source) << 8);
+    candidate.length = 3;
+    candidate.data[0] = 0x22;
+    candidate.data[1] = did_bytes[0];
+    candidate.data[2] = did_bytes[1];
+    if (!DiagnosticPolicy::allowedReadRequest(candidate)) {
+      setReply(result, "?");
+      return result;
+    }
+    result.action = ElmAction::VehicleRead;
+    result.request.can_id = candidate.can_id;
+    result.request.extended = true;
+    result.request.length = candidate.length;
+    std::memcpy(result.request.data, candidate.data, candidate.length);
+    return result;
+  }
+#endif
+
   if (startsWith(cmd, "ATM5B")) {
     // One BLE request schedules 1..16 read-only CAN transactions on the
     // owner task. ECU 01=physical UDS22; 00=functional supported OBD01.
