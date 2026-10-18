@@ -41,7 +41,9 @@ int main() {
   for(unsigned attempts=0;sender.durableNext()<packets.size() && attempts<10000;++attempts) {
     const uint32_t seq=sender.nextToSend();
     if(seq<packets.size() && sender.maySend()) {
-      assert(sender.sent(seq));
+      Frame outbound{};
+      assert(decode(packets[seq].data.data(),packets[seq].len,outbound));
+      assert(sender.sent(outbound));
       if(seq%53==17 && !dropped_once[seq]) {
         dropped_once[seq]=1;++missing;continue;
       }
@@ -66,6 +68,15 @@ int main() {
       assert(receiver.verified(received));
     } else {
       const Frame ack=receiver.ack();
+      // Valid sequence alone must not grant credit for unwritten SD data.
+      if(ack.sequence) {
+        Frame forged=ack;
+        forged.offset=static_cast<uint16_t>(ack.offset+1);
+        assert(!sender.acknowledge(forged));
+        forged=ack;
+        forged.block=static_cast<uint16_t>(ack.block+1);
+        assert(!sender.acknowledge(forged));
+      }
       assert(sender.acknowledge(ack));
       if(sender.outstanding()) {++retransmit;sender.rewindUnacked();}
     }
