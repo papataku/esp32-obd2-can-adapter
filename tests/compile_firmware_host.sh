@@ -223,3 +223,10 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -o /tmp/m5can-raw-ble-protocol-test
 /tmp/m5can-raw-ble-protocol-test
 echo "PASS PR32 BLE journal read chunk protocol, CRC32 and resume"
+
+# Streaming V2: MTU247 framing, CRC, durable ACK cursor, window credit/retry.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_stream_v2.cpp" \
+  -o /tmp/m5can-log-stream-v2-test
+/tmp/m5can-log-stream-v2-test
+echo "PASS V2 stream wire contract (bench-only; not wired to BLE)"
