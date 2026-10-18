@@ -236,6 +236,65 @@ import is *partial corroborating evidence*, not a substitute for full
 `capture_events.jsonl`. No vehicle TX or firmware change is introduced by
 this converter. All tests here use fabricated Native packets.
 
+## Existing NVS DriveLog: sparse-journal audit only
+
+When an operator has exported the complete `#DRIVELOG,BEGIN,...` to
+`#DRIVELOG,END` serial dump with BLE devices disconnected, inspect it
+**offline** without pretending it contains a complete frame timeline:
+
+```bash
+python3 tools/audit_m5can_drivelog.py \
+  m5can_drivelog_original.txt drivelog_gaps.json
+```
+
+This audit verifies version-2 boot/CAN/TIMING/MEMORY records, TX
+success/attempt count, the association and DLC/payload of PROBE/PROBE_RAW,
+GROUPFAIL/GROUPFAIL_RAW and the last-8 EVENT/RAW records. It identifies
+missing/truncated or explicitly SYNTHETIC probe evidence and nonzero driver/
+BLE error counters, and preserves the input's SHA-256.
+
+**It always reports `PARTIAL_JOURNAL_ONLY_NOT_HARDWARE_APPROVAL`.**
+There is no complete CAN TX record, no per-request BLE generation and
+delivery proof, and no independent CAN analyzer in this NVS journal.
+Those omissions must remain visible even when all counters are zero.
+It is invalid to reconstruct fictional unrecorded events just to make the
+bench validator pass.
+
+This tool never accesses NVS or serial hardware itself. It only processes
+an already exported file. All host tests use synthetic textual fixtures.
+
+### Existing BLE evidence journal (last twelve events)
+
+Two-client firmware also exposes a **separate** `#BLELOG` journal,
+persisted with up to twelve diagnostic events per boot and peer disconnect
+summaries. Capture its complete `#BLELOG,BOOT,...` through `#BLELOG,END`
+USB dump **only after peers have disconnected**; the firmware refuses
+retrieval during active CAN queries or BLE peers. The existing USB text
+commands are `DRIVELOG`, `BLELOG INDEX` and `BLELOG <boot_number>`
+(or `BLELOG` to export the latest boot). Do not issue them while recording
+CAN or while either BLE client is connected: the firmware will reject
+active-traffic dumps. Save the exact `#DRIVELOG,BEGIN…END` and
+`#BLELOG,BOOT…END` text sections as separate immutable files.
+
+```bash
+python3 tools/audit_m5can_blelog.py \
+  blelog_original.txt blelog_evidence_gaps.json
+```
+
+The auditor validates v2/v3 journal schema, retained count versus ring
+evictions, ordered event indices and generations, CAN result histogram,
+disconnect summary and fault counts, and highlights lost events,
+queue drops, storage errors or RAM-only snapshots. Its output always
+states `SPARSE_BLE_JOURNAL_NOT_HARDWARE_APPROVAL`: the last twelve events
+do **not** prove complete BLE notification delivery for each request,
+nor every connection generation, and they cannot replace an independently
+timestamped full CAN bus capture. It never invents discarded events.
+
+Retain SHA-256 of the original USB dumps. For a multi-boot experiment
+capture BLELOG separately per boot (or the indexed list first); a single
+`BLELOG,BOOT` dump contains one chosen boot, not all historical boots.
+The parser is offline only, and no new NVS writes are introduced.
+
 ## Open items before independent hardware test
 
 - Design an export adapter that creates this JSONL from the actual
