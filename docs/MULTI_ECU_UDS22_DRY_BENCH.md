@@ -70,3 +70,23 @@ pio run -e m5dial_multi_ecu_policy_dry_bench
 
 Never flash the dry-run build to a vehicle expecting diagnostic acquisition:
 it deliberately cannot send CAN.
+
+
+## Phase B (stacked draft): strict test-only ECU-targeting command
+
+The experiment also tests one **unadvertised**, TX-disabled-only ELM parser
+syntax `ATM5R12:02:2012` (target ECU byte `02`, DID `2012`).
+It is **not** an approved protocol version. It is an input-validation
+prototype, not a command available in production. In every ordinary M5CAN
+build it returns `?`; it is not mentioned by `ATM5CAP`.
+
+Exact 15-character syntax, mandatory colon positions, hexadecimal ECU/DID
+fields and the same explicit ECU allowlist are required. It creates one
+serialized read-only UDS22 intent and rejects other services, arbitrary ECU
+IDs and malformed input. The TWAI physical send API remains compiled out in
+the only build that enables the parser.
+
+Before considering an actual protocol release, a separate review must
+specify capability negotiation, version bump, host fallbacks, response
+attribution and diagnostics for rejects. In particular, do not advertise
+`PROTO=1.2` or `UDS_ECUS=...` while the feature is dry-run only.
