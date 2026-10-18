@@ -111,6 +111,7 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
     session->next_sequence = 1;
     session->deadline_us =
         timestamp_us + static_cast<uint64_t>(cf_timeout_ms_) * 1000ULL;
+    session->last_frame_us = timestamp_us;
     session->message.length = session->received;
     std::memcpy(session->message.data, &data[2], available);
 
@@ -128,6 +129,23 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
   if (pci_type == 0x2) {
     Session* session = find(can_id);
     if (!session || dlc < 2) return event;
+
+    // The CAN owner calls expire() in its polling loop, but a frame may
+    // arrive just after the loop's check. Reject late CFs here as well.
+    // Never revive an expired assembly with a matching sequence number.
+    if (timestamp_us >= session->deadline_us) {
+      session->active = false;
+      event.type = IsoTpEventType::ConsecutiveFrameTimeout;
+      event.response_id = can_id;
+      return event;
+    }
+    // Reordered/stale timestamps are not proof of ordered ISO-TP delivery.
+    if (timestamp_us < session->last_frame_us) {
+      session->active = false;
+      event.type = IsoTpEventType::SequenceError;
+      event.response_id = can_id;
+      return event;
+    }
 
     const uint8_t sequence = static_cast<uint8_t>(data[0] & 0x0F);
     if (sequence != session->next_sequence) {
@@ -147,6 +165,7 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
     session->next_sequence = static_cast<uint8_t>((session->next_sequence + 1) & 0x0F);
     session->deadline_us =
         timestamp_us + static_cast<uint64_t>(cf_timeout_ms_) * 1000ULL;
+    session->last_frame_us = timestamp_us;
 
     if (session->received >= session->expected_length) {
       event.type = IsoTpEventType::Complete;
