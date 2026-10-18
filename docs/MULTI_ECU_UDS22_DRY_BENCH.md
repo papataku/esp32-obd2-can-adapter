@@ -92,3 +92,24 @@ Before considering an actual protocol release, a separate review must
 specify capability negotiation, version bump, host fallbacks, response
 attribution and diagnostics for rejects. In particular, do not advertise
 `PROTO=1.2` or `UDS_ECUS=...` while the feature is dry-run only.
+
+## Offline, versioned schema handshake (Phase D)
+
+The test-only `ATM5CAPD` request returns a fixed contract *only* when both
+`M5CAN_MULTI_ECU_POLICY_DRY_BENCH` and `M5CAN_CAN_MODE_DRY_RUN`
+were set during compilation:
+
+```text
+M5CAN-CAPS PROTO=1.2 FW=<firmware> BATCH=16 OPS=OBD01,UDS22 STREAM=0 LEASE=IMPLICIT UDS_ECUS=01,02,06,0E,EF ROUTE=R12 TX=DISABLED
+```
+
+The normal `ATM5CAP` remains **PROTO=1.1**. Normal production firmware
+returns `?` to `ATM5CAPD` and `ATM5R12:ECU:DID`.
+
+This is **not a release capability** and does not authorize any physical CAN
+transmit. In the dry bench, even an accepted `ATM5R12` is blocked before
+TWAI can enter Normal mode. `TX=DISABLED` is mandatory for any offline host
+validation; it is not a toggle. A future real-TX protocol requires a *new*
+versioned authorization design, a separate simulator/bench program, a
+vehicle-safe rate and lease policy, and independent approval. Changing
+`TX=DISABLED` to another value is not an implementation shortcut.
