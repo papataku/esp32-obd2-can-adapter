@@ -11,4 +11,6 @@ python3 tests/test_two_meter_analysis.py
 python3 tests/test_evidence_inspector.py
 PYTHONPATH=tools python3 tools/test_protocol.py
 PYTHONPATH=tools python3 tests/test_validate_capture.py
+# Offline ISO-TP/CAN/TX-OFF acceptance checks. All fixtures are SYNTHETIC.
+PYTHONPATH=tools python3 tests/test_multi_ecu_bench_trace.py
 python3 -m compileall -q tools tests
