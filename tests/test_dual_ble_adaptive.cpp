@@ -326,7 +326,7 @@ int main() {
    assert(next.find("M5ITEM:00:010D")!=std::string::npos);
    assert(next.find("41 0D 50")!=std::string::npos);
    assert(next.find("41 05 67")==std::string::npos);
-   assert(next.find("M5DONE\\r>")==std::string::npos || next.find("M5DONE\r>")!=std::string::npos);
+   assert(next.find("M5DONE\r>")!=std::string::npos);
   }
   // A joined secondary peer can disconnect and reuse the same connection
   // ID with a different generation. It must NOT receive the old coolant
