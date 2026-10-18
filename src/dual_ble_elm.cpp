@@ -896,8 +896,12 @@ void DualBleElm::pollLogV2() {
   }
   // Withhold credit indefinitely only until a bounded ACK deadline.
   // Retransmission reconstructs the original immutable staged block.
+  // END requires a whole-file SD CRC reread on the receiver's logger
+  // task. Do not misdiagnose that legitimate long readback as lost BLE.
+  const uint32_t ack_deadline_ms=
+      log_stream_sender_.awaitingFinalAck()?30000U:1200U;
   if(log_stream_sender_.outstanding() &&
-     static_cast<uint32_t>(millis()-log_stream_progress_ms_)>=1200) {
+     static_cast<uint32_t>(millis()-log_stream_progress_ms_)>=ack_deadline_ms) {
     if(!log_stream_sender_.retryUnacked()) {
       log_stream_sender_.cancel();log_stream_active_=false;
     } else log_stream_progress_ms_=millis();
