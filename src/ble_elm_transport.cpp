@@ -22,6 +22,7 @@ extern "C" void ble_hs_unlock(void);
 #include "ble_notify_chunk.h"
 #if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
 #include "m5can_log_stream_v2_gatt.h"
+#include "m5can_log_v2_peer_policy.h"
 #endif
 
 namespace m5can {
@@ -641,9 +642,10 @@ bool BleElmTransport::logPeerAuthorized(uint16_t id,uint32_t gen) const {
   bool authorized=false;
   portENTER_CRITICAL(&mux_);
   for(const auto& peer:clients_) {
-    if(peer.active && peer.connection_id==id &&
-       peer.generation==gen && peer.log_subscribed &&
-       peer.log_secured && peer.mtu>=247 && !peer.tx_aborted)
+    if(peer.connection_id==id && peer.generation==gen &&
+       m5can_log_stream_v2::PeerQosPolicy::eligible(
+           peer.active,peer.log_subscribed,peer.log_secured,
+           peer.mtu>=247,peer.tx_aborted))
       authorized=true;
   }
   portEXIT_CRITICAL(&mux_);
@@ -661,10 +663,12 @@ bool BleElmTransport::logPeerReady(uint16_t id,uint32_t gen) const {
   bool idle=false;
   portENTER_CRITICAL(&mux_);
   for(const auto& peer:clients_) {
-    if(peer.active && peer.connection_id==id &&
-       peer.generation==gen && peer.log_subscribed &&
-       peer.log_secured && peer.mtu>=247 &&
-       !peer.pending_size && !peer.tx_aborted)idle=true;
+    if(peer.connection_id==id && peer.generation==gen &&
+       m5can_log_stream_v2::PeerQosPolicy::maySend(
+           m5can_log_stream_v2::PeerQosPolicy::eligible(
+               peer.active,peer.log_subscribed,peer.log_secured,
+               peer.mtu>=247,peer.tx_aborted),
+           peer.pending_size==0))idle=true;
   }
   portEXIT_CRITICAL(&mux_);
   return idle;
