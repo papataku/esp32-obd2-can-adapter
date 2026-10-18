@@ -41,6 +41,9 @@ class DualBleElm {
     bool active = false;
     uint16_t conn_id = 0;
     uint32_t generation = 0;
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+    uint32_t trace_token=0;
+#endif
     ElmCompat elm{};
     char input[129]{};
     size_t input_size = 0;
@@ -106,6 +109,10 @@ class DualBleElm {
   uint32_t active_secondary_generation_ = 0;
   bool active_cross_group_ = false;
   uint32_t active_query_generation_ = 0;
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+  uint32_t active_trace_token_=0;
+  uint16_t active_trace_conn_=0;
+#endif
   uint8_t round_robin_ = 0;
 };
 } // namespace m5can
