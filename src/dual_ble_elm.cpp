@@ -27,6 +27,15 @@ void upperNoSpaces(const char* source, char* dest, size_t capacity) {
   dest[n] = 0;
 }
 
+bool sameReadIdentity(const DiagnosticRequest& requested,
+                      const DiagnosticRequest& issued) {
+  return requested.can_id == issued.can_id &&
+         requested.length > 0 &&
+         requested.length <= sizeof(requested.data) &&
+         requested.length == issued.length &&
+         std::memcmp(requested.data, issued.data, requested.length) == 0;
+}
+
 }
 
 DualBleElm::Session* DualBleElm::find(uint16_t conn_id, uint32_t generation) {
@@ -420,6 +429,7 @@ void DualBleElm::onResult() {
       Session& candidate=sessions_[active_secondary_owner_];
       if (candidate.active && candidate.pending &&
           candidate.generation==active_secondary_generation_ &&
+          sameReadIdentity(candidate.request,active_query_request_) &&
           ble_.isClientConnected(candidate.conn_id,candidate.generation))
         joined=&candidate;
     }
@@ -649,7 +659,11 @@ void DualBleElm::onResult() {
   pid_cache_.rememberSingle(s.request,result,acquired_us);
 #endif
   finishSingle(s,result);
-  if (other_live && other->pending) finishSingle(*other,result);
+  // Sharing requires exact ECU, service and DID/PID identity; a response
+  // generated for ECU02 is never a valid ECU06 value despite the same DID.
+  if (other_live && other->pending &&
+      sameReadIdentity(other->request,active_query_request_))
+    finishSingle(*other,result);
 }
 
 void DualBleElm::dispatch() {
@@ -771,6 +785,7 @@ void DualBleElm::dispatch() {
       else
         single_submissions_.fetch_add(1,std::memory_order_relaxed);
       active_query_owner_=i;
+      active_query_request_=outgoing;
       active_query_generation_=s.generation;
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
       active_secondary_owner_=(shared || cross)?j:-1;
