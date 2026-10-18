@@ -59,7 +59,7 @@ def parse_raw_capture(data):
         t = frame.get("t_us")
         can_id = frame.get("can_id")
         payload = frame.get("data_hex")
-        required(type(t) is int and t >= last_time,
+        required(type(t) is int and t >= 0 and t >= last_time,
                  f"CAN line {line}: invalid/regressed timestamp")
         required(type(can_id) is str and bool(CAN_ID.fullmatch(can_id)),
                  f"CAN line {line}: invalid 29-bit CAN ID representation")
