@@ -17,6 +17,23 @@ int main() {
   assert(std::strstr(caps.reply, "PROTO=1.1") != nullptr);
   assert(std::strstr(caps.reply, "UDS_ECUS=") == nullptr);
 
+  // Schema is query-only and explicitly TX-disabled. Never replace
+  // ATM5CAP with 1.2 in the current production or experiment firmware.
+  auto schema = elm.execute("ATM5CAPD");
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+  assert(schema.action == ElmAction::ReplyOnly);
+  assert(std::strstr(schema.reply, "PROTO=1.2") != nullptr);
+  assert(std::strstr(schema.reply, "UDS_ECUS=01,02,06,0E,EF") != nullptr);
+  assert(std::strstr(schema.reply, "ROUTE=R12 TX=DISABLED") != nullptr);
+  assert(std::strlen(schema.reply) < sizeof(schema.reply));
+#else
+  assert(schema.action == ElmAction::ReplyOnly);
+  assert(std::strcmp(schema.reply, "?") == 0);
+#endif
+  // Querying the offline schema must not mutate the original capability.
+  const auto after = elm.execute("ATM5CAP");
+  assert(std::strcmp(after.reply, caps.reply) == 0);
+
   for (auto source : {"01", "02", "06", "0E", "EF"}) {
     char command[24]{};
     std::snprintf(command, sizeof(command), "ATM5R12:%s:2012", source);
