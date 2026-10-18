@@ -79,7 +79,20 @@ class M5CanLogControlCallbacks final : public NimBLECharacteristicCallbacks {
     // A Just Works encrypted but unbonded connection must not export logs.
     // Bonding alone is not sufficient for production authorization; no
     // runtime V2 start is enabled until explicit allow-listing is added.
-    const bool secured=desc->sec_state.encrypted && desc->sec_state.bonded;
+    bool secured=desc->sec_state.encrypted && desc->sec_state.bonded;
+    // Just Works bonding has no MITM proof; never make a retained RAW
+    // vehicle log readable by *any* arbitrary newly bonded BLE peer.
+    // Operator must explicitly provision the resolved 48-bit identity
+    // into a NON-DEFAULT evaluation profile before log transfer works.
+#if defined(M5CAN_LOG_V2_ALLOWED_PEER_ID48)
+    uint64_t identity=0;
+    for(unsigned i=0;i<6;++i)
+      identity |= static_cast<uint64_t>(desc->peer_id_addr.val[i])<<(i*8);
+    secured=secured && identity==
+        (static_cast<uint64_t>(M5CAN_LOG_V2_ALLOWED_PEER_ID48)&0xFFFFFFFFFFFFULL);
+#else
+    secured=false; // fail closed until a user-authorized peer is enrolled
+#endif
     const std::string value=characteristic->getValue();
     if(value.size()>0)
       owner_.onLogWrite(desc->conn_handle,
