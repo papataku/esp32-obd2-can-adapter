@@ -128,7 +128,7 @@ class BenchEvidenceValidationTests(unittest.TestCase):
 
     def test_two_in_flight_queries_forbidden(self):
         data = standard()
-        data.insert(6, event(11, "request_begin", id="extra",
+        data.insert(6, event(12, "request_begin", id="extra",
                              conn=19, generation=1,
                              can_id="18DA06F1", service="22", did="2012"))
         self.fails(data, "overlapping physical CAN requests")
