@@ -269,7 +269,12 @@ Two-client firmware also exposes a **separate** `#BLELOG` journal,
 persisted with up to twelve diagnostic events per boot and peer disconnect
 summaries. Capture its complete `#BLELOG,BOOT,...` through `#BLELOG,END`
 USB dump **only after peers have disconnected**; the firmware refuses
-retrieval during active CAN queries or BLE peers.
+retrieval during active CAN queries or BLE peers. The existing USB text
+commands are `DRIVELOG`, `BLELOG INDEX` and `BLELOG <boot_number>`
+(or `BLELOG` to export the latest boot). Do not issue them while recording
+CAN or while either BLE client is connected: the firmware will reject
+active-traffic dumps. Save the exact `#DRIVELOG,BEGIN…END` and
+`#BLELOG,BOOT…END` text sections as separate immutable files.
 
 ```bash
 python3 tools/audit_m5can_blelog.py \
