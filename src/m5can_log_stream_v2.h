@@ -99,6 +99,7 @@ class VerifiedCursor {
     if(f.sequence<sequence_)return Check::Duplicate;
     if(f.sequence>sequence_)return Check::Gap;
     if(f.block!=block_ || f.offset!=offset_)return Check::Gap;
+    if(f.kind==Kind::Data && block_>=4096)return Check::Invalid;
     if(f.kind==Kind::End)return offset_==0?Check::Next:Check::Invalid;
     if(offset_ && f.total!=total_)return Check::Invalid;
     return Check::Next;
