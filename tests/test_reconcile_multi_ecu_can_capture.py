@@ -88,6 +88,24 @@ class IndependentCaptureTests(unittest.TestCase):
         result = reconcile(trace, raw, max_skew_us=0)
         self.assertEqual(result["unmatched_background_frames"], 1)
 
+    def test_standard_and_remote_can_background_is_retained(self):
+        trace, rows, _ = paired()
+        rows += [
+            {"t_us": 31, "can_id": "000007E8", "data_hex": "04010C1122000000",
+             "dlc": 8, "extended": False, "rtr": False},
+            {"t_us": 32, "can_id": "00000123", "data_hex": "",
+             "dlc": 8, "extended": False, "rtr": True},
+            {"t_us": 33, "can_id": "18DAF180", "data_hex": "",
+             "dlc": 0, "extended": True, "rtr": False},
+        ]
+        raw = with_hash(trace, rows)
+        result = reconcile(trace, raw, max_skew_us=0)
+        self.assertEqual(result["matched_frames"], 8)
+        self.assertEqual(result["unmatched_background_frames"], 3)
+
+        rows[-2]["data_hex"] = "AA"
+        self.must_fail(trace, with_hash(trace, rows), "RTR must not have data bytes")
+
     def test_tx_off_needs_independent_raw_and_denies_any_tester_frame(self):
         trace, rows, raw = paired(passive_profile=True)
         result = reconcile(trace, raw)
@@ -122,8 +140,8 @@ class IndependentCaptureTests(unittest.TestCase):
 
     def test_invalid_capture_flags_and_data(self):
         for key, value, pattern in [
-            ("extended", False, "expected extended"),
-            ("rtr", True, "expected extended"),
+            ("extended", False, "CAN ID outside frame address width"),
+            ("rtr", True, "RTR must not have data bytes"),
             ("dlc", 7, "DLC mismatch"),
             ("data_hex", "XYZ", "invalid Classical CAN"),
             ("t_us", -1, "invalid/regressed timestamp"),
