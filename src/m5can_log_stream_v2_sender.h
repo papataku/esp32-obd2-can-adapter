@@ -18,7 +18,7 @@ class BlockSender {
        !gate_.reset(session))return false;
     session_=session;blocks_=committed_blocks;
     block_=length_=0;loaded_=ended_=failed_=false;
-    retries_=0;last_seq_=0;return true;
+    retries_=0;last_seq_=0;complete_=false;return true;
   }
   // Staging MUST run on the flash owner at a verified CAN-idle checkpoint.
   // block_data is already verified against the journal's committed CRC;
@@ -81,7 +81,7 @@ class BlockSender {
   void cancel(){session_=0;loaded_=false;failed_=true;}
  private:
   bool build(Frame& frame)const {
-    if(gate_.nextBlock()!=block_ || ended_ && gate_.nextOffset()!=0)
+    if(gate_.nextBlock()!=block_ || (ended_ && gate_.nextOffset()!=0))
       return false;
     frame.session=session_;frame.sequence=gate_.nextToSend();
     frame.block=block_;frame.offset=gate_.nextOffset();
