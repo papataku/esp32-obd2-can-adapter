@@ -14,7 +14,9 @@ rejections as negative responses from the vehicle.
 
 `m5dial_multi_ecu_policy_dry_bench` is a dedicated opt-in build which
 inherits `M5CAN_CAN_MODE_DRY_RUN`. The TWAI physical transmit API is
-compiled out and all attempts to transmit return failure. The experimental
+compiled out; this multi-ECU bench additionally rejects diagnostic queries
+before switching out of TWAI Listen-Only, avoiding even normal-mode ACKs.
+The experimental
 `M5CAN_MULTI_ECU_POLICY_DRY_BENCH` flag **must cause compilation to fail**
 when the TX-disabled flag is absent.
 
