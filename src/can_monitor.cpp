@@ -395,6 +395,14 @@ void CanMonitor::performQuery(
     result.status = DiagnosticStatus::ModeError;
     return;
   }
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+  // Strictly passive Phase-A/B routing test. Even TWAI_MODE_NORMAL could
+  // acknowledge bus traffic before transmitOwnedFrame() rejects TX.
+  // Do not leave listen-only mode for this intentionally non-vehicle build.
+  (void)request;
+  result.status = DiagnosticStatus::ModeError;
+  return;
+#endif
   if (!DiagnosticPolicy::allowedReadRequest(request)) {
     result.status = DiagnosticStatus::InvalidRequest;
     return;
