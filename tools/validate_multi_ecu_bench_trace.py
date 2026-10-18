@@ -40,6 +40,9 @@ HEX4 = re.compile(r"^[0-9A-F]{4}$")
 HEX8 = re.compile(r"^[0-9A-F]{8}$")
 SHA40 = re.compile(r"^[0-9a-fA-F]{40}$")
 SHA64 = re.compile(r"^[0-9a-fA-F]{64}$")
+# See kDiagnosticMaxPayload and IsoTpAssembler default CF timeout.
+MAX_REASSEMBLED_PAYLOAD = 96
+CF_TIMEOUT_US = 100_000
 
 
 class EvidenceError(ValueError):
@@ -161,7 +164,8 @@ def verify(records):
                                "delivered": set(),
                                "tx": False, "ff": False, "fc": False,
                                "cf_seq": 0, "valid": False, "finished": False,
-                               "status": None}
+                               "expected_length": None, "received_length": 0,
+                               "last_cf_or_ff_us": None, "status": None}
             active_id = reqid
             counts["requests"] += 1
 
@@ -246,9 +250,22 @@ def verify(records):
                 need(not r["ff"] and not r["valid"],
                      "duplicate/colliding positive response", line)
                 if pci == "sf":
+                    # Real frame length is determined by PCI, not by the
+                    # independent label declaring a successful read.
+                    if raw is not None:
+                        declared_length = raw[0] & 0x0F
+                        need(declared_length <= len(raw) - 1,
+                             "single-frame payload incomplete", line)
                     r["valid"] = True
                 else:
                     r["ff"] = True
+                    if raw is not None:
+                        length = ((raw[0] & 0x0F) << 8) | raw[1]
+                        need(8 <= length <= MAX_REASSEMBLED_PAYLOAD,
+                             "first-frame declared payload length outside buffer", line)
+                        r["expected_length"] = length
+                        r["received_length"] = len(raw) - 2
+                        r["last_cf_or_ff_us"] = t
             else:
                 seq = int_field(e, "seq", line, 0)
                 need(seq <= 15, "ISO-TP CF sequence must be a 4-bit value", line)
@@ -257,7 +274,23 @@ def verify(records):
                      "CF sequence gap/duplicate", line)
                 r["cf_seq"] = seq
                 need(type(e.get("complete")) is bool, "CF complete flag required", line)
-                if e["complete"]:
+                if raw is not None:
+                    need(r["expected_length"] is not None and
+                         r["received_length"] < r["expected_length"],
+                         "consecutive frame after complete payload", line)
+                    need(t >= r["last_cf_or_ff_us"] and
+                         t - r["last_cf_or_ff_us"] < CF_TIMEOUT_US,
+                         "consecutive frame arrived after ISO-TP deadline", line)
+                    remaining = r["expected_length"] - r["received_length"]
+                    need(len(raw) - 1 >= min(7, remaining),
+                         "consecutive frame payload incomplete", line)
+                    r["received_length"] += min(len(raw) - 1, remaining)
+                    r["last_cf_or_ff_us"] = t
+                    derived_complete = r["received_length"] == r["expected_length"]
+                    need(e["complete"] is derived_complete,
+                         "claimed CF complete differs from ISO-TP byte count", line)
+                    r["valid"] = derived_complete
+                elif e["complete"]:
                     r["valid"] = True
 
         elif kind == "fault_lock":
