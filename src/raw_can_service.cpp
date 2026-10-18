@@ -16,9 +16,12 @@ bool RawCanRecordingService::begin() {
   state_.store(initial,std::memory_order_release);
   return ready;
 }
+// NimBLE's first connection may have handle 0. Generation 0 is the
+// invalid/unassigned sentinel; reject it, not an otherwise valid handle 0.
+// Matching owner handle AND nonzero generation still fences stale peers.
 bool RawCanRecordingService::queueStartFromBle(
     uint32_t session,uint16_t peer,uint32_t generation) {
-  if(!session || !peer || !generation || state()!=State::Idle ||
+  if(!session || !generation || state()!=State::Idle ||
      requested_session_.load(std::memory_order_acquire))return false;
   // DualBleElm is the only BLE producer; release publishes both peer fields.
   requested_peer_.store(peer,std::memory_order_relaxed);
@@ -28,7 +31,7 @@ bool RawCanRecordingService::queueStartFromBle(
 }
 bool RawCanRecordingService::queueStopFromBle(
     uint16_t peer,uint32_t generation) {
-  if(!peer || !generation || state()!=State::Recording ||
+  if(!generation || state()!=State::Recording ||
      owner_peer_.load(std::memory_order_acquire)!=peer ||
      owner_generation_.load(std::memory_order_acquire)!=generation)
     return false;
@@ -39,7 +42,7 @@ bool RawCanRecordingService::queueStopFromBle(
 bool RawCanRecordingService::queueReadFromBle(
     uint32_t index,uint32_t offset,uint16_t peer,uint32_t generation) {
   const auto s=state();
-  if(!peer || !generation ||
+  if(!generation ||
      (s!=State::Complete && s!=State::RecoveryRequired) ||
      !rawCanJournal().status().ready)return false;
   uint8_t expected=ReadIdle;
@@ -103,7 +106,7 @@ void RawCanRecordingService::pollRead() {
 bool RawCanRecordingService::queueStreamBlockFromBle(
     uint32_t index,uint16_t peer,uint32_t generation) {
   const auto& status=rawCanJournal().status();
-  if(!peer || !generation || state()!=State::Complete ||
+  if(!generation || state()!=State::Complete ||
      !status.ready || !status.completed || index>=status.blocks)
     return false;
   uint8_t expected=ReadIdle;
