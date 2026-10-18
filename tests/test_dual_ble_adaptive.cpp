@@ -305,6 +305,29 @@ int main() {
    assert(output(7).empty());
    assert(output(19).find("M5DONE\r>")!=std::string::npos);
   }
+  // The ORIGINAL in-flight owner can reconnect with the same handle.
+  // A delayed coolant response from the old generation must not be reported
+  // under the new generation's speed-only request or enter the PID cache.
+  {mode=Ecu::Full;Bench bench;hold=true;
+   write(bench.a,"ATM5B00:0105");bench.dual.poll();
+   assert(requests.size()==1);
+   NimBLEServer::callbacks->onDisconnect(
+       NimBLEDevice::createServer(),&bench.a);
+   bench.dual.poll();
+   NimBLEServer::callbacks->onConnect(
+       NimBLEDevice::createServer(),&bench.a);
+   bench.dual.poll();
+   write(bench.a,"ATS1");bench.dual.poll();
+   test_notifications.clear();
+   write(bench.a,"ATM5B00:010D");bench.dual.poll();
+   hold=false;bench.drain();
+   const auto next=output(7);
+   assert(requests.size()==2);
+   assert(next.find("M5ITEM:00:010D")!=std::string::npos);
+   assert(next.find("41 0D 50")!=std::string::npos);
+   assert(next.find("41 05 67")==std::string::npos);
+   assert(next.find("M5DONE\r>")!=std::string::npos);
+  }
   // A joined secondary peer can disconnect and reuse the same connection
   // ID with a different generation. It must NOT receive the old coolant
   // result as its newly requested vehicle-speed result.

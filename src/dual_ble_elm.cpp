@@ -401,6 +401,43 @@ void DualBleElm::onResult() {
   // Reuse fixed object storage rather than a large local result.
   DiagnosticResult& result=query_result_workspace_;
   if (!can_.pollQueryResult(result)) return;
+
+  // A controller connection handle may be reused before a CAN transaction
+  // finishes. Never report, log, or cache an OLD generation's ECU response
+  // under the new BLE session (which may have a different request/ECU).
+  // Keep a still-connected second peer pending for a fresh serialized query.
+  const Session& original_owner=sessions_[active_query_owner_];
+  if (!original_owner.active ||
+      original_owner.generation!=active_query_generation_ ||
+      !ble_.isClientConnected(original_owner.conn_id,
+                              original_owner.generation)) {
+    // A different live client may have joined the SAME read-only
+    // parameter before the owner's disconnect. Its session is independently
+    // generation-checked, so it may still receive the validated result.
+    // A speculative cross-PID group is never deliverable this way.
+    Session* joined=nullptr;
+    if (!active_cross_group_ && active_secondary_owner_>=0) {
+      Session& candidate=sessions_[active_secondary_owner_];
+      if (candidate.active && candidate.pending &&
+          candidate.generation==active_secondary_generation_ &&
+          ble_.isClientConnected(candidate.conn_id,candidate.generation))
+        joined=&candidate;
+    }
+    if (active_cross_group_) adaptive_multi_pid_.disable();
+    active_query_owner_=-1;
+    active_secondary_owner_=-1;
+    active_secondary_generation_=0;
+    active_cross_group_=false;
+    if (joined) {
+#if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
+      const uint64_t now_us=static_cast<uint64_t>(esp_timer_get_time());
+      pid_cache_.rememberSingle(joined->request,result,
+          result.completed_at_us?result.completed_at_us:now_us);
+#endif
+      finishSingle(*joined,result);
+    }
+    return;
+  }
   if(result.status!=DiagnosticStatus::Ok) {
     const uint16_t error=diagnosticStatusErrorCode(result.status);
     const int original=active_query_owner_;

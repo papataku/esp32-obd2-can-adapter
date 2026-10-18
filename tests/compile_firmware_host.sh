@@ -224,3 +224,24 @@ for flags in " " "-DM5CAN_MULTI_ECU_POLICY_DRY_BENCH=1 -DM5CAN_CAN_MODE_DRY_RUN=
     -o /tmp/m5can-multi-ecu-command-test
   /tmp/m5can-multi-ecu-command-test
 done
+
+
+# Full dual-BLE ELM/CAN-transaction simulator with two physical ECU sources.
+# The host CAN owner is mocked; this never uses TWAI or opens vehicle TX.
+for extra_flags in "" "-DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1"; do
+  # Deliberately split the optional compile flag into an argv token.
+  # shellcheck disable=SC2086
+  g++ -std=c++17 -Wall -Wextra -Werror \
+    -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+    -DM5CAN_MULTI_ECU_POLICY_DRY_BENCH=1 -DM5CAN_CAN_MODE_DRY_RUN=1 \
+    $extra_flags \
+    -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+    "$ROOT/tests/test_multi_ecu_dual_peer_dry.cpp" \
+    "$ROOT/src/dual_ble_elm.cpp" "$ROOT/src/ble_elm_transport.cpp" \
+    "$ROOT/src/drive_log.cpp" "$ROOT/src/elm_compat.cpp" \
+    "$ROOT/src/elm_response_formatter.cpp" \
+    "$ROOT/src/diagnostic_transaction.cpp" "$ROOT/src/isotp_reassembler.cpp" \
+    "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+    -o /tmp/m5can-multi-ecu-dual-peer-dry
+  /tmp/m5can-multi-ecu-dual-peer-dry
+done
