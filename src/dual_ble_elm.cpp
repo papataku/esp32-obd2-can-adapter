@@ -400,6 +400,9 @@ void DualBleElm::abortBatch(Session& s, const DiagnosticResult& result) {
     emitLine(s,"M5DONE");
   }
   prompt(s);
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+  s.trace_token=0; // aborted batch may not re-use an old request identity
+#endif
 }
 
 void DualBleElm::cacheSafePartialGroup(
@@ -434,8 +437,9 @@ void DualBleElm::onResult() {
   DiagnosticResult& result=query_result_workspace_;
   if (!can_.pollQueryResult(result)) return;
 #if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+  const uint32_t completed_trace_token=active_trace_token_;
   dryTraceJournal().add(DryTraceKind::CanOwnerResult,active_trace_conn_,
-                        active_query_generation_,active_trace_token_,
+                        active_query_generation_,completed_trace_token,
                         active_query_request_.can_id,0,0,
                         static_cast<uint8_t>(result.status));
   active_trace_token_=0;
@@ -452,7 +456,7 @@ void DualBleElm::onResult() {
                               original_owner.generation)) {
 #if defined(M5CAN_BLE_DRY_TRACE_BENCH)
     dryTraceJournal().add(DryTraceKind::StaleOwnerDiscard,active_trace_conn_,
-                          active_query_generation_,original_owner.trace_token,
+                          active_query_generation_,completed_trace_token,
                           active_query_request_.can_id);
 #endif
     // A different live client may have joined the SAME read-only
