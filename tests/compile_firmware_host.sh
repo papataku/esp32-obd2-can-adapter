@@ -244,3 +244,11 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -o /tmp/m5can-stream-sender-test
 /tmp/m5can-stream-sender-test
 echo "PASS V2 immutable-journal staged sender and SD-durable receipt simulation"
+
+# Dedicated versioned control characteristic: reject malformed START and
+# cross-kind writes before they can enter the BLE worker mailbox.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_stream_v2_gatt.cpp" \
+  -o /tmp/m5can-log-stream-v2-gatt-test
+/tmp/m5can-log-stream-v2-gatt-test
+echo "PASS V2 isolated GATT START/ACK wire compatibility and corruption checks"
