@@ -89,6 +89,31 @@ int main() {
   e = iso.feed(0x18DAF116U, true, false, cf1, 8, 23000);
   assert(e.type == IsoTpEventType::Complete && e.response_id == 0x18DAF116U);
 
+  // CFs must be checked against the deadline at frame arrival time; do not
+  // rely solely on the CAN owner's periodic expire() before twai_receive().
+  iso.begin(req, 100);
+  e = iso.feed(0x18DAF116U, true, false, ff, 8, 1'000'000);
+  assert(e.type == IsoTpEventType::NeedFlowControl);
+  e = iso.feed(0x18DAF116U, true, false, cf1, 8, 1'100'000);
+  assert(e.type == IsoTpEventType::ConsecutiveFrameTimeout);
+  assert(!iso.hasActiveSessions());
+  e = iso.feed(0x18DAF116U, true, false, cf1, 8, 1'100'001);
+  assert(e.type == IsoTpEventType::None);
+
+  iso.begin(req, 100);
+  e = iso.feed(0x18DAF116U, true, false, ff, 8, 2'000'000);
+  assert(e.type == IsoTpEventType::NeedFlowControl);
+  e = iso.feed(0x18DAF116U, true, false, cf1, 8, 2'099'999);
+  assert(e.type == IsoTpEventType::Complete);
+  assert(e.message.length == 12);
+
+  iso.begin(req, 100);
+  e = iso.feed(0x18DAF116U, true, false, ff, 8, 3'000'000);
+  assert(e.type == IsoTpEventType::NeedFlowControl);
+  e = iso.feed(0x18DAF116U, true, false, cf1, 8, 2'999'999);
+  assert(e.type == IsoTpEventType::SequenceError);
+  assert(!iso.hasActiveSessions());
+
   std::cout << "PASS ISO-TP reassembly tests\n";
   return 0;
 }
