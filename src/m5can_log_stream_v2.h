@@ -153,13 +153,15 @@ class WindowGate {
        frame.sequence!=sent_ || frame.kind==Kind::Ack ||
        frame.block!=pending_.block || frame.offset!=pending_.offset)return false;
     if(frame.kind==Kind::Data) {
+      // 4096 is the terminal END cursor, never a data-bearing block.
+      // Reject before mutating pending_ so a failed send is retry-safe.
+      if(pending_.block>=4096)return false;
       if(pending_.offset && frame.total!=pending_.total)return false;
       if(!pending_.offset)pending_.total=frame.total;
       const uint32_t advanced=static_cast<uint32_t>(pending_.offset)+frame.length;
       if(advanced>pending_.total)return false;
       pending_.offset=static_cast<uint16_t>(advanced);
       if(advanced==pending_.total) {
-        if(pending_.block==4096)return false;
         ++pending_.block;pending_.offset=pending_.total=0;
       }
     } else if(frame.kind==Kind::End) {
