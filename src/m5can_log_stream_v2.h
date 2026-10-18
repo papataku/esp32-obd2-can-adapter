@@ -130,25 +130,77 @@ class VerifiedCursor {
 // unacknowledged block/offset from the immutable flash journal.
 class WindowGate {
  public:
-  void reset(uint32_t session,uint32_t next_sequence=0) {
-    session_=session;acked_=sent_=next_sequence;
+  // The sender can accept only a verified receiving cursor, never an ACK
+  // selected by sequence alone. Each of 16 in-flight frames records its
+  // expected post-write block/offset checkpoint.
+  bool reset(uint32_t session,uint32_t sequence=0,
+             uint16_t block=0,uint16_t offset=0,uint16_t total=0) {
+    if(!session || block>4096 || total>kMaxBlockBytes ||
+       ((offset==0)!=(total==0)) ||
+       (offset && offset>=total) || sequence==UINT32_MAX)return false;
+    session_=session;acked_=sent_=sequence;
+    durable_={block,offset,total};
+    pending_=durable_;
+    ended_=false;end_sequence_=0;
+    return true;
   }
-  bool maySend()const{return session_ && sent_!=UINT32_MAX &&
-                              sent_-acked_<kWindowFrames;}
-  bool sent(uint32_t sequence) {
-    if(!maySend() || sequence!=sent_)return false;
-    ++sent_;return true;
+  bool maySend()const {
+    return session_ && !ended_ && sent_!=UINT32_MAX &&
+           sent_-acked_<kWindowFrames;
+  }
+  bool sent(const Frame& frame) {
+    if(!maySend() || !valid(frame) || frame.session!=session_ ||
+       frame.sequence!=sent_ || frame.kind==Kind::Ack ||
+       frame.block!=pending_.block || frame.offset!=pending_.offset)return false;
+    if(frame.kind==Kind::Data) {
+      if(pending_.offset && frame.total!=pending_.total)return false;
+      if(!pending_.offset)pending_.total=frame.total;
+      const uint32_t advanced=static_cast<uint32_t>(pending_.offset)+frame.length;
+      if(advanced>pending_.total)return false;
+      pending_.offset=static_cast<uint16_t>(advanced);
+      if(advanced==pending_.total) {
+        if(pending_.block==4096)return false;
+        ++pending_.block;pending_.offset=pending_.total=0;
+      }
+    } else if(frame.kind==Kind::End) {
+      if(pending_.offset)return false;
+      ended_=true;end_sequence_=sent_+1;
+    } else return false;
+    checkpoints_[sent_%kWindowFrames]=pending_;
+    ++sent_;
+    return true;
   }
   bool acknowledge(const Frame& ack) {
-    if(ack.kind!=Kind::Ack || !valid(ack) || ack.session!=session_ ||
+    if(ack.kind!=Kind::Ack || !valid(ack) ||
+       !session_ || ack.session!=session_ ||
        ack.sequence<acked_ || ack.sequence>sent_)return false;
-    acked_=ack.sequence;return true;
+    const Position expected=ack.sequence==acked_ ? durable_ :
+        checkpoints_[(ack.sequence-1)%kWindowFrames];
+    if(ack.block!=expected.block || ack.offset!=expected.offset)return false;
+    acked_=ack.sequence;durable_=expected;
+    return true;
   }
-  void rewindUnacked(){sent_=acked_;}
+  void rewindUnacked() {
+    sent_=acked_;pending_=durable_;
+    // Re-send END only if it has not been durably ACKed.
+    ended_=end_sequence_ && acked_>=end_sequence_;
+    if(!ended_)end_sequence_=0;
+  }
   uint32_t nextToSend()const{return sent_;}
   uint32_t durableNext()const{return acked_;}
   uint32_t outstanding()const{return sent_-acked_;}
+  uint16_t durableBlock()const{return durable_.block;}
+  uint16_t durableOffset()const{return durable_.offset;}
+  uint16_t nextBlock()const{return pending_.block;}
+  uint16_t nextOffset()const{return pending_.offset;}
+  bool completeAcked()const{return ended_ && acked_>=end_sequence_;}
  private:
-  uint32_t session_=0,acked_=0,sent_=0;
+  struct Position {
+    uint16_t block=0,offset=0,total=0;
+  };
+  uint32_t session_=0,acked_=0,sent_=0,end_sequence_=0;
+  bool ended_=false;
+  Position durable_{},pending_{};
+  Position checkpoints_[kWindowFrames]{};
 };
 }
