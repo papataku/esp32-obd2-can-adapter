@@ -32,7 +32,7 @@ def values(items, line):
     for item in items:
         ensure("=" in item, "invalid key=value item", line)
         key, value = item.split("=", 1)
-        ensure(key and value and key not in result,
+        ensure(key and (value or key == "data") and key not in result,
                "empty/duplicate drive log attribute", line)
         result[key] = value
     return result
@@ -148,8 +148,14 @@ def audit_drivelog(original: bytes) -> dict:
                         "responses", "raw_count", "transaction_us"):
                 decimal(v, key, num)
             hexid(v, "ecu", num)
+            ensure(len(current["events"]) < 8,
+                   "journal contains more than eight state events", num)
             current["events"].append(v)
         elif kind == "RAW":
+            event_ix = decimal(v, "event", num)
+            ensure(event_ix < len(current["events"]) and
+                   event_ix == len(current["events"]) - 1,
+                   "RAW frame not associated with latest journal event", num)
             count = decimal(v, "dlc", num)
             ensure(count <= 8, "RAW invalid DLC", num)
             ensure(len(v.get("data", "")) == count*2 and
@@ -180,13 +186,16 @@ def audit_drivelog(original: bytes) -> dict:
                 warnings.append(f"boot={boot}:{name}:SYNTHETIC")
             if int(probe["truncated"]) or saved < int(probe["raw_count"]):
                 warnings.append(f"boot={boot}:{name}:TRUNCATED")
+        for event_ix, ev in enumerate(current["events"]):
+            raw_count = sum(int(x["event"]) == event_ix for x in current["raw"])
+            ensure(raw_count == min(2, int(ev["raw_count"])),
+                   f"boot {boot} event {event_ix}: RAW count does not match event", 1)
         can = current["can"]
         drops = {k: int(can[k]) for k in
                  ("drop", "buserr", "missed", "overrun",
                   "BLE_rx_overflow", "notify_failed") if int(can[k])}
         if drops:
             warnings.append(f"boot={boot}:ERROR_COUNTERS:{drops}")
-        expected_events = min(int(current["summary"].get("events_added", 0)), 8)
         # The NVS journal contains at most eight latest state/fault events;
         # it never claims to hold every request, generation or TX frame.
         report.append({
