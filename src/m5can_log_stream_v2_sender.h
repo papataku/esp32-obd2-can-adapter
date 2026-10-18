@@ -71,6 +71,7 @@ class BlockSender {
     return session_ && !loaded_ && !failed_ && !complete_ &&
            gate_.outstanding()==0;
   }
+  bool awaitingFinalAck()const{return loaded_ && ended_ && !complete_;}
   bool completed()const{return complete_;}
   bool failed()const{return failed_;}
   uint32_t durableSequence()const{return gate_.durableNext();}
