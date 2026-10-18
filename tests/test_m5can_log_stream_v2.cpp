@@ -60,19 +60,47 @@ int main() {
   assert(encode(ack,small,sizeof(small))==28);
   assert(decode(small,28,parsed) && parsed.kind==Kind::Ack);
   WindowGate gate;
-  gate.reset(f.session);
-  for(uint32_t i=0;i<kWindowFrames;++i)assert(gate.sent(i));
-  assert(!gate.maySend() && !gate.sent(kWindowFrames));
+  assert(gate.reset(f.session));
+  auto make_data=[&](uint32_t seq) {
+    Frame data{};data.kind=Kind::Data;data.session=f.session;
+    data.sequence=seq;data.block=seq<=16?0:1;
+    data.offset=seq<=16?static_cast<uint16_t>(seq*216U):
+                          static_cast<uint16_t>((seq-17U)*216U);
+    data.total=3616;data.length=seq==16?160:216;data.data=payload;
+    return data;
+  };
+  for(uint32_t i=0;i<kWindowFrames;++i)
+    assert(gate.sent(make_data(i)));
+  assert(!gate.maySend() && !gate.sent(make_data(kWindowFrames)));
   Frame a{};a.kind=Kind::Ack;a.session=f.session;a.sequence=8;
+  a.block=0;a.offset=8*216;
+  auto forged=a;forged.offset=2000;
+  assert(!gate.acknowledge(forged));
+  forged=a;forged.block=1;
+  assert(!gate.acknowledge(forged));
   assert(gate.acknowledge(a) && gate.outstanding()==8);
-  for(uint32_t i=16;i<24;++i)assert(gate.sent(i));
+  assert(gate.durableBlock()==0 && gate.durableOffset()==1728);
+  assert(gate.acknowledge(a)); // idempotent, never adds credit
+  for(uint32_t i=16;i<24;++i)assert(gate.sent(make_data(i)));
   assert(!gate.maySend());
   a.sequence=25;assert(!gate.acknowledge(a));
   a.sequence=7;assert(!gate.acknowledge(a));
-  a.session=5;a.sequence=8;assert(!gate.acknowledge(a));
+  a.sequence=8;a.session=5;assert(!gate.acknowledge(a));
   gate.rewindUnacked();
   assert(gate.durableNext()==8 && gate.nextToSend()==8);
-  assert(gate.sent(8));
+  assert(gate.nextBlock()==0 && gate.nextOffset()==1728);
+  assert(gate.sent(make_data(8)));
+  // A sender cannot accept out-of-order, session-switched, offset-switched,
+  // or malformed frames even when the sequence number appears plausible.
+  Frame wrong=make_data(9);wrong.offset=0;
+  assert(!gate.sent(wrong));
+  wrong=make_data(9);wrong.session=9;
+  assert(!gate.sent(wrong));
+  assert(gate.sent(make_data(9)));
+  // Never allow premature END / forged completion of an unverified block.
+  Frame premature{};premature.kind=Kind::End;
+  premature.session=f.session;premature.sequence=10;premature.block=0;
+  assert(!gate.sent(premature));
   uint8_t invalid[244]{};
   assert(encode(f,invalid,sizeof(invalid))==244);
   invalid[6]=1;assert(!decode(invalid,244,parsed));
