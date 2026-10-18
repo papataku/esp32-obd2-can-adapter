@@ -120,6 +120,9 @@ class BleElmTransport {
     uint8_t data[28]{};
   };
   bool pollLogControl(LogControlMessage& message);
+  // Eligibility does not depend on ELM queue occupancy. A busy ELM peer
+  // merely defers V2 notifications and MUST NOT cancel a live transfer.
+  bool logPeerAuthorized(uint16_t peer,uint32_t generation) const;
   bool logPeerReady(uint16_t peer,uint32_t generation) const;
   bool notifyLogFrame(uint16_t peer,uint32_t generation,
                       const uint8_t* frame,size_t size);
