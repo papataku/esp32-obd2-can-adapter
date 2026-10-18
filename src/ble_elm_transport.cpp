@@ -1,5 +1,8 @@
 #include "ble_elm_transport.h"
 #include "diagnostic_error_catalog.h"
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+#include "dry_trace_journal.h"
+#endif
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include <NimBLEDevice.h>
 #if defined(ARDUINO_ARCH_ESP32)
@@ -672,9 +675,15 @@ void BleElmTransport::pollTx() {
       result=packet?ble_gattc_notify_custom(id,tx_characteristic_->getHandle(),packet):BLE_HS_ENOMEM;
     }
     bool disconnect=false;
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+    bool notify_handoff_accepted=false;
+#endif
     portENTER_CRITICAL(&mux_);
     if(peer.active && peer.connection_id==id && peer.generation==gen) {
       if(attempted && result==0) {
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+        notify_handoff_accepted=true;
+#endif
         peer.pending_head=(peer.pending_head+chunk)%sizeof(peer.pending);
         peer.pending_size-=chunk;peer.progress_ms=millis();peer.stalled_reported=false;
         peer.traffic.tx_bytes+=chunk;++peer.traffic.notifications;
@@ -705,6 +714,14 @@ void BleElmTransport::pollTx() {
       }
     }
     portEXIT_CRITICAL(&mux_);
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+    // A zero return means NimBLE ACCEPTED the enqueue call, NOT that a
+    // remote BLE client received a notification. No request ID is inferred.
+    if(attempted)
+      dryTraceJournal().add(notify_handoff_accepted
+          ? DryTraceKind::BleNotifyApiAccepted : DryTraceKind::BleNotifyApiRejected,
+          id,gen,0,0,0,chunk,static_cast<uint8_t>(result==0?0:1));
+#endif
     if(disconnect && isClientConnected(id,gen))server_->disconnect(id);
   }
 }
