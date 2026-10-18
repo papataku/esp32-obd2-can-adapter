@@ -24,7 +24,7 @@ from pathlib import Path
 from validate_multi_ecu_bench_trace import EvidenceError, verify
 
 CAN_ID = re.compile(r"^[0-9A-F]{8}$")
-CAN_DATA = re.compile(r"^(?:[0-9A-F]{2}){1,8}$")
+CAN_DATA = re.compile(r"^(?:[0-9A-F]{2}){0,8}$")
 TESTER_ID = re.compile(r"^18DA[0-9A-F]{2}F1$")
 FUNCTIONAL_TESTER_IDS = {"18DB33F1", "18DBEFF1"}
 
@@ -65,11 +65,20 @@ def parse_raw_capture(data):
                  f"CAN line {line}: invalid 29-bit CAN ID representation")
         required(type(payload) is str and bool(CAN_DATA.fullmatch(payload)),
                  f"CAN line {line}: invalid Classical CAN data bytes")
-        required(type(frame.get("dlc")) is int and
-                 frame["dlc"] == len(payload) // 2,
-                 f"CAN line {line}: DLC mismatch")
-        required(frame.get("extended") is True and frame.get("rtr") is False,
-                 f"CAN line {line}: expected extended data frame")
+        dlc = frame.get("dlc")
+        extended = frame.get("extended")
+        rtr = frame.get("rtr")
+        required(type(dlc) is int and 0 <= dlc <= 8,
+                 f"CAN line {line}: invalid Classical CAN DLC")
+        required(type(extended) is bool and type(rtr) is bool,
+                 f"CAN line {line}: missing CAN frame flags")
+        required(int(can_id, 16) <= (0x1FFFFFFF if extended else 0x7FF),
+                 f"CAN line {line}: CAN ID outside frame address width")
+        if rtr:
+            required(payload == "", f"CAN line {line}: RTR must not have data bytes")
+        else:
+            required(dlc == len(payload) // 2,
+                     f"CAN line {line}: DLC mismatch")
         output.append(frame)
         last_time = t
     required(output, "independent CAN capture has no frames")
