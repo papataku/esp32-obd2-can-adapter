@@ -13,6 +13,9 @@
 #include "log_storage_probe.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "ble_evidence_journal.h"
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+#include "dry_trace_journal.h"
+#endif
 #endif
 
 namespace m5can {
@@ -511,6 +514,15 @@ void SerialProtocol::handleUsbLine(const char* line) {
     driveLog().recordFirstFailure(0,fixture,0x18DAF101U,1,5,true);
     bleEvidenceJournal().appendError(DiagnosticError::FixtureEvidence,48);
     Serial.println("#LOGTEST,QUEUED,origin=SYNTHETIC,raw_per_record=48,physical_TX=COMPILED_OUT");
+#endif
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+  } else if (!std::strcmp(command, "DRYTRACE")) {
+    // Trace export uses USB CDC while all BLE peers are disconnected and
+    // no CAN query owns the TWAI task. It does NOT enable any CAN TX.
+    if(monitor_.queryPending() ||
+       (drive_log_ble_ && drive_log_ble_->connectedClientCount()))
+      Serial.println("#DRYTRACE,ERR,ACTIVE_TRAFFIC,decision=BLOCK");
+    else dryTraceJournal().dump();
 #endif
   } else if (!std::strcmp(command, "LOGCAP")) {
     // An operator explicitly asks for NVS capacity diagnostics. Never

@@ -21,4 +21,6 @@ PYTHONPATH=tools python3 tests/test_import_candump_independent_can.py
 PYTHONPATH=tools python3 tests/test_import_m5can_native_capture.py
 PYTHONPATH=tools python3 tests/test_audit_m5can_drivelog.py
 PYTHONPATH=tools python3 tests/test_audit_m5can_blelog.py
+# Dry bench trace is not an external CAN analyzer or a peer receipt proof.
+PYTHONPATH=tools python3 tests/test_audit_m5can_drytrace.py
 python3 -m compileall -q tools tests

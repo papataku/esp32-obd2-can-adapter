@@ -13,6 +13,9 @@
 #include "elm_response_formatter.h"
 #include "serial_protocol.h"
 #include "drive_log.h"
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+#include "dry_trace_journal.h"
+#endif
 #include "diagnostic_error_catalog.h"
 
 namespace m5can {
@@ -55,6 +58,9 @@ void DualBleElm::event(const BleClientEvent& event) {
       slot.active = true;
       slot.conn_id = event.connection_id;
       slot.generation = event.generation;
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+      dryTraceJournal().add(DryTraceKind::Connect,slot.conn_id,slot.generation);
+#endif
       return;
     }
     return;
@@ -72,6 +78,11 @@ void DualBleElm::event(const BleClientEvent& event) {
            &sessions_[active_secondary_owner_] == s))))
       adaptive_multi_pid_.disable();
     driveLog().event(DriveLog::Kind::Disconnect,s->conn_id);
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+    dryTraceJournal().add(DryTraceKind::Disconnect,s->conn_id,s->generation,
+                          s->trace_token);
+    s->trace_token=0;
+#endif
     s->multi_pid_pair = false;
     s->active = false;
     s->pending = false;
@@ -103,8 +114,17 @@ void DualBleElm::event(const BleClientEvent& event) {
 
 void DualBleElm::flush(Session& s) {
   if (!s.output_size) return;
-  if (s.active && ble_.isClientConnected(s.conn_id,s.generation))
+  if (s.active && ble_.isClientConnected(s.conn_id,s.generation)) {
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+    const size_t accepted=ble_.queueTo(s.conn_id,s.generation,s.output,s.output_size);
+    dryTraceJournal().add(accepted==s.output_size
+        ? DryTraceKind::BleQueueAccepted : DryTraceKind::BleQueueRejected,
+        s.conn_id,s.generation,s.trace_token,s.request.can_id,0,
+        static_cast<uint16_t>(accepted));
+#else
     ble_.queueTo(s.conn_id,s.generation,s.output,s.output_size);
+#endif
+  }
   s.output_size = 0;
 }
 
@@ -367,6 +387,9 @@ void DualBleElm::finishSingle(Session& s, const DiagnosticResult& result) {
     ++s.batch_next;
     advanceBatch(s);
   } else prompt(s);
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+  s.trace_token=0; // future cache/prompt output is not this transaction
+#endif
 }
 
 void DualBleElm::abortBatch(Session& s, const DiagnosticResult& result) {
@@ -377,6 +400,9 @@ void DualBleElm::abortBatch(Session& s, const DiagnosticResult& result) {
     emitLine(s,"M5DONE");
   }
   prompt(s);
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+  s.trace_token=0; // aborted batch may not re-use an old request identity
+#endif
 }
 
 void DualBleElm::cacheSafePartialGroup(
@@ -410,6 +436,14 @@ void DualBleElm::onResult() {
   // Reuse fixed object storage rather than a large local result.
   DiagnosticResult& result=query_result_workspace_;
   if (!can_.pollQueryResult(result)) return;
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+  const uint32_t completed_trace_token=active_trace_token_;
+  dryTraceJournal().add(DryTraceKind::CanOwnerResult,active_trace_conn_,
+                        active_query_generation_,completed_trace_token,
+                        active_query_request_.can_id,0,0,
+                        static_cast<uint8_t>(result.status));
+  active_trace_token_=0;
+#endif
 
   // A controller connection handle may be reused before a CAN transaction
   // finishes. Never report, log, or cache an OLD generation's ECU response
@@ -420,6 +454,11 @@ void DualBleElm::onResult() {
       original_owner.generation!=active_query_generation_ ||
       !ble_.isClientConnected(original_owner.conn_id,
                               original_owner.generation)) {
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+    dryTraceJournal().add(DryTraceKind::StaleOwnerDiscard,active_trace_conn_,
+                          active_query_generation_,completed_trace_token,
+                          active_query_request_.can_id);
+#endif
     // A different live client may have joined the SAME read-only
     // parameter before the owner's disconnect. Its session is independently
     // generation-checked, so it may still receive the validated result.
@@ -787,9 +826,22 @@ void DualBleElm::dispatch() {
       active_query_owner_=i;
       active_query_request_=outgoing;
       active_query_generation_=s.generation;
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+      active_trace_token_=dryTraceJournal().nextToken();
+      active_trace_conn_=s.conn_id;
+      s.trace_token=active_trace_token_;
+      uint32_t identity=outgoing.length;
+      for(uint8_t k=0;k<outgoing.length && k<3;++k)
+        identity=(identity<<8)|outgoing.data[k];
+      dryTraceJournal().add(DryTraceKind::CanQueueAccepted,s.conn_id,s.generation,
+                            active_trace_token_,outgoing.can_id,identity);
+#endif
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
       active_secondary_owner_=(shared || cross)?j:-1;
       active_secondary_generation_=(shared || cross)?peer.generation:0;
+#if defined(M5CAN_BLE_DRY_TRACE_BENCH)
+      if(shared || cross)peer.trace_token=active_trace_token_;
+#endif
 #else
       active_secondary_owner_=-1;
       active_secondary_generation_=0;
