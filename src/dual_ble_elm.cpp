@@ -879,9 +879,10 @@ void DualBleElm::pollLogV2() {
   if(raw_service_->takeStreamBlockForBle(received)) {
     // Stale mailbox replies from a prior connection generation are harmless:
     // consume them without resetting the new session's deadline or sender.
-    if(received.peer==log_stream_peer_ &&
-       received.generation==log_stream_generation_ &&
-       received.index==log_stream_sender_.expectedBlock()) {
+    if(m5can_log_stream_v2::BlockFetchWatchdog::matchesReply(
+           log_stream_peer_,log_stream_generation_,
+           log_stream_sender_.expectedBlock(),
+           received.peer,received.generation,received.index)) {
       log_stream_fetch_pending_=false;
       if(received.error ||
          !log_stream_sender_.stage(
