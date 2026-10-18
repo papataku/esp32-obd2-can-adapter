@@ -259,3 +259,10 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -I"$ROOT/src" "$ROOT/tests/test_m5can_log_v2_progress.cpp" \
   -o /tmp/m5can-log-v2-progress-test
 /tmp/m5can-log-v2-progress-test
+
+# Ordinary CAN/ELM replies take priority but cannot revoke an authorized
+# log subscription. The V2 sender resumes when the peer queue drains.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_v2_peer_policy.cpp" \
+  -o /tmp/m5can-log-v2-peer-qos-test
+/tmp/m5can-log-v2-peer-qos-test
