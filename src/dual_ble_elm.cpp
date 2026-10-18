@@ -828,7 +828,7 @@ void DualBleElm::pollLogV2() {
     m5can_log_stream_v2::Control request{};
     if(!m5can_log_stream_v2::decodeControl(
             control.data,control.count,request))continue;
-    if(!ble_.logPeerReady(control.peer,control.generation))continue;
+    if(!ble_.logPeerAuthorized(control.peer,control.generation))continue;
     if(request.kind==m5can_log_stream_v2::ControlKind::Start) {
       // Explicit trigger only; never start on BLE connect / device boot.
       if(log_stream_active_ || raw_service_->state()!=
@@ -854,7 +854,7 @@ void DualBleElm::pollLogV2() {
     }
   }
   if(!log_stream_active_)return;
-  if(!ble_.logPeerReady(log_stream_peer_,log_stream_generation_) ||
+  if(!ble_.logPeerAuthorized(log_stream_peer_,log_stream_generation_) ||
      log_stream_sender_.failed()) {
     log_stream_sender_.cancel();
     log_stream_active_=log_stream_fetch_pending_=false;
