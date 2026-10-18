@@ -236,6 +236,33 @@ import is *partial corroborating evidence*, not a substitute for full
 `capture_events.jsonl`. No vehicle TX or firmware change is introduced by
 this converter. All tests here use fabricated Native packets.
 
+## Existing NVS DriveLog: sparse-journal audit only
+
+When an operator has exported the complete `#DRIVELOG,BEGIN,...` to
+`#DRIVELOG,END` serial dump with BLE devices disconnected, inspect it
+**offline** without pretending it contains a complete frame timeline:
+
+```bash
+python3 tools/audit_m5can_drivelog.py \
+  m5can_drivelog_original.txt drivelog_gaps.json
+```
+
+This audit verifies version-2 boot/CAN/TIMING/MEMORY records, TX
+success/attempt count, the association and DLC/payload of PROBE/PROBE_RAW,
+GROUPFAIL/GROUPFAIL_RAW and the last-8 EVENT/RAW records. It identifies
+missing/truncated or explicitly SYNTHETIC probe evidence and nonzero driver/
+BLE error counters, and preserves the input's SHA-256.
+
+**It always reports `PARTIAL_JOURNAL_ONLY_NOT_HARDWARE_APPROVAL`.**
+There is no complete CAN TX record, no per-request BLE generation and
+delivery proof, and no independent CAN analyzer in this NVS journal.
+Those omissions must remain visible even when all counters are zero.
+It is invalid to reconstruct fictional unrecorded events just to make the
+bench validator pass.
+
+This tool never accesses NVS or serial hardware itself. It only processes
+an already exported file. All host tests use synthetic textual fixtures.
+
 ## Open items before independent hardware test
 
 - Design an export adapter that creates this JSONL from the actual
