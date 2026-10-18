@@ -245,3 +245,16 @@ for extra_flags in "" "-DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1"; do
     -o /tmp/m5can-multi-ecu-dual-peer-dry
   /tmp/m5can-multi-ecu-dual-peer-dry
 done
+
+
+# Deterministic 16k malformed frame replay of the real ISO-TP transaction.
+# AddressSanitizer + UBSan are mandatory for malformed length/timing coverage.
+g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -fno-omit-frame-pointer \
+  -DM5CAN_MULTI_ECU_POLICY_DRY_BENCH=1 -DM5CAN_CAN_MODE_DRY_RUN=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_multi_ecu_frame_fuzz_dry.cpp" \
+  "$ROOT/src/diagnostic_transaction.cpp" "$ROOT/src/isotp_reassembler.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-multi-ecu-fuzz-dry
+/tmp/m5can-multi-ecu-fuzz-dry
