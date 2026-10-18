@@ -27,6 +27,14 @@ class BlockFetchWatchdog {
     if(!armed_) { start_ms_=now_ms; armed_=true; }
   }
   void clear() { armed_=false; }
+  // A mailbox answer may survive a canceled BLE session and be observed
+  // after NimBLE reuses a connection handle. Match the full fetch identity.
+  static bool matchesReply(uint16_t peer,uint32_t generation,uint32_t block,
+                           uint16_t reply_peer,uint32_t reply_generation,
+                           uint32_t reply_block) {
+    return peer==reply_peer && generation==reply_generation &&
+           block==reply_block;
+  }
   bool expired(uint32_t now_ms) const {
     return armed_ && static_cast<uint32_t>(now_ms-start_ms_)>=kTimeoutMs;
   }
