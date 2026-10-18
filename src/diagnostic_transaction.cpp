@@ -76,6 +76,7 @@ TransactionStep DiagnosticTransaction::onFrame(const TransactionFrame& frame) {
     case IsoTpEventType::SequenceError:
     case IsoTpEventType::Collision:
     case IsoTpEventType::CapacityError:
+    case IsoTpEventType::ConsecutiveFrameTimeout:
       appendRaw(frame);
       result_.status = DiagnosticStatus::IsoTpError;
       step.event = TransactionEvent::ProtocolError;

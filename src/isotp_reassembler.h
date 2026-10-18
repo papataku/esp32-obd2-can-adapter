@@ -16,6 +16,7 @@ enum class IsoTpEventType : uint8_t {
   SequenceError,
   Collision,
   CapacityError,
+  ConsecutiveFrameTimeout,
 };
 
 struct IsoTpEvent {
@@ -44,6 +45,7 @@ class IsoTpAssembler {
     uint16_t received = 0;
     uint8_t next_sequence = 1;
     uint64_t deadline_us = 0;
+    uint64_t last_frame_us = 0;
     DiagnosticMessage message{};
   };
 

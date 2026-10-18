@@ -86,6 +86,29 @@ int main() {
   assert(transaction.result().response_count==1);
   assert(transaction.result().responses[0].data[1]==0x0D);
 
+  // A CF after the exact timestamp deadline is an ISO-TP error even if
+  // caller omitted its scheduled expireIsoTp() check for this polling tick.
+  transaction.begin(req(0x18DA01F1U, {0x22,0x20,0x12}), 4'000'000, 100);
+  step = transaction.onFrame(frame(0x18DAF101U, 4'000'010,
+      {0x10,0x0C,0x62,0x20,0x12,1,2,3}));
+  assert(step.event == TransactionEvent::NeedFlowControl);
+  step = transaction.onFrame(frame(0x18DAF101U, 4'100'010,
+      {0x21,4,5,6,7,8,9,0}));
+  assert(step.event == TransactionEvent::ProtocolError);
+  assert(transaction.result().status == DiagnosticStatus::IsoTpError);
+  assert(transaction.result().response_count == 0);
+  assert(!transaction.hasActiveIsoTp());
+
+  // A later valid request may safely reuse the same transaction scratch.
+  transaction.begin(req(0x18DA01F1U, {0x22,0x20,0x12}), 5'000'000, 100);
+  step = transaction.onFrame(frame(0x18DAF101U, 5'000'010,
+      {0x10,0x0C,0x62,0x20,0x12,1,2,3}));
+  assert(step.event == TransactionEvent::NeedFlowControl);
+  step = transaction.onFrame(frame(0x18DAF101U, 5'000'050,
+      {0x21,4,5,6,7,8,9,0}));
+  assert(step.event == TransactionEvent::Completed);
+  assert(transaction.result().response_count == 1);
+
   std::cout << "PASS diagnostic transaction tests\n";
   return 0;
 }
