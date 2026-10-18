@@ -34,6 +34,9 @@ static void retained_session(bool complete) {
   RawCanRecordingService first(can);
   assert(first.begin() && first.state()==RawCanRecordingService::State::Idle);
   assert(first.session()==0 && first.dropped()==0);
+  // NimBLE conn_handle 0 is valid; only generation 0 is invalid.
+  assert(!first.queueStartFromBle(0x11223344U,0,0));
+  assert(first.queueStartFromBle(0x11223344U,0,1));
   RawCanBlockCodec codec;RawCanFrame frame{};
   frame.sequence=1;frame.timestamp_us=123456789;
   frame.identifier=0x7e8;frame.dlc=8;
@@ -50,6 +53,14 @@ static void retained_session(bool complete) {
   assert(rebooted.state()==(complete?RawCanRecordingService::State::Complete:
                                       RawCanRecordingService::State::RecoveryRequired));
   assert(!rebooted.recording() && !rebooted.stopping());
+  assert(!rebooted.queueReadFromBle(0,0,0,0));
+  assert(rebooted.queueReadFromBle(0,0,0,1));
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  if(complete) {
+    assert(!rebooted.queueStreamBlockFromBle(0,0,0));
+    assert(rebooted.queueStreamBlockFromBle(0,0,1));
+  }
+#endif
   assert(!rebooted.start(99)); // Never overwrite retained records or auto-resume.
   storage.readable=false;
   assert(!rebooted.begin());
