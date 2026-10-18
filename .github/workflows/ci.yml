@@ -24,6 +24,24 @@ jobs:
       - name: Run host safety and protocol checks
         run: ./tests/run_all.sh
 
+  v2-isolated-build:
+    name: V2 encrypted GATT and CAN-idle owner compile-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+      - name: Compile complete opt-in V2 BLE service and journal pipeline
+        run: pio run -e m5dial_v2_owner_compile
+      - name: Confirm ELF and firmware exist; never auto flash
+        run: |
+          test -s .pio/build/m5dial_v2_owner_compile/firmware.elf
+          test -s .pio/build/m5dial_v2_owner_compile/firmware.bin
+
   platformio-build:
     runs-on: ubuntu-latest
     steps:
