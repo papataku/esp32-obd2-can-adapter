@@ -6,9 +6,9 @@
 // subscribed peer generation must be checked by the transport, NOT here.
 #include "m5can_log_stream_v2.h"
 namespace m5can_log_stream_v2 {
-inline constexpr const char* kGattService="b8596400-a2d7-4c26-9918-6a2d0b88fa00";
-inline constexpr const char* kGattControl="b8596401-a2d7-4c26-9918-6a2d0b88fa00";
-inline constexpr const char* kGattData="b8596402-a2d7-4c26-9918-6a2d0b88fa00";
+static constexpr const char* kGattService="b8596400-a2d7-4c26-9918-6a2d0b88fa00";
+static constexpr const char* kGattControl="b8596401-a2d7-4c26-9918-6a2d0b88fa00";
+static constexpr const char* kGattData="b8596402-a2d7-4c26-9918-6a2d0b88fa00";
 constexpr size_t kStartBytes=20;
 struct StartRequest {
   uint32_t session=0;
