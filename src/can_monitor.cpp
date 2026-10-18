@@ -42,6 +42,10 @@ void CanMonitor::setError(const char* message) {
 }
 
 bool CanMonitor::installDriver(twai_mode_t mode) {
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+  // Defence in depth: passive ECU routing experiments must not ACK a live bus.
+  if (mode != TWAI_MODE_LISTEN_ONLY) return false;
+#endif
   twai_general_config_t general =
       TWAI_GENERAL_CONFIG_DEFAULT(cfg::kCanTxPin, cfg::kCanRxPin, mode);
   general.tx_queue_len =
@@ -102,6 +106,10 @@ bool CanMonitor::begin() {
 }
 
 bool CanMonitor::switchDriverMode(twai_mode_t mode) {
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+  // Reject before stopping/reinstalling TWAI; keep current listen-only RX.
+  if (mode != TWAI_MODE_LISTEN_ONLY) return false;
+#endif
   const esp_err_t stopped = twai_stop();
   if (stopped != ESP_OK && stopped != ESP_ERR_INVALID_STATE) return false;
   if (twai_driver_uninstall() != ESP_OK) return false;
