@@ -145,6 +145,47 @@ configuration, isolation, physical connection, SHA values and raw capture
 continuity. All CI fixtures are **SYNTHETIC ONLY** and never serve as real
 hardware qualification.
 
+## Optional offline importer for Linux can-utils logs
+
+To make the canonical JSONL reproducible, a strict importer can read an
+already-captured **Classical CAN** `candump -L` text file, for example:
+
+```text
+(1609770956.314100) can0 18DA02F1#0322201200000000
+(1609770956.314110) can0 18DAF102#100A622012010203
+(1609770956.314120) can0 123#R8
+```
+
+After independent capture and review of the interface's actual packet-loss
+counter, use:
+
+```bash
+python3 tools/import_candump_independent_can.py \
+  original_candump.log independent_can.jsonl \
+  --interface can0 --lost-frames 0
+sha256sum original_candump.log independent_can.jsonl
+python3 tools/reconcile_multi_ecu_can_capture.py \
+  capture_events.jsonl independent_can.jsonl \
+  --clock-offset-us <measured_offset_us> --max-skew-us 5000
+```
+
+The converter writes new files only, never overwrites evidence, and records
+the SHA-256 of the original `candump` text, selected interface and measured
+loss count. Converted CAN timestamps are exact integer microseconds relative
+to **the first CAN frame** (no floating-point roundoff); the clock offset
+must account for this origin when cross-referencing the M5CAN/ BLE event log.
+
+The importer **does not run candump or open SocketCAN**; an independent
+operator must obtain the actual capture separately. It deliberately rejects
+CAN FD `##` syntax, non-`-L` formats, missing timestamps, mixed
+interfaces, invalid RTR/data, malformed lines or regressed timestamps,
+rather than silently filtering potentially safety-relevant frames.
+Only Classic CAN is supported in this evidence schema. A zero loss counter
+must be based on independent analyzer status, not guessed.
+
+As elsewhere in this document, test logs created in CI are synthetic,
+not proof that a hardware capture exists.
+
 ## Open items before independent hardware test
 
 - Design an export adapter that creates this JSONL from the actual

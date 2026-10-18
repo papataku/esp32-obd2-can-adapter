@@ -15,4 +15,5 @@ PYTHONPATH=tools python3 tests/test_validate_capture.py
 PYTHONPATH=tools python3 tests/test_multi_ecu_bench_trace.py
 # Cross-validate independent analyzer bytes and SHA-256 against trace events.
 PYTHONPATH=tools python3 tests/test_reconcile_multi_ecu_can_capture.py
+PYTHONPATH=tools python3 tests/test_import_candump_independent_can.py
 python3 -m compileall -q tools tests
