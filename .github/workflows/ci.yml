@@ -41,6 +41,8 @@ jobs:
         run: pio run -e m5dial_dual_ble_mtu_bench
       - name: Build CAN mode-switch dry-run bench (physical TX disabled)
         run: pio run -e m5dial_dual_ble_canmode_dry_bench
+      - name: Build multi-ECU routing policy with physical CAN TX disabled
+        run: pio run -e m5dial_multi_ecu_policy_dry_bench
       - name: Build explicit grouped CAN pilot
         run: pio run -e m5dial_dual_ble_multipid_bench
       - name: Build explicit TX-disabled DEMO error fixture
@@ -50,7 +52,7 @@ jobs:
       - name: Build BLE MTU A/B benchmark firmware
         run: pio run -e m5dial_mtu23_bench -e m5dial_mtu_bench
       - name: Check compiler stack frame budgets
-        run: python tools/check_dual_stack.py m5dial m5dial_dual_ble_bench m5dial_dual_ble_mtu_bench m5dial_dual_ble_canmode_dry_bench m5dial_dual_ble_multipid_bench m5dial_dual_ble_fault_fixture m5dial_mtu23_bench m5dial_mtu_bench m5dial_integrated_soak
+        run: python tools/check_dual_stack.py m5dial m5dial_dual_ble_bench m5dial_dual_ble_mtu_bench m5dial_dual_ble_canmode_dry_bench m5dial_multi_ecu_policy_dry_bench m5dial_dual_ble_multipid_bench m5dial_dual_ble_fault_fixture m5dial_mtu23_bench m5dial_mtu_bench m5dial_integrated_soak
       - name: Upload M5Dial build artifacts (quota-dependent)
         continue-on-error: true
         uses: actions/upload-artifact@v4
