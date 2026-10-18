@@ -57,12 +57,26 @@ The event grammar is described in the docstring of
 - No silent classification of test-generated samples as hardware evidence.
 
 A trace with `"evidence":"hardware"` requires `capture_sha256` (64 hex
-characters), `observer`, `interface`, and `firmware_sha`. These fields are
-**declared provenance only**. The checker does not authenticate who took a
-capture or prove that a hash matches external hardware bytes. QA must compare
-the independent analyzer capture and SHA values and retain unmodified raw
-CAN/BL E output. *Never upload sensitive real vehicle raw captures to
-public GitHub PRs.* Store evidence in the approved private artifact store.
+characters), `observer`, `interface`, and `firmware_sha`. Each `can_tx`
+or `can_rx` event **must also contain actual observed CAN payload bytes**:
+
+```json
+{"type":"event","t_us":12,"kind":"can_tx","id":"r02","frame":"request","can_id":"18DA02F1","data_hex":"0322201200000000","dlc":8,"extended":true,"rtr":false}
+```
+
+For hardware evidence, the validator derives PCI, service, DID, and CF
+sequence from the raw bytes rather than trusting provided string labels;
+it checks exact eight-byte UDS22 request and FC framing, DLC, and 29-bit
+data-frame flags. The CF sequence may wrap from 15 to 0. One BLE
+connection generation may receive at most one output per request.
+
+The source/provenance fields are still **declared provenance only**. The
+checker does not authenticate who took a capture or independently prove
+that a claimed SHA matches external hardware bytes. QA must cross-check
+the independent CAN analyzer's original recording and the entered hash,
+plus firmware SHA, BLE log, timestamp alignment, and any drop counters.
+*Never upload sensitive real vehicle raw captures to public GitHub PRs.*
+Store evidence in the approved private artifact store.
 
 ## Commands
 
