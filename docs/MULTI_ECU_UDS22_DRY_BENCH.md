@@ -92,3 +92,25 @@ Before considering an actual protocol release, a separate review must
 specify capability negotiation, version bump, host fallbacks, response
 attribution and diagnostics for rejects. In particular, do not advertise
 `PROTO=1.2` or `UDS_ECUS=...` while the feature is dry-run only.
+
+
+## Phase D: protocol 1.2 passive capability handshake
+
+Only the TX-disabled `m5dial_multi_ecu_policy_dry_bench` advertises:
+
+```text
+M5CAN-CAPS PROTO=1.2 FW=<firmware> BATCH=16 OPS=OBD01,UDS22 STREAM=0 LEASE=IMPLICIT UDS_ECUS=01,02,06,0E,EF TX=OFF
+```
+
+`UDS_ECUS` describes which ECU addresses the **passive parser and simulator**
+recognize. It is **not** a list of ECUs to which firmware can transmit.
+`TX=OFF` must be present and literal; iPad refuses diagnostic reads,
+batch requests, TX lease acquisition and test-only ECU commands when it sees
+this feature descriptor. No response from a live ECU can be obtained from
+this build. Production continues advertising the original `PROTO=1.1`
+without `UDS_ECUS` or `TX=OFF`.
+
+Requiring `PROTO=1.2` and `TX=OFF` is not approval of a vehicle-facing
+1.2 release. A real read-only diagnostic profile, if ever implemented, will
+need a **separately reviewed explicit** TX permission contract and isolated
+CAN simulator evidence; iPad must not infer it from the ECU list alone.

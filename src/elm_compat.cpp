@@ -212,10 +212,22 @@ ElmResult ElmCompat::execute(const char* command) {
   if (!std::strcmp(cmd, "ATM5CAP")) {
     // Firmware version and protocol version are intentionally independent.
     // New firmware can preserve V1 compatibility or advertise V2 explicitly.
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+    // Version 1.2 is advertised ONLY by the physically TX-disabled bench.
+    // TX=OFF is mandatory: the advertised ECU inventory is descriptive,
+    // and MUST NOT authorize any physical CAN transmission.
+    std::snprintf(result.reply, sizeof(result.reply),
+                  "M5CAN-CAPS PROTO=1.2 FW=%s BATCH=16 "
+                  "OPS=OBD01,UDS22 STREAM=0 LEASE=IMPLICIT "
+                  "UDS_ECUS=01,02,06,0E,EF TX=OFF",
+                  cfg::kFirmwareVersion);
+#else
+    // Production vehicle behavior and protocol 1.1 are unchanged.
     std::snprintf(result.reply, sizeof(result.reply),
                   "M5CAN-CAPS PROTO=1.1 FW=%s BATCH=16 "
                   "OPS=OBD01,UDS22 STREAM=0 LEASE=IMPLICIT",
                   cfg::kFirmwareVersion);
+#endif
     return result;
   }
 #if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
