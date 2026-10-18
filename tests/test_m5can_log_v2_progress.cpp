@@ -71,5 +71,38 @@ int main() {
   fetch.arm(9000);
   assert(!fetch.expired(9000));
   assert(fetch.expired(14000));
-  std::cout<<"V2 progress timer duplicate-ACK, pacing, wrap and END PASS\n";
+  // Production sender must apply this 5s deadline while it requests a
+  // flash-owner mailbox block: rejected enqueue and accepted-but-lost reply
+  // are both bounded, even if the requester polls thousands of times.
+  BlockSender waiting_sender;
+  assert(waiting_sender.begin(0xABCD0012u,2));
+  assert(waiting_sender.needsBlock());
+  BlockFetchWatchdog waiting;
+  waiting.arm(600);
+  waiting.arm(2500);  // accepted/denied retries do not extend first request
+  assert(!waiting.expired(5599));
+  assert(waiting.expired(5600));
+  // A reused connection handle from an earlier generation or another
+  // block does NOT satisfy or reset the active fetch deadline.
+  const uint16_t peer=1;
+  const uint32_t generation=77;
+  assert(!BlockFetchWatchdog::matchesReply(
+      peer,generation,0,peer,76,0));
+  assert(!BlockFetchWatchdog::matchesReply(
+      peer,generation,0,peer,generation,1));
+  assert(!BlockFetchWatchdog::matchesReply(
+      peer,generation,0,2,generation,0));
+  assert(BlockFetchWatchdog::matchesReply(
+      peer,generation,0,peer,generation,0));
+  // Only a verified matching block may clear the deadline; a new block
+  // starts a fresh one, and cancellation must clear stale timing state.
+  waiting.clear();
+  assert(waiting_sender.stage(0,payload,sizeof(payload)));
+  assert(!waiting.expired(5601));
+  waiting.arm(10000);
+  assert(!waiting.expired(14999));
+  assert(waiting.expired(15000));
+  waiting.clear();
+  assert(!waiting.expired(UINT32_MAX));
+  std::cout<<"V2 progress/Flash timeout, reply generation, wrap and END PASS\n";
 }
