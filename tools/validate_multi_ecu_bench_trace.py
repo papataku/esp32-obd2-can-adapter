@@ -198,7 +198,7 @@ def verify(records):
                 need(r["tx"] and r["ff"] and not r["fc"],
                      "Flow Control without matching first frame", line)
                 if raw is not None:
-                    need(len(raw) == 8 and raw[:3] == b"\\x30\\x00\\x00",
+                    need(len(raw) == 8 and raw[:3] == bytes((0x30, 0, 0)),
                          "FC bytes are not 30 00 00", line)
                 r["fc"] = True
                 counts["fc"] += 1
