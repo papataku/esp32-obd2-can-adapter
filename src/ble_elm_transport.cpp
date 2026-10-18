@@ -637,20 +637,37 @@ bool BleElmTransport::pollLogControl(LogControlMessage& message) {
   portEXIT_CRITICAL(&mux_);
   return isClientConnected(message.peer,message.generation);
 }
+bool BleElmTransport::logPeerAuthorized(uint16_t id,uint32_t gen) const {
+  bool authorized=false;
+  portENTER_CRITICAL(&mux_);
+  for(const auto& peer:clients_) {
+    if(peer.active && peer.connection_id==id &&
+       peer.generation==gen && peer.log_subscribed &&
+       peer.log_secured && peer.mtu>=247 && !peer.tx_aborted)
+      authorized=true;
+  }
+  portEXIT_CRITICAL(&mux_);
+  if(!authorized)return false;
+  // A previously authenticated writer is not enough: recheck the actual
+  // live encrypted/bonded link and the exact generation at every poll.
+  ble_gap_conn_desc desc{};
+  return ble_gap_conn_find(id,&desc)==0 &&
+         desc.sec_state.encrypted && desc.sec_state.bonded;
+}
 bool BleElmTransport::logPeerReady(uint16_t id,uint32_t gen) const {
-  bool subscribed=false;
+  if(!logPeerAuthorized(id,gen))return false;
+  // ASCII ELM replies/CAN diagnostics take precedence over bulk V2 logs.
+  // This is TRANSIENT backpressure, not lost subscriber authorization.
+  bool idle=false;
   portENTER_CRITICAL(&mux_);
   for(const auto& peer:clients_) {
     if(peer.active && peer.connection_id==id &&
        peer.generation==gen && peer.log_subscribed &&
        peer.log_secured && peer.mtu>=247 &&
-       !peer.pending_size && !peer.tx_aborted)subscribed=true;
+       !peer.pending_size && !peer.tx_aborted)idle=true;
   }
   portEXIT_CRITICAL(&mux_);
-  if(!subscribed)return false;
-  ble_gap_conn_desc desc{};
-  return ble_gap_conn_find(id,&desc)==0 &&
-         desc.sec_state.encrypted && desc.sec_state.bonded;
+  return idle;
 }
 #endif
 
