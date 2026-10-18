@@ -11,6 +11,14 @@ g++ -std=c++17 -Wall -Wextra -Werror \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
   "$ROOT/tests/test_raw_can_service_recovery.cpp" "$ROOT/src/raw_can_service.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-raw-service-recovery-test
+
+# Test the same generation-bound mailbox under the opt-in V2 build flags.
+# BLE connection handle 0 is valid; generation 0 must still be rejected.
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_LOG_STREAM_V2_EXPERIMENTAL=1 \\
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \\
+  "$ROOT/tests/test_raw_can_service_recovery.cpp" "$ROOT/src/raw_can_service.cpp" \\
+  "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-raw-service-v2-peer0-test
+/tmp/m5can-raw-service-v2-peer0-test
 /tmp/m5can-raw-service-recovery-test
 
 g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"   "$ROOT/tests/test_native_protocol.cpp"   "$ROOT/src/native_protocol.cpp"   "$ROOT/tests/host_stubs/stubs.cpp"   -o /tmp/m5can-native-test
