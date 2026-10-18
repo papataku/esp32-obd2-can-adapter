@@ -210,3 +210,17 @@ if g++ -std=c++17 -DM5CAN_MULTI_ECU_POLICY_DRY_BENCH=1 \
   exit 1
 fi
 echo "PASS multi-ECU compile-time fail-closed gate"
+
+
+# Verify that a new explicitly addressed test command is denied in every
+# normal firmware build, while the TX-disabled experiment parses exact inputs.
+for flags in " " "-DM5CAN_MULTI_ECU_POLICY_DRY_BENCH=1 -DM5CAN_CAN_MODE_DRY_RUN=1"; do
+  # Intentionally split local compile flag string into argv.
+  # shellcheck disable=SC2086
+  g++ -std=c++17 -Wall -Wextra -Werror $flags \
+    -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+    "$ROOT/tests/test_multi_ecu_command_dry.cpp" "$ROOT/src/elm_compat.cpp" \
+    "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+    -o /tmp/m5can-multi-ecu-command-test
+  /tmp/m5can-multi-ecu-command-test
+done
