@@ -45,11 +45,12 @@ class DryTraceJournal {
            uint32_t token=0,uint32_t can_id=0,uint32_t identity=0,
            uint16_t bytes=0,uint8_t status=0) {
     DryTraceRecord r{};
-    r.monotonic_us=static_cast<uint64_t>(esp_timer_get_time());
     r.kind=static_cast<uint8_t>(kind);
     r.conn=conn;r.generation=generation;r.token=token;
     r.can_id=can_id;r.identity=identity;r.bytes=bytes;r.status=status;
     portENTER_CRITICAL(&mux_);
+    // Stamp after taking the same lock used for ordered ring insertion.
+    r.monotonic_us=static_cast<uint64_t>(esp_timer_get_time());
     if(count_==kCapacity) {
       head_=static_cast<uint16_t>((head_+1)%kCapacity);
       ++overwritten_;
