@@ -97,6 +97,51 @@ python3 tools/validate_multi_ecu_bench_trace.py path/to/capture.jsonl
 fixtures. A real trace would report `PASS HARDWARE TRACE STRUCTURE` only
 after its schema/invariants pass; this still is **not** a release approval.
 
+
+## Independent CAN analyzer reconciliation (second, stricter gate)
+
+The event trace must not be regarded as independent evidence of real CAN
+transmission: an internal trace can report a request, FC, or success that a
+separate physical CAN analyzer never observed. Before any bench signoff,
+record an **independent analyzer export** as canonical JSONL:
+
+```json
+{"type":"capture_meta","schema":1,"lost_frames":0}
+{"t_us":12000,"can_id":"18DA02F1","data_hex":"0322201200000000","dlc":8,"extended":true,"rtr":false}
+```
+
+Every row is a Classical CAN frame observed by the external analyzer, not an
+application-generated log entry. Store the exact SHA-256 of that JSONL file
+as `capture_sha256` in the event trace metadata and preserve both files.
+`lost_frames=0` must be independently checked against the analyzer's
+interface statistics; a self-declared counter is not trustworthy by itself.
+
+Run:
+
+```bash
+python3 tools/reconcile_multi_ecu_can_capture.py \
+  capture_events.jsonl independent_can.jsonl \
+  --clock-offset-us 0 --max-skew-us 5000
+```
+
+The explicit clock offset means **independent CAN clock minus event-log clock**.
+Determine it using a shared hardware trigger or timestamp synchronization
+measurement. A loose tolerance is not proof of synchronized clocks.
+The tool verifies the canonical file's actual SHA-256, exact ordered
+CAN ID + payload + DLC + extended/RTR flags within the measured timestamp
+tolerance, and rejects **any** independently observed physical tester frame
+(`18DAxxF1`, `18DB33F1`, `18DBEFF1`) missing from the application
+TX events. In the `TX=OFF` profile, any such physical tester TX fails.
+Unrelated bus background receive frames are permitted, but a real isolated
+bench must have independently documented sole control of the tester IDs.
+
+This is a **necessary but insufficient** acceptance gate: an operator could
+construct two matching fake files, or a capture adapter could misattribute
+direction or timestamps. Independent human review must verify analyzer
+configuration, isolation, physical connection, SHA values and raw capture
+continuity. All CI fixtures are **SYNTHETIC ONLY** and never serve as real
+hardware qualification.
+
 ## Open items before independent hardware test
 
 - Design an export adapter that creates this JSONL from the actual
