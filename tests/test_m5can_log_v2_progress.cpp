@@ -56,5 +56,20 @@ int main() {
   ack.sequence=2;
   assert(sender.acknowledge(ack));
   assert(sender.completed());
+  BlockFetchWatchdog fetch;
+  assert(!fetch.expired(0));
+  fetch.arm(100);
+  fetch.arm(3000); // repeated polls cannot extend the deadline
+  assert(!fetch.expired(5099));
+  assert(fetch.expired(5100));
+  fetch.clear();
+  assert(!fetch.expired(UINT32_MAX));
+  fetch.arm(UINT32_MAX-100);
+  assert(!fetch.expired(4898));
+  assert(fetch.expired(4899));
+  fetch.clear();
+  fetch.arm(9000);
+  assert(!fetch.expired(9000));
+  assert(fetch.expired(14000));
   std::cout<<"V2 progress timer duplicate-ACK, pacing, wrap and END PASS\n";
 }
