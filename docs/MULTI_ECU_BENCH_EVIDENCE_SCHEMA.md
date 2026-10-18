@@ -111,7 +111,10 @@ record an **independent analyzer export** as canonical JSONL:
 ```
 
 Every row is a Classical CAN frame observed by the external analyzer, not an
-application-generated log entry. Store the exact SHA-256 of that JSONL file
+application-generated log entry. Retain 11-bit data frames, 29-bit data
+frames and remote (RTR) frames in their observed order; these are allowed as
+background traffic, but **diagnostic** matches must still be 29-bit data
+frames with exact payloads. Store the exact SHA-256 of that JSONL file
 as `capture_sha256` in the event trace metadata and preserve both files.
 `lost_frames=0` must be independently checked against the analyzer's
 interface statistics; a self-declared counter is not trustworthy by itself.
