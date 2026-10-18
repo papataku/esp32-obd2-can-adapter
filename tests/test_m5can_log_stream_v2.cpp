@@ -101,6 +101,22 @@ int main() {
   Frame premature{};premature.kind=Kind::End;
   premature.session=f.session;premature.sequence=10;premature.block=0;
   assert(!gate.sent(premature));
+  // Terminal journal cursor 4096 is END-only. Rejected DATA must not
+  // mutate the pending window, even if its declared block completes.
+  WindowGate terminal;
+  assert(terminal.reset(f.session,0,4096));
+  Frame terminal_data=f;terminal_data.block=4096;
+  terminal_data.total=216;terminal_data.length=216;
+  assert(!terminal.sent(terminal_data));
+  assert(terminal.nextBlock()==4096 && terminal.nextOffset()==0);
+  assert(terminal.outstanding()==0);
+  Frame terminal_end=end;terminal_end.block=4096;terminal_end.sequence=0;
+  assert(terminal.sent(terminal_end));
+  Frame terminal_ack{};terminal_ack.kind=Kind::Ack;
+  terminal_ack.session=f.session;terminal_ack.sequence=1;
+  terminal_ack.block=4096;
+  assert(terminal.acknowledge(terminal_ack));
+  assert(terminal.completeAcked());
   uint8_t invalid[244]{};
   assert(encode(f,invalid,sizeof(invalid))==244);
   invalid[6]=1;assert(!decode(invalid,244,parsed));
