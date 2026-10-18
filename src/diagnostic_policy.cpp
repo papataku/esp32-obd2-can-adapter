@@ -72,7 +72,9 @@ bool DiagnosticPolicy::responseMatches(const DiagnosticRequest& request,
   const uint8_t service = request.data[0];
 
   if (payload[0] == 0x7F) {
-    return payload_len >= 2 && payload[1] == service;
+    // UDS negative replies always include service and NRC (7F xx yy).
+    // Reject truncated 7F xx so it cannot be classified as a completed DID.
+    return payload_len >= 3 && payload[1] == service;
   }
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   if (service == 0x01 && request.length == 3 &&
