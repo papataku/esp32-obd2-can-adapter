@@ -12,10 +12,18 @@ int main() {
   ElmCompat elm;
   const auto caps = elm.execute("ATM5CAP");
   assert(caps.action == ElmAction::ReplyOnly);
-  // The legacy 1.1 capability is unchanged in both builds. Test-only command
-  // must never be advertised to production clients as a new capability.
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+  // The *only* 1.2 implementation is a passive experiment. ECU inventory
+  // cannot be confused with physical TX permission.
+  assert(std::strstr(caps.reply, "PROTO=1.2") != nullptr);
+  assert(std::strstr(caps.reply, "UDS_ECUS=01,02,06,0E,EF") != nullptr);
+  assert(std::strstr(caps.reply, "TX=OFF") != nullptr);
+#else
+  // A production firmware build advertises original 1.1 byte-for-byte.
   assert(std::strstr(caps.reply, "PROTO=1.1") != nullptr);
   assert(std::strstr(caps.reply, "UDS_ECUS=") == nullptr);
+  assert(std::strstr(caps.reply, "TX=OFF") == nullptr);
+#endif
 
   for (auto source : {"01", "02", "06", "0E", "EF"}) {
     char command[24]{};
