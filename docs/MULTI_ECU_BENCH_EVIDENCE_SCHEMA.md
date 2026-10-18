@@ -295,6 +295,57 @@ capture BLELOG separately per boot (or the indexed list first); a single
 `BLELOG,BOOT` dump contains one chosen boot, not all historical boots.
 The parser is offline only, and no new NVS writes are introduced.
 
+## New RAM-only dual-BLE request correlation (explicit DRY profile)
+
+To bridge the gap between Native CAN RX, DRIVELOG counters, and BLELOG
+generation summaries, a **strictly TX-disabled** opt-in build is available:
+
+```bash
+pio run -e m5dial_dual_ble_trace_dry_bench
+```
+
+`M5CAN_BLE_DRY_TRACE_BENCH` has a C++ compile-time guard requiring BOTH
+`M5CAN_DUAL_BLE_EXPERIMENTAL` and `M5CAN_CAN_MODE_DRY_RUN`.
+It cannot be built with the physical TWAI transmit function enabled.
+The ordinary M5Dial, multi-ECU policy and grouped CAN pilot profiles are
+unchanged.
+
+This bench-only firmware uses a bounded preallocated **128-event RAM ring**,
+with no NVS writes, allocations or USB prints in BLE callbacks. It observes
+BLE client connection `(connection_id, generation)`, accepted CAN owner
+**queue submission** (not bus TX), CAN-owner completion/status, stale owner
+rejection, BLE application-buffer queue accepted/rejected, and NimBLE
+notification API accepted/rejected with peer generation. The CAN owner
+token and read identity are only assigned to query-specific *application
+queue* events; the lower-level NimBLE API does **not** claim that a given
+notification chunk belongs to a specific request. Success of the NimBLE
+API is **not radio-level acknowledgement from the peer**.
+
+After disconnecting **all** BLE clients and stopping CAN queries, request
+`DRYTRACE` on USB CDC and preserve the complete
+`#DRYTRACE,BEGIN ... #DRYTRACE,END` section. The firmware refuses to dump
+during active traffic. Overwritten ring records are counted and must never
+be reconstructed.
+
+```bash
+python3 tools/audit_m5can_drytrace.py \
+  original_drytrace_dump.txt drytrace_audit.json
+```
+
+The auditor detects reordered/reused generations, wrong ECU owner/result
+associations, stale peer delivery-queue attempts, duplicate query tokens,
+unexpected order, buffer overwrite and incomplete queries. It **always**
+reports `DRY_RUN_SOFTWARE_TRACE_ONLY_NOT_VEHICLE_APPROVAL`, with
+`physical_can_tx_observed=false`, `independent_can_analyzer=false`,
+and `actual_ble_peer_receipt=false`.
+
+The dry-run profile cannot validate actual CAN transmit latency or response
+from a real ECU. Before real-vehicle qualification, the team still must
+design a *separate*, independently reviewed bench-only physical TX
+instrumentation with external CAN analyzer evidence, and obtain actual
+peer-side BLE receive logs with request correlation and timestamps.
+No change here authorizes physical multi-ECU transmission.
+
 ## Open items before independent hardware test
 
 - Design an export adapter that creates this JSONL from the actual
