@@ -62,6 +62,27 @@ def pair(req_id):
     return "18DAF1" + req_id[4:6]
 
 
+def raw_can_payload(event, evidence, line):
+    """For hardware evidence, derive PCI/services from actual captured bytes.
+
+    Descriptive event labels are not adequate to authenticate CAN payload
+    contents. Synthetic fixtures may omit bytes; hardware evidence may not.
+    """
+    if evidence != "hardware":
+        return None
+    value = event.get("data_hex")
+    need(isinstance(value, str) and len(value) % 2 == 0 and
+         2 <= len(value) <= 16 and
+         all(char in "0123456789ABCDEF" for char in value),
+         "hardware CAN frame needs 1-8 uppercase hex data bytes", line)
+    data = bytes.fromhex(value)
+    need(int_field(event, "dlc", line) == len(data),
+         "hardware CAN DLC does not match bytes", line)
+    need(event.get("extended") is True and event.get("rtr") is False,
+         "hardware diagnostic CAN must be 29-bit data frame", line)
+    return data
+
+
 def verify(records):
     need(bool(records), "empty trace", 1)
     meta = records[0]
@@ -137,6 +158,7 @@ def verify(records):
                  and bool(HEX4.fullmatch(did)), "only exact read-only UDS22 DID", line)
             requests[reqid] = {"can_id": can_id, "did": did,
                                "subscribers": {(conn, generation)},
+                               "delivered": set(),
                                "tx": False, "ff": False, "fc": False,
                                "cf_seq": 0, "valid": False, "finished": False,
                                "status": None}
@@ -162,14 +184,22 @@ def verify(records):
             need(reqid == active_id, "CAN TX has no matching active owner", line)
             r = requests[reqid]
             need(e.get("can_id") == r["can_id"], "CAN TX to wrong ECU", line)
+            raw = raw_can_payload(e, evidence, line)
             frame = e.get("frame")
             need(frame in {"request", "fc"}, "only UDS22 request/FC TX allowed", line)
             if frame == "request":
                 need(not r["tx"], "duplicate diagnostic request TX", line)
+                if raw is not None:
+                    expected = bytes([3, 0x22]) + bytes.fromhex(r["did"])
+                    need(len(raw) == 8 and raw[:4] == expected,
+                         "TX bytes are not exact UDS22 DID request", line)
                 r["tx"] = True
             else:
                 need(r["tx"] and r["ff"] and not r["fc"],
                      "Flow Control without matching first frame", line)
+                if raw is not None:
+                    need(len(raw) == 8 and raw[:3] == b"\\x30\\x00\\x00",
+                         "FC bytes are not 30 00 00", line)
                 r["fc"] = True
                 counts["fc"] += 1
             counts["can_tx"] += 1
@@ -180,6 +210,30 @@ def verify(records):
                  "invalid received CAN ID", line)
             need(e.get("pci") in {"sf", "ff", "cf"},
                  "invalid/missing ISO-TP PCI label", line)
+            raw = raw_can_payload(e, evidence, line)
+            if raw is not None:
+                pci_type = {"sf": 0, "ff": 1, "cf": 2}[e["pci"]]
+                need(raw[0] >> 4 == pci_type,
+                     "PCI type label differs from captured CAN bytes", line)
+                if pci_type in {0, 1}:
+                    start = 1 if pci_type == 0 else 2
+                    need(len(raw) >= start + 3,
+                         "CAN positive response too short", line)
+                    if pci_type == 0:
+                        need((raw[0] & 0x0F) >= 3,
+                             "single-frame payload length too short", line)
+                    else:
+                        need(len(raw) == 8 and
+                             ((raw[0] & 0x0F) << 8 | raw[1]) > 7,
+                             "invalid first-frame total length", line)
+                    need(raw[start] == 0x62 and
+                         raw[start+1:start+3].hex().upper() == e.get("did") and
+                         e.get("service") == "62",
+                         "response service/DID label differs from CAN bytes", line)
+                else:
+                    need(len(raw) >= 2 and
+                         (raw[0] & 0x0F) == e.get("seq"),
+                         "CF sequence label differs from CAN bytes", line)
             if active_id is None or can_id != pair(requests[active_id]["can_id"]):
                 counts["foreign_rx"] += 1
                 continue
@@ -196,9 +250,11 @@ def verify(records):
                 else:
                     r["ff"] = True
             else:
-                seq = int_field(e, "seq", line, 1)
+                seq = int_field(e, "seq", line, 0)
+                need(seq <= 15, "ISO-TP CF sequence must be a 4-bit value", line)
                 need(r["ff"] and r["fc"], "CF without matching FF and FC", line)
-                need(seq == r["cf_seq"] + 1, "CF sequence gap/duplicate", line)
+                need(seq == (r["cf_seq"] + 1) % 16,
+                     "CF sequence gap/duplicate", line)
                 r["cf_seq"] = seq
                 need(type(e.get("complete")) is bool, "CF complete flag required", line)
                 if e["complete"]:
@@ -234,8 +290,11 @@ def verify(records):
                  "BLE delivery to disconnected or reused generation", line)
             need((conn, generation) in r["subscribers"],
                  "BLE delivery to a peer not subscribed to this request", line)
+            need((conn, generation) not in r["delivered"],
+                 "duplicate BLE delivery for one request/generation", line)
             need(e.get("status") == r["status"],
                  "BLE delivery mismatches transaction result", line)
+            r["delivered"].add((conn, generation))
             counts["delivered"] += 1
 
         else:
