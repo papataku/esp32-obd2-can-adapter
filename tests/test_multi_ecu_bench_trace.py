@@ -62,6 +62,30 @@ def standard():
     ]
 
 
+def hardware_trace():
+    result = standard()
+    result[0]["evidence"] = "hardware"
+    result[0]["capture_sha256"] = "b" * 64
+    result[0]["observer"] = "Isolated CAN bench QA witness"
+    result[0]["interface"] = "independent extended CAN analyzer"
+    raw_by_index = {
+        5: "0322201200000000",  # ECU02 read DID2012
+        6: "100A622012010203",  # unrelated ECU06 FF
+        7: "100A622012010203",  # matching ECU02 FF
+        8: "3000000000000000",  # FC to ECU02
+        9: "21DEADBEEF000000",  # unrelated ECU06 CF
+        10: "21DEADBEEF000000",  # matching ECU02 CF
+        17: "0322201200000000", # ECU06 read DID2012
+        18: "04622012AA000000", # matching ECU06 SF
+    }
+    for idx, data_hex in raw_by_index.items():
+        result[idx]["data_hex"] = data_hex
+        result[idx]["dlc"] = 8
+        result[idx]["extended"] = True
+        result[idx]["rtr"] = False
+    return result
+
+
 def passive():
     return [
         meta(profile="passive_tx_off"),
@@ -186,7 +210,44 @@ class BenchEvidenceValidationTests(unittest.TestCase):
         self.fails(data, "observer and interface")
         data[0]["observer"] = "Independent test operator"
         data[0]["interface"] = "isolated test CAN analyzer"
-        self.assertEqual(verify(data)["evidence"], "hardware")
+        self.fails(data, "hardware CAN frame needs")
+        self.assertEqual(verify(hardware_trace())["evidence"], "hardware")
+
+    def test_raw_can_bytes_are_verified_not_just_labels(self):
+        data = hardware_trace()
+        self.assertEqual(verify(data)["fc"], 1)
+        data[7]["data_hex"] = "100A622013010203"
+        self.fails(data, "response service/DID label differs from CAN bytes")
+        data = hardware_trace()
+        data[8]["data_hex"] = "3100000000000000"
+        self.fails(data, "FC bytes are not 30 00 00")
+        data = hardware_trace()
+        data[5]["data_hex"] = "032E201200000000"
+        self.fails(data, "TX bytes are not exact UDS22")
+        data = hardware_trace()
+        data[10]["data_hex"] = "22DEADBEEF000000"
+        self.fails(data, "CF sequence label differs")
+        data = hardware_trace()
+        data[18]["dlc"] = 7
+        self.fails(data, "DLC does not match")
+
+    def test_iso_tp_cf_sequence_wraps_after_15(self):
+        # 16 CFs: ISO-TP sequence wraps 1..15,0, never 16.
+        data = standard()[:10]
+        for number in range(1, 17):
+            data.append(event(16 + number, "can_rx",
+                              can_id="18DAF102", pci="cf",
+                              seq=number % 16, complete=number == 16))
+        data.append(event(33, "request_finish", id="r02", status="ok"))
+        data.append(event(34, "ble_deliver", id="r02", conn=7,
+                          generation=1, status="ok"))
+        self.assertEqual(verify(data)["delivered"], 1)
+
+    def test_duplicate_ble_delivery_rejected(self):
+        data = standard()
+        data.insert(13, event(19, "ble_deliver", id="r02", conn=7,
+                              generation=1, status="ok"))
+        self.fails(data, "duplicate BLE delivery")
 
     def test_invalid_or_unknown_schema_never_falls_back(self):
         for bad_key, bad_value in [("schema", 2), ("profile", "vehicle"),
