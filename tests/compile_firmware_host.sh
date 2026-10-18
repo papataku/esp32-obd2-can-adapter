@@ -252,3 +252,10 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -o /tmp/m5can-log-stream-v2-gatt-test
 /tmp/m5can-log-stream-v2-gatt-test
 echo "PASS V2 isolated GATT START/ACK wire compatibility and corruption checks"
+
+# V2 ACK timeout: slow two-peer notification pacing, duplicate ACK,
+# wraparound and END readback deadline must not cause premature rewind.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_v2_progress.cpp" \
+  -o /tmp/m5can-log-v2-progress-test
+/tmp/m5can-log-v2-progress-test

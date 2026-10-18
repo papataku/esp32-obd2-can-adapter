@@ -9,6 +9,7 @@
 #include "diagnostic_pid_cache.h"
 #if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
 #include "m5can_log_stream_v2_sender.h"
+#include "m5can_log_v2_progress.h"
 #include "m5can_log_stream_v2_gatt.h"
 #endif
 
@@ -92,7 +93,7 @@ class DualBleElm {
   m5can_log_stream_v2::BlockSender log_stream_sender_{};
   uint16_t log_stream_peer_=0;
   uint32_t log_stream_generation_=0;
-  uint32_t log_stream_progress_ms_=0;
+  m5can_log_stream_v2::ProgressWatchdog log_stream_progress_{};
   bool log_stream_active_=false,log_stream_fetch_pending_=false;
 #endif
   AdaptiveMultiPid adaptive_multi_pid_{};

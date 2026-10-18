@@ -841,12 +841,14 @@ void DualBleElm::pollLogV2() {
       log_stream_generation_=control.generation;
       log_stream_active_=true;
       log_stream_fetch_pending_=false;
-      log_stream_progress_ms_=millis();
+      log_stream_progress_.reset(millis());
     } else if(request.kind==m5can_log_stream_v2::ControlKind::Ack) {
       if(!log_stream_active_ || control.peer!=log_stream_peer_ ||
          control.generation!=log_stream_generation_)continue;
+      const uint32_t previous=log_stream_sender_.durableSequence();
       if(log_stream_sender_.acknowledge(request.ack))
-        log_stream_progress_ms_=millis();
+        log_stream_progress_.noteAck(previous,
+            log_stream_sender_.durableSequence(),millis());
     }
   }
   if(!log_stream_active_)return;
@@ -873,7 +875,7 @@ void DualBleElm::pollLogV2() {
       log_stream_active_=false;
       return;
     }
-    log_stream_progress_ms_=millis();
+    log_stream_progress_.reset(millis());
   }
   if(log_stream_sender_.completed()) {
     log_stream_active_=false;return;
@@ -893,6 +895,9 @@ void DualBleElm::pollLogV2() {
     if(!log_stream_sender_.queued()) {
       log_stream_sender_.cancel();log_stream_active_=false;return;
     }
+    // The 16-frame window may need >1.2s under fair two-peer QoS.
+    // Time the durable ACK from the LAST accepted notification.
+    log_stream_progress_.noteNotification(millis());
   }
   // Withhold credit indefinitely only until a bounded ACK deadline.
   // Retransmission reconstructs the original immutable staged block.
@@ -901,10 +906,10 @@ void DualBleElm::pollLogV2() {
   const uint32_t ack_deadline_ms=
       log_stream_sender_.awaitingFinalAck()?30000U:1200U;
   if(log_stream_sender_.outstanding() &&
-     static_cast<uint32_t>(millis()-log_stream_progress_ms_)>=ack_deadline_ms) {
+     log_stream_progress_.elapsed(millis(),ack_deadline_ms)) {
     if(!log_stream_sender_.retryUnacked()) {
       log_stream_sender_.cancel();log_stream_active_=false;
-    } else log_stream_progress_ms_=millis();
+    } else log_stream_progress_.reset(millis());
   }
 }
 #endif
