@@ -249,3 +249,25 @@ Do not tear down protocol state in a diagnostics callback or silently map host
 reason integers to8-bit HCI codes. Preserve raw namespace/sequence/drop data.
 USB startup resets and intended client disconnects are separate from failures.
 See docs/issue21_tri_device/README.md; physical fixes require separate evidence.
+
+
+## D020 - Multi-ECU UDS22 routing is only enabled with physical CAN TX disabled
+
+**Decision (2026-10-18):** The production physical-address whitelist remains
+ECU01 only. ECU02/06/0E/EF, observed in RP8 response inventories, are eligible
+for a host ISO-TP routing *experiment* but not for real CAN diagnostic TX.
+
+A separately selected `M5CAN_MULTI_ECU_POLICY_DRY_BENCH` build may expand
+the whitelist only if `M5CAN_CAN_MODE_DRY_RUN` is also defined, so physical
+TWAI transmit calls are compiled out. The compiler must reject the experiment
+flag without the dry-run flag. The exact request `18DAxxF1` must pair only
+with response `18DAF1xx`. An unrelated First Frame must never trigger FC.
+
+**Rationale:** 2026-10-18 iPad sessions proved the legacy adapter rejected
+other ECU addresses locally with `?`. They did not establish which vehicle
+DIDs exist. Transport ownership, address matching, and safety tests must
+precede an independently reviewed opt-in capability/protocol extension.
+
+No change to legacy `ATM5CAP PROTO=1.1` or `ATM5B01` is permitted by this
+decision; no unsafe diagnostic TX is introduced. See
+`docs/MULTI_ECU_UDS22_DRY_BENCH.md`.

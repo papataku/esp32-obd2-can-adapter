@@ -188,3 +188,25 @@ g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-tx-flow-test
 /tmp/m5can-tx-flow-test
 echo "PASS bounded BLE output, fairness, pool reserve, exact recovery, generation, overflow and stall"
+
+
+# Phase A multi-ECU physical UDS22 policy: extra addresses are only
+# compiled for a CAN-TX-disabled build. Verify both positive and negative gates.
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -DM5CAN_MULTI_ECU_POLICY_DRY_BENCH=1 -DM5CAN_CAN_MODE_DRY_RUN=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_multi_ecu_policy_dry.cpp" \
+  "$ROOT/src/diagnostic_transaction.cpp" "$ROOT/src/isotp_reassembler.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-multi-ecu-dry-test
+/tmp/m5can-multi-ecu-dry-test
+
+# Compile-time safety interlock must reject expanded physical ECU policy
+# if even a hypothetical build omits the physical-TX-disabled configuration.
+if g++ -std=c++17 -DM5CAN_MULTI_ECU_POLICY_DRY_BENCH=1 \
+    -I"$ROOT/tests/host_stubs" -I"$ROOT/src" \
+    -fsyntax-only "$ROOT/src/diagnostic_policy.cpp" >/dev/null 2>&1; then
+  echo "FAIL expanded ECU policy compiled without CAN TX disabled" >&2
+  exit 1
+fi
+echo "PASS multi-ECU compile-time fail-closed gate"
