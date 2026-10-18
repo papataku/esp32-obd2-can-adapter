@@ -34,6 +34,93 @@ static TransactionFrame frame(uint32_t id, uint64_t micros,
   return f;
 }
 
+
+static void testAbnormalTraffic(uint32_t header,
+                                uint32_t reply, uint32_t otherReply) {
+  const auto request = readDid(header);
+  DiagnosticTransaction tx;
+
+  // A stale frame or an unrelated ECU's negative response never belongs to us.
+  tx.begin(request, 1'000'000);
+  auto step = tx.onFrame(frame(reply, 999'999, {0x03, 0x7F, 0x22, 0x31}));
+  assert(step.event == TransactionEvent::Ignored);
+  step = tx.onFrame(frame(otherReply, 1'000'001, {0x03, 0x7F, 0x22, 0x78}));
+  assert(step.event == TransactionEvent::Ignored);
+  assert(tx.result().raw_frame_count == 0);
+
+  // NRC 0x78 is pending from our ECU, not a completed usable DID.
+  step = tx.onFrame(frame(reply, 1'000'010, {0x03, 0x7F, 0x22, 0x78}));
+  assert(step.event == TransactionEvent::ResponsePending);
+  assert(step.flow_control_can_id == 0);
+  assert(tx.result().response_count == 0);
+
+  // Another tester's 7F with the wrong service must be ignored.
+  step = tx.onFrame(frame(reply, 1'000'020, {0x03, 0x7F, 0x2E, 0x31}));
+  assert(step.event == TransactionEvent::Ignored);
+  step = tx.onFrame(frame(reply, 1'000'030, {0x03, 0x7F, 0x22, 0x31}));
+  assert(step.event == TransactionEvent::Completed);
+  assert(step.flow_control_can_id == 0);
+  assert(tx.result().responses[0].can_id == reply);
+
+  // Too-small, too-large and malformed FFs must not emit Flow Control.
+  tx.begin(request, 2'000'000);
+  for (auto length : {0x07, 0x61}) {
+    const auto firstFrame = frame(reply, 2'000'010,
+        {0x10, static_cast<uint8_t>(length), 0x62, 0x20, 0x12, 1, 2, 3});
+    step = tx.onFrame(firstFrame);
+    assert(step.event == TransactionEvent::ProtocolError);
+    assert(step.flow_control_can_id == 0);
+    assert(!tx.hasActiveIsoTp());
+    tx.begin(request, 2'000'000);
+  }
+  auto standardFrame = frame(reply, 2'000'030,
+                             {0x10, 0x0A, 0x62, 0x20, 0x12, 1, 2, 3});
+  standardFrame.extended = false;
+  assert(tx.onFrame(standardFrame).event == TransactionEvent::Ignored);
+  standardFrame.extended = true;
+  standardFrame.rtr = true;
+  assert(tx.onFrame(standardFrame).event == TransactionEvent::Ignored);
+  assert(!tx.hasActiveIsoTp());
+
+  // Strict CF sequence checking and no old result carried into next request.
+  tx.begin(request, 3'000'000);
+  step = tx.onFrame(frame(reply, 3'000'010,
+                          {0x10, 0x0A, 0x62, 0x20, 0x12, 1, 2, 3}));
+  assert(step.event == TransactionEvent::NeedFlowControl);
+  assert(step.flow_control_can_id == header);
+  step = tx.onFrame(frame(reply, 3'000'020, {0x22, 4, 5, 6, 7}));
+  assert(step.event == TransactionEvent::ProtocolError);
+  assert(step.flow_control_can_id == 0);
+  assert(!tx.hasActiveIsoTp());
+  tx.begin(request, 3'100'000);
+  assert(tx.result().response_count == 0);
+  assert(tx.result().raw_frame_count == 0);
+  assert(tx.onFrame(frame(reply, 3'100'010, {0x21, 4, 5, 6, 7})).event ==
+         TransactionEvent::Ignored);
+
+  // A timed-out FF must not accept late CFs or issue another FC.
+  tx.begin(request, 4'000'000);
+  step = tx.onFrame(frame(reply, 4'000'010,
+                          {0x10, 0x0A, 0x62, 0x20, 0x12, 1, 2, 3}));
+  assert(step.event == TransactionEvent::NeedFlowControl);
+  assert(tx.expireIsoTp(4'200'000) == 1);
+  assert(!tx.hasActiveIsoTp());
+  step = tx.onFrame(frame(reply, 4'200'010, {0x21, 4, 5, 6, 7}));
+  assert(step.event == TransactionEvent::Ignored);
+  assert(step.flow_control_can_id == 0);
+
+  // A second matching FF during an active assembly is a collision, never FC.
+  tx.begin(request, 5'000'000);
+  const auto ff = frame(reply, 5'000'010,
+                        {0x10, 0x0A, 0x62, 0x20, 0x12, 1, 2, 3});
+  assert(tx.onFrame(ff).event == TransactionEvent::NeedFlowControl);
+  step = tx.onFrame(frame(reply, 5'000'020,
+                          {0x10, 0x0A, 0x62, 0x20, 0x12, 1, 2, 3}));
+  assert(step.event == TransactionEvent::ProtocolError);
+  assert(step.flow_control_can_id == 0);
+  assert(!tx.hasActiveIsoTp());
+}
+
 int main() {
   const uint32_t headers[] = {
     0x18DA01F1U, 0x18DA02F1U, 0x18DA06F1U,
@@ -101,6 +188,7 @@ int main() {
     assert(transaction.result().responses[0].can_id == expectedReply);
     assert(transaction.result().responses[0].length == 10);
     assert(!transaction.hasActiveIsoTp());
+    testAbnormalTraffic(headers[i], expectedReply, unrelatedReply);
   }
 
   // A single wildcard can never slip into the experimental whitelist.
