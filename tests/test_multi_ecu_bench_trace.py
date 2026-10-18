@@ -231,6 +231,44 @@ class BenchEvidenceValidationTests(unittest.TestCase):
         data[18]["dlc"] = 7
         self.fails(data, "DLC does not match")
 
+    def test_hardware_ff_size_and_cf_completion_are_derived(self):
+        data = hardware_trace()
+        self.assertEqual(verify(data)["delivered"], 3)
+        data[7]["data_hex"] = "1061622012010203"  # 97 > 96-byte buffer
+        self.fails(data, "first-frame declared payload length outside buffer")
+
+        data = hardware_trace()
+        data[7]["data_hex"] = "1050622012010203"  # needs more than one CF
+        self.fails(data, "claimed CF complete differs from ISO-TP byte count")
+
+        data = hardware_trace()
+        data[10]["data_hex"] = "21DE"  # fewer than remaining 4 bytes
+        data[10]["dlc"] = 2
+        self.fails(data, "consecutive frame payload incomplete")
+
+        data = hardware_trace()
+        data[10]["complete"] = False  # bytes already satisfy length 10
+        self.fails(data, "claimed CF complete differs from ISO-TP byte count")
+
+        data = hardware_trace()
+        data[10]["t_us"] = 100_014  # 100ms since FF timestamp 14
+        for record in data[11:]:
+            record["t_us"] += 100_000
+        self.fails(data, "consecutive frame arrived after ISO-TP deadline")
+
+        data = hardware_trace()
+        data.insert(11, event(17, "can_rx", can_id="18DAF102", pci="cf",
+                              seq=2, complete=True, data_hex="2201020304050607",
+                              dlc=8, extended=True, rtr=False))
+        self.fails(data, "consecutive frame after complete payload")
+
+    def test_hardware_short_sf_pci_is_not_claimed_complete(self):
+        data = hardware_trace()
+        data[18]["data_hex"] = "07622012AA000000"  # claims 7 bytes
+        self.assertEqual(verify(data)["delivered"], 3)
+        data[18]["data_hex"] = "08622012AA000000"  # impossible SF length
+        self.fails(data, "single-frame payload incomplete")
+
     def test_iso_tp_cf_sequence_wraps_after_15(self):
         # 16 CFs: ISO-TP sequence wraps 1..15,0, never 16.
         data = standard()[:10]
