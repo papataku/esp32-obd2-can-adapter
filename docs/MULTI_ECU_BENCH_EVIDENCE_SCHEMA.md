@@ -69,6 +69,14 @@ sequence from the raw bytes rather than trusting provided string labels;
 it checks exact eight-byte UDS22 request and FC framing, DLC, and 29-bit
 data-frame flags. The CF sequence may wrap from 15 to 0. One BLE
 connection generation may receive at most one output per request.
+When hardware bytes are provided, the verifier also checks the first-frame
+declared length against the firmware's **96-byte** diagnostic buffer,
+reconstructs the received payload length (6 initial bytes + up to 7 per
+Consecutive Frame), rejects a premature or false `complete` label, and
+rejects any matching CF arriving **100,000 microseconds or more after** the
+previous matching FF/CF. This mirrors the default `IsoTpAssembler` deadline.
+If firmware changes its timeout/buffer policy, the schema and tests must
+be reviewed and versioned together.
 
 The source/provenance fields are still **declared provenance only**. The
 checker does not authenticate who took a capture or independently prove
