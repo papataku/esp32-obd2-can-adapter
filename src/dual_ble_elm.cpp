@@ -72,6 +72,7 @@ void DualBleElm::event(const BleClientEvent& event) {
        log_stream_generation_==s->generation) {
       log_stream_sender_.cancel();
       log_stream_active_=log_stream_fetch_pending_=false;
+      log_stream_fetch_watchdog_.clear();
     }
 #endif
 #if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
@@ -841,6 +842,7 @@ void DualBleElm::pollLogV2() {
       log_stream_generation_=control.generation;
       log_stream_active_=true;
       log_stream_fetch_pending_=false;
+      log_stream_fetch_watchdog_.clear();
       log_stream_progress_.reset(millis());
     } else if(request.kind==m5can_log_stream_v2::ControlKind::Ack) {
       if(!log_stream_active_ || control.peer!=log_stream_peer_ ||
@@ -856,28 +858,47 @@ void DualBleElm::pollLogV2() {
      log_stream_sender_.failed()) {
     log_stream_sender_.cancel();
     log_stream_active_=log_stream_fetch_pending_=false;
+    log_stream_fetch_watchdog_.clear();
     return;
+  }
+  // A Flash mailbox request can be rejected or never answered. Retrying it
+  // must not defer a bounded 5-second deadline or destroy the source journal.
+  if(log_stream_sender_.needsBlock()) {
+    const uint32_t now=millis();
+    log_stream_fetch_watchdog_.arm(now);
+    if(log_stream_fetch_watchdog_.expired(now)) {
+      log_stream_sender_.cancel();
+      log_stream_active_=log_stream_fetch_pending_=false;
+      log_stream_fetch_watchdog_.clear();
+      return;
+    }
   }
   // A single flash-owning Arduino-loop poll produces verified staging.
   // No GATT callback, BLE worker or TWAI ISR touches journal flash.
   static RawCanRecordingService::StreamBlockReply received{};
   if(raw_service_->takeStreamBlockForBle(received)) {
-    log_stream_fetch_pending_=false;
-    if(received.peer!=log_stream_peer_ ||
-       received.generation!=log_stream_generation_ ||
-       received.index!=log_stream_sender_.expectedBlock() ||
-       received.error ||
-       !log_stream_sender_.stage(
-         static_cast<uint16_t>(received.index),
-         received.total?received.bytes:nullptr,
-         received.total,received.type==2)) {
-      log_stream_sender_.cancel();
-      log_stream_active_=false;
-      return;
+    // Stale mailbox replies from a prior connection generation are harmless:
+    // consume them without resetting the new session's deadline or sender.
+    if(received.peer==log_stream_peer_ &&
+       received.generation==log_stream_generation_ &&
+       received.index==log_stream_sender_.expectedBlock()) {
+      log_stream_fetch_pending_=false;
+      if(received.error ||
+         !log_stream_sender_.stage(
+             static_cast<uint16_t>(received.index),
+             received.total?received.bytes:nullptr,
+             received.total,received.type==2)) {
+        log_stream_sender_.cancel();
+        log_stream_active_=false;
+        log_stream_fetch_watchdog_.clear();
+        return;
+      }
+      log_stream_fetch_watchdog_.clear();
+      log_stream_progress_.reset(millis());
     }
-    log_stream_progress_.reset(millis());
   }
   if(log_stream_sender_.completed()) {
+    log_stream_fetch_watchdog_.clear();
     log_stream_active_=false;return;
   }
   if(log_stream_sender_.needsBlock() && !log_stream_fetch_pending_) {
