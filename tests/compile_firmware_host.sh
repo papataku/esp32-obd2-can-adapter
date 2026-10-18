@@ -236,3 +236,11 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -o /tmp/m5can-stream-roundtrip-test
 /tmp/m5can-stream-roundtrip-test
 echo "PASS deterministic 64KiB windowed stream loss/corruption recovery simulation"
+
+# Full committed-journal DATA/END sender packetization, ACK credit and fault
+# injection. Independent of BLE or flash: the production GATT path is not on.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_stream_v2_sender.cpp" \
+  -o /tmp/m5can-stream-sender-test
+/tmp/m5can-stream-sender-test
+echo "PASS V2 immutable-journal staged sender and SD-durable receipt simulation"
