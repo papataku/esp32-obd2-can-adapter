@@ -219,6 +219,18 @@ ElmResult ElmCompat::execute(const char* command) {
     return result;
   }
 #if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+  // Only an explicitly requested offline schema shows the future wire
+  // contract. The normal ATM5CAP response remains PROTO=1.1 even here.
+  // TX=DISABLED means this schema must NEVER authorize a host to issue
+  // vehicle requests. Physical TWAI remains Listen-Only in this build.
+  if (!std::strcmp(cmd, "ATM5CAPD")) {
+    std::snprintf(result.reply, sizeof(result.reply),
+                  "M5CAN-CAPS PROTO=1.2 FW=%s BATCH=16 "
+                  "OPS=OBD01,UDS22 STREAM=0 LEASE=IMPLICIT "
+                  "UDS_ECUS=01,02,06,0E,EF ROUTE=R12 TX=DISABLED",
+                  cfg::kFirmwareVersion);
+    return result;
+  }
   // Phase B parser experiment, TX API compiled out. No real CAN requests.
   // Strict fixed-length routing: ATM5R12:<ECU>:<DID>, e.g. ATM5R12:02:2012.
   // This is NOT advertised via ATM5CAP, nor enabled in production firmware.
