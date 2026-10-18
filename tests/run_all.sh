@@ -19,4 +19,5 @@ PYTHONPATH=tools python3 tests/test_import_candump_independent_can.py
 # Strict import of the *device-side* Native COBS RX stream. Do not mistake
 # it for a physically independent CAN analyzer observation.
 PYTHONPATH=tools python3 tests/test_import_m5can_native_capture.py
+PYTHONPATH=tools python3 tests/test_audit_m5can_drivelog.py
 python3 -m compileall -q tools tests
