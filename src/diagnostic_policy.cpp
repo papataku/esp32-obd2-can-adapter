@@ -1,12 +1,33 @@
 #include "diagnostic_policy.h"
 
+// The expanded policy is ONLY valid in a build where physical TWAI TX is
+// compiled out. Deliberately prevent a build-flag accident from authorizing
+// an expanded address set in vehicle firmware.
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH) && !defined(M5CAN_CAN_MODE_DRY_RUN)
+#error "Multi-ECU physical address policy requires CAN TX disabled"
+#endif
+
 namespace m5can {
+namespace {
+
+bool isApprovedPhysicalUDSAddress(uint32_t can_id) {
+  if (can_id == 0x18DA01F1U) return true;
+#if defined(M5CAN_MULTI_ECU_POLICY_DRY_BENCH)
+  // Seen as responders in RP8 traces, not verified for physical UDS22.
+  // This is a dry-run routing/ISO-TP test allowlist, not vehicle permission.
+  return can_id == 0x18DA02F1U || can_id == 0x18DA06F1U ||
+         can_id == 0x18DA0EF1U || can_id == 0x18DAEFF1U;
+#else
+  return false;
+#endif
+}
+
+}  // namespace
 
 bool DiagnosticPolicy::allowedHeader(uint32_t can_id) {
-  // Only the physically observed ECU 01 is enabled in this phase.
-  // No arbitrary 18DAxxF1 header or unrestricted diagnostic TX.
+  // No generic 18DAxxF1 wildcard: each physical ECU is explicitly reviewed.
   return can_id == 0x18DB33F1U || can_id == 0x18DBEFF1U ||
-         can_id == 0x18DA01F1U;
+         isApprovedPhysicalUDSAddress(can_id);
 }
 
 bool DiagnosticPolicy::allowedReadRequest(const DiagnosticRequest& request) {
@@ -17,8 +38,8 @@ bool DiagnosticPolicy::allowedReadRequest(const DiagnosticRequest& request) {
       request.length == 3 && request.data[0] == 0x01 &&
       request.data[1] == 0x0C && request.data[2] == 0x0D) return true;
 #endif
-  if (request.can_id == 0x18DA01F1U) {
-    // The narrowly-scoped physical address is UDS 0x22 read only.
+  if (isApprovedPhysicalUDSAddress(request.can_id)) {
+    // Every explicitly approved physical address is UDS 0x22 read only.
     return request.length == 3 && request.data[0] == 0x22;
   }
   if (request.length == 2 &&
@@ -35,9 +56,11 @@ bool DiagnosticPolicy::allowedResponseId(uint32_t can_id) {
 bool DiagnosticPolicy::responseBelongsToRequest(
     const DiagnosticRequest& request, uint32_t response_can_id) {
   if (!allowedResponseId(response_can_id)) return false;
-  if (request.can_id == 0x18DA01F1U) {
-    // Never accept another ECU's response or send it Flow Control.
-    return response_can_id == 0x18DAF101U;
+  if (isApprovedPhysicalUDSAddress(request.can_id)) {
+    // Exact 29-bit normal fixed-address pairing. Ignore unrelated testers,
+    // including a FF: they must never receive our ISO-TP Flow Control.
+    const uint32_t ecu = (request.can_id >> 8) & 0xFFU;
+    return response_can_id == (0x18DAF100U | ecu);
   }
   return allowedHeader(request.can_id);
 }
