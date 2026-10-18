@@ -94,6 +94,7 @@ int main() {
       }
     }
   }
+  assert(!sender.awaitingFinalAck());
   assert(sender.completed() && !sender.failed());
   assert(receiver.complete() && receiver.block()==kBlocks-1);
   assert(actual==expected);
