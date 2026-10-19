@@ -1,4 +1,5 @@
 #include "../src/m5can_log_stream_v2_sender.h"
+#include "../src/m5can_log_v2_peer_policy.h"
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -105,6 +106,56 @@ int main() {
   assert(sender.begin(0x12345678,2)); // new bounded session resets complete
   assert(!sender.completed() && sender.needsBlock());
   sender.cancel();assert(sender.failed() && !sender.needsBlock());
+
+  // The runtime may submit at most 3 eligible notifications on each BLE
+  // application tick. The sender must be able to consume successive credits
+  // without changing sequence/offset, jumping a block, or releasing durable
+  // storage early. This is an instantaneous-memory-ACK model, not RF timing.
+  static_assert(PeerQosPolicy::kMaxLogFramesPerPoll==3,
+                "bounded three-frame host-credit burst expected");
+  BlockSender fast{};
+  VerifiedCursor stored{};
+  constexpr uint32_t kFastSession=0xC0FFEE11U;
+  std::array<uint8_t,kMaxBlockBytes> test_block{};
+  for(size_t i=0;i<test_block.size();++i)
+    test_block[i]=static_cast<uint8_t>((i*37+13)&255);
+  assert(fast.begin(kFastSession,2));
+  assert(stored.reset(kFastSession));
+  assert(fast.stage(0,test_block.data(),test_block.size()));
+  unsigned polls=0,fast_packets=0,fast_bytes=0;
+  while(!fast.completed() && polls<12) {
+    ++polls;
+    if(fast.needsBlock()) {
+      assert(stored.block()==1);
+      assert(fast.stage(1,nullptr,0,true));
+    }
+    unsigned accepted=0;
+    for(;accepted<PeerQosPolicy::kMaxLogFramesPerPoll;++accepted) {
+      std::array<uint8_t,kMaxNotification> packet{};
+      const size_t count=fast.peek(packet.data(),packet.size());
+      if(!count)break;
+      Frame received{};
+      assert(decode(packet.data(),count,received));
+      assert(received.sequence==fast_packets);
+      assert(fast.queued());
+      assert(stored.check(received)==VerifiedCursor::Check::Next);
+      if(received.kind==Kind::Data) {
+        for(size_t i=0;i<received.length;++i)
+          assert(received.data[i]==test_block[fast_bytes+i]);
+        fast_bytes+=received.length;
+      }
+      assert(stored.verified(received));
+      ++fast_packets;
+    }
+    assert(accepted<=PeerQosPolicy::kMaxLogFramesPerPoll);
+    if(fast.outstanding())
+      assert(fast.acknowledge(stored.ack()));
+  }
+  assert(fast.completed() && fast_packets==18);
+  assert(fast_bytes==test_block.size() && polls<=8);
+  std::cout<<"V2 bounded 3-frame burst FIFO/END/SD-ACK model PASS polls="
+           <<polls<<" frames="<<fast_packets<<"\\n";
+
   std::cout<<"journal V2 sender staged/SD-ACK/loss/corruption PASS bytes="
            <<actual.size()<<" dropped="<<dropped<<" corrupted="<<corrupted
            <<" rewind="<<rewinds<<"\n";
