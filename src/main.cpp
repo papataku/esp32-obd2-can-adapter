@@ -115,7 +115,7 @@ void setup() {
 #if defined(M5CAN_LOG_V2_ALLOWED_PEER_ID48)
   allowlisted=1;
 #endif
-  Serial.printf("#V2,compiled=1,gatt_init=%u,peer_allowlisted=%u,canlog_ready=%u,blocks=%lu,window=16,mtu_req=247\\n",
+  Serial.printf("#V2,compiled=1,gatt_init=%u,peer_allowlisted=%u,canlog_ready=%u,blocks=%lu,window=16,mtu_req=247\n",
       g_ble_ok?1U:0U,allowlisted,g_raw.ready()?1U:0U,
       static_cast<unsigned long>(m5can::rawCanJournal().status().blocks));
 #endif
