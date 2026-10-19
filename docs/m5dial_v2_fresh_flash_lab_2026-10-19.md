@@ -50,6 +50,14 @@ python tools/check_single_app_canlog_partition.py \
 shasum -a 256 .pio/build/m5dial_v2_fresh_flash_lab/{firmware.bin,firmware.elf,partitions.bin}
 ```
 
+For provisioning, the *opt-in lab T4-S3 firmware* now prints
+`#V2_T4_LOCAL_ID=AA:BB:CC:DD:EE:FF,addr_type=...` to its own local USB
+serial console (Meter PR #125). Verify that it is the exact BLE identity
+resolved by M5Dial for the bonded client before using it as the value of
+`M5CAN_LOG_V2_ALLOWED_PEER_ID48`. If the identity differs, stop rather
+than allowing a generic newly paired peer. The local identifier must not be
+posted to public PRs or issue comments.
+
 The example `0xAABB...` is NOT an approved device identity. Build-time
 validation checks the value's syntax but **cannot verify ownership**.
 A changed/rotating BLE address, mismatched identity or absent bonding must
