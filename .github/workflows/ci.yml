@@ -58,6 +58,31 @@ jobs:
           test -s .pio/build/m5dial_v2_authenticated_lab/firmware.bin
           # This is a synthetic CI identity and must NEVER be deployed.
           rm -f .pio/build/m5dial_v2_authenticated_lab/firmware.bin
+      - name: Reject fresh-install V2 build without whole-flash erase acknowledgement
+        env:
+          M5CAN_LOG_V2_ALLOWED_PEER_ID48: '0x010203040506'
+        run: |
+          set -o pipefail
+          if pio run -e m5dial_v2_fresh_flash_lab > /tmp/v2-fresh-blocked.log 2>&1; then
+            echo 'ERROR: fresh erase-required V2 image compiled without acknowledgement'
+            exit 1
+          fi
+          grep -q 'V2 fresh flash build BLOCKED' /tmp/v2-fresh-blocked.log
+      - name: Build fresh 8MiB 4.375MiB CANLOG V2 lab image (TEST identity, NEVER flash)
+        env:
+          M5CAN_LOG_V2_ALLOWED_PEER_ID48: '0x010203040506'
+          M5CAN_V2_FRESH_FLASH_ACK: 'ERASE_ALL_8MB_OLD_DATA_REQUIRED'
+        run: |
+          pio run -e m5dial_v2_fresh_flash_lab
+          test -s .pio/build/m5dial_v2_fresh_flash_lab/firmware.elf
+          test -s .pio/build/m5dial_v2_fresh_flash_lab/firmware.bin
+          test -s .pio/build/m5dial_v2_fresh_flash_lab/partitions.bin
+          python tools/check_single_app_canlog_partition.py \
+            partitions/m5can_8mb_single_app_canlog_proposed.csv \
+            --firmware-bin .pio/build/m5dial_v2_fresh_flash_lab/firmware.bin
+          # Synthetic CI identity must never appear in a downloadable firmware.
+          rm -f .pio/build/m5dial_v2_fresh_flash_lab/firmware.bin
+          rm -f .pio/build/m5dial_v2_fresh_flash_lab/firmware.elf
 
   platformio-build:
     runs-on: ubuntu-latest
