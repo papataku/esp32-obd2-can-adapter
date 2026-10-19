@@ -117,8 +117,39 @@ static void test_same_and_rejections() {
   assert(!codec.append(b));
 }
 
+static void test_v2_single_window_codec_boundary() {
+  static_assert(RawCanBlockCodec::kDecodeMaxPayload==3584,
+                "Both profiles must decode existing large V1 MCAN blocks");
+#if defined(M5CAN_V2_SINGLE_WINDOW_CODEC)
+  static_assert(RawCanBlockCodec::kMaxBytes==216U*16U,
+                "one M5S2 sender window must contain an entire MCAN block");
+#else
+  static_assert(RawCanBlockCodec::kMaxBytes==3616U,
+                "unmodified default encoder must retain full journal size");
+#endif
+  RawCanBlockCodec codec;
+  std::vector<RawCanFrame> frames;
+  for(uint32_t i=0;i<1024;++i) {
+    RawCanFrame f=sample(i+1,100000+int64_t(i)*100,
+                         (i&1)?0x7E8:0x7E9,false,8);
+    if(!codec.append(f))break;
+    frames.push_back(f);
+  }
+  assert(!frames.empty() && codec.size()<=RawCanBlockCodec::kMaxBytes);
+  assert(codec.finalize());
+  std::vector<RawCanFrame> decoded(frames.size());
+  uint16_t count=0;
+  assert(RawCanBlockCodec::decode(codec.data(),codec.size(),
+                                  decoded.data(),decoded.size(),count));
+  assert(count==frames.size());
+  for(size_t i=0;i<frames.size();++i)assert(same(frames[i],decoded[i]));
+  std::cout<<"V2 codec window bound bytes="<<codec.size()
+           <<" records="<<count<<" PASS\n";
+}
+
 int main() {
   test_ring();
+  test_v2_single_window_codec_boundary();
   test_reversible();
   test_same_and_rejections();
   std::cout<<"raw CAN ring and reversible codec PASS\n";
