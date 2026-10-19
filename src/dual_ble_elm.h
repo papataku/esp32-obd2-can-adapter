@@ -11,6 +11,7 @@
 #include "m5can_log_stream_v2_sender.h"
 #include "m5can_log_v2_progress.h"
 #include "m5can_log_stream_v2_gatt.h"
+#include "m5can_log_v2_peer_policy.h"
 #endif
 
 namespace m5can {
