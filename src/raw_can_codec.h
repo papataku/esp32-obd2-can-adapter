@@ -13,7 +13,17 @@ namespace m5can {
 class RawCanBlockCodec {
  public:
   static constexpr size_t kHeader = 32;
-  static constexpr size_t kPayload = 3584;
+  // V2 BLE sends 216 data bytes per 244B notification and has 16 credits.
+  // Lab A/B: cap NEW encoded blocks at a single verified 16-frame window,
+  // keeping the decoder compatible with OLD 3616B journal blocks.
+  static constexpr size_t kDecodeMaxPayload = 3584;
+#if defined(M5CAN_V2_SINGLE_WINDOW_CODEC)
+  static constexpr size_t kPayload = 3424; // 32 header + 3424 = 16 * 216
+  static_assert(kHeader + kPayload == 216U * 16U,
+                "V2 lab codec must fit exactly one 16-credit BLE window");
+#else
+  static constexpr size_t kPayload = kDecodeMaxPayload;
+#endif
   static constexpr size_t kMaxBytes = kHeader + kPayload;
   static constexpr uint8_t kVersion = 1;
 
@@ -95,7 +105,7 @@ class RawCanBlockCodec {
     const uint32_t first_seq=get32(bytes+8);
     const uint64_t first_time=get64(bytes+12);
     const uint32_t encoded=get32(bytes+20);
-    if(!wanted||wanted>capacity||encoded>kPayload ||
+    if(!wanted||wanted>capacity||encoded>kDecodeMaxPayload ||
        static_cast<size_t>(encoded)+kHeader!=length ||
        get32(bytes+28)!=0)return false;
     uint32_t crc=0xFFFFFFFFU;
