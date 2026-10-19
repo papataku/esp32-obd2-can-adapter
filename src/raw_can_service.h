@@ -63,6 +63,20 @@ class RawCanRecordingService {
                         uint16_t peer,uint32_t generation);
   bool takeReadForBle(ExportReply& reply);
 
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  // Isolated bench stage for V2: transfer ONE full committed MCAN journal
+  // block at once. No flash I/O from BLE task/callback and no journal erase.
+  // External GATT ownership and authenticated log subscriber are NOT wired.
+  struct StreamBlockReply {
+    uint16_t peer=0,total=0;
+    uint32_t generation=0,index=0;
+    uint8_t type=0,error=0;
+    uint8_t bytes[RawCanBlockCodec::kMaxBytes]{};
+  };
+  bool queueStreamBlockFromBle(uint32_t index,uint16_t peer,uint32_t generation);
+  bool takeStreamBlockForBle(StreamBlockReply& reply);
+#endif
+
  private:
   bool commit();
   void fail();
@@ -86,6 +100,13 @@ class RawCanRecordingService {
   ExportReply read_reply_{};
   uint8_t read_buffer_[RawCanBlockCodec::kMaxBytes]{};
   void pollRead();
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  void pollStreamRead();
+  // Mailbox transfers a verified journal block from Arduino flash owner
+  // to BLE app; copy is bounded 3616B, independent from legacy 48B reads.
+  std::atomic<uint8_t> stream_state_{ReadIdle};
+  StreamBlockReply stream_reply_{};
+#endif
   bool has_pending_frame_=false;
   bool recording_=false,stopping_=false,fault_=false;
 };

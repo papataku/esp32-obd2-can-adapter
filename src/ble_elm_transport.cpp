@@ -20,6 +20,10 @@ extern "C" void ble_hs_unlock(void);
 #include <string>
 #include "app_config.h"
 #include "ble_notify_chunk.h"
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+#include "m5can_log_stream_v2_gatt.h"
+#include "m5can_log_v2_peer_policy.h"
+#endif
 
 namespace m5can {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -66,6 +70,50 @@ class M5CanBleRxCallbacks final : public NimBLECharacteristicCallbacks {
  private:
   BleElmTransport& owner_;
 };
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+class M5CanLogControlCallbacks final : public NimBLECharacteristicCallbacks {
+ public:
+  explicit M5CanLogControlCallbacks(BleElmTransport& owner):owner_(owner){}
+  void onWrite(NimBLECharacteristic* characteristic,
+               ble_gap_conn_desc* desc) override {
+    if(!characteristic || !desc)return;
+    // A Just Works encrypted but unbonded connection must not export logs.
+    // Bonding alone is not sufficient for production authorization; no
+    // runtime V2 start is enabled until explicit allow-listing is added.
+    bool secured=desc->sec_state.encrypted && desc->sec_state.bonded;
+    // Just Works bonding has no MITM proof; never make a retained RAW
+    // vehicle log readable by *any* arbitrary newly bonded BLE peer.
+    // Operator must explicitly provision the resolved 48-bit identity
+    // into a NON-DEFAULT evaluation profile before log transfer works.
+#if defined(M5CAN_LOG_V2_ALLOWED_PEER_ID48)
+    uint64_t identity=0;
+    for(unsigned i=0;i<6;++i)
+      identity |= static_cast<uint64_t>(desc->peer_id_addr.val[i])<<(i*8);
+    secured=secured && identity==
+        (static_cast<uint64_t>(M5CAN_LOG_V2_ALLOWED_PEER_ID48)&0xFFFFFFFFFFFFULL);
+#else
+    secured=false; // fail closed until a user-authorized peer is enrolled
+#endif
+    const std::string value=characteristic->getValue();
+    if(value.size()>0)
+      owner_.onLogWrite(desc->conn_handle,
+          reinterpret_cast<const uint8_t*>(value.data()),value.size(),secured);
+  }
+ private:
+  BleElmTransport& owner_;
+};
+class M5CanLogDataCallbacks final : public NimBLECharacteristicCallbacks {
+ public:
+  explicit M5CanLogDataCallbacks(BleElmTransport& owner):owner_(owner){}
+  void onSubscribe(NimBLECharacteristic*,ble_gap_conn_desc* desc,
+                   uint16_t subscription) override {
+    if(desc)owner_.onLogSubscribe(desc->conn_handle,(subscription&1U)!=0);
+  }
+ private:
+  BleElmTransport& owner_;
+};
+#endif
+
 #else
 class M5CanBleServerCallbacks final : public BLEServerCallbacks {
  public:
@@ -139,6 +187,26 @@ bool BleElmTransport::begin() {
   }
   rx->setCallbacks(new M5CanBleRxCallbacks(*this));
   service->start();
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  // A binary log path on independent UUIDs: neither the ASCII ELM parser
+  // nor its write/notify queue ever sees V2 control or 244-byte DATA.
+  // Enforce encrypted GATT writes and fail closed for unbonded clients.
+  NimBLEDevice::setSecurityAuth(true,false,true);
+  NimBLEService* log=server->createService(
+      m5can_log_stream_v2::kGattService);
+  if(!log) {setError("V2 log service failed");return false;}
+  NimBLECharacteristic* log_ctrl=log->createCharacteristic(
+      m5can_log_stream_v2::kGattControl,
+      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC);
+  log_tx_characteristic_=log->createCharacteristic(
+      m5can_log_stream_v2::kGattData,NIMBLE_PROPERTY::NOTIFY);
+  if(!log_ctrl || !log_tx_characteristic_) {
+    setError("V2 log characteristics failed");return false;
+  }
+  log_ctrl->setCallbacks(new M5CanLogControlCallbacks(*this));
+  log_tx_characteristic_->setCallbacks(new M5CanLogDataCallbacks(*this));
+  log->start();
+#endif
   advertising_=NimBLEDevice::getAdvertising();
 #else
   BLEDevice::init(cfg::kBleDeviceName);
@@ -342,6 +410,9 @@ void BleElmTransport::onPeerConnect(uint16_t id, uint16_t address_suffix) {
       peer.gap_disconnect_seen = false;
       peer.pending_head=peer.pending_size=0;
       peer.progress_ms=millis();peer.stalled_reported=false;peer.tx_aborted=false;
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+      peer.log_subscribed=false;peer.log_secured=false;
+#endif
       peer.traffic = {};
       peer.traffic.connected = true;
       peer.traffic.connection_id = id;
@@ -385,6 +456,9 @@ void BleElmTransport::onPeerDisconnect(uint16_t id) {
       peer.gap_disconnect_seen=false;
       peer.active = false;
       peer.pending_head=peer.pending_size=0;
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+      peer.log_subscribed=false;peer.log_secured=false;
+#endif
       peer.traffic.connected = false;
     }
   }
@@ -520,6 +594,94 @@ bool BleElmTransport::pollClientEvent(BleClientEvent& event) {
   return true;
 }
 
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+void BleElmTransport::onLogSubscribe(uint16_t id,bool subscribed) {
+  portENTER_CRITICAL(&mux_);
+  for(auto& peer:clients_) {
+    if(peer.active && peer.connection_id==id) {
+      peer.log_subscribed=subscribed;
+      if(!subscribed)peer.log_secured=false;
+    }
+  }
+  portEXIT_CRITICAL(&mux_);
+}
+void BleElmTransport::onLogWrite(uint16_t id,const uint8_t* data,
+                                 size_t count,bool secured) {
+  if(!secured || !data || (count!=20 && count!=28))return;
+  m5can_log_stream_v2::Control parsed{};
+  if(!m5can_log_stream_v2::decodeControl(data,count,parsed))return;
+  portENTER_CRITICAL(&mux_);
+  for(auto& peer:clients_) {
+    if(!peer.active || peer.connection_id!=id)continue;
+    const uint8_t next=(log_control_head_+1)%kLogControlSlots;
+    if(next==log_control_tail_) {
+      ++stats_.rx_overflow;
+      break; // bounded all-or-nothing, no partial frame leaks to ELM
+    }
+    LogControlMessage& entry=log_control_[log_control_head_];
+    entry.peer=id;entry.generation=peer.generation;
+    entry.count=static_cast<uint8_t>(count);
+    std::memcpy(entry.data,data,count);
+    log_control_head_=next;
+    peer.log_secured=true;
+    break;
+  }
+  portEXIT_CRITICAL(&mux_);
+}
+bool BleElmTransport::pollLogControl(LogControlMessage& message) {
+  portENTER_CRITICAL(&mux_);
+  if(log_control_head_==log_control_tail_) {
+    portEXIT_CRITICAL(&mux_);return false;
+  }
+  message=log_control_[log_control_tail_];
+  log_control_tail_=(log_control_tail_+1)%kLogControlSlots;
+  portEXIT_CRITICAL(&mux_);
+  return isClientConnected(message.peer,message.generation);
+}
+bool BleElmTransport::logPeerAuthorized(uint16_t id,uint32_t gen) const {
+  bool authorized=false;
+  portENTER_CRITICAL(&mux_);
+  for(const auto& peer:clients_) {
+    if(peer.connection_id==id && peer.generation==gen &&
+       m5can_log_stream_v2::PeerQosPolicy::eligible(
+           peer.active,peer.log_subscribed,peer.log_secured,
+           peer.mtu>=247,peer.tx_aborted))
+      authorized=true;
+  }
+  portEXIT_CRITICAL(&mux_);
+  if(!authorized)return false;
+  // A previously authenticated writer is not enough: recheck the actual
+  // live encrypted/bonded link and the exact generation at every poll.
+  ble_gap_conn_desc desc{};
+  return ble_gap_conn_find(id,&desc)==0 &&
+         desc.sec_state.encrypted && desc.sec_state.bonded;
+}
+bool BleElmTransport::logPeerReady(uint16_t id,uint32_t gen) const {
+  if(!logPeerAuthorized(id,gen))return false;
+  // ASCII ELM replies/CAN diagnostics take precedence over bulk V2 logs.
+  // This is TRANSIENT backpressure, not lost subscriber authorization.
+  bool eligible=false;
+  bool all_elm_queues_idle=true;
+  portENTER_CRITICAL(&mux_);
+  for(const auto& peer:clients_) {
+    // Both SmartRing and iPad/JC share NimBLE's packet budget. Do not
+    // enqueue a 244B V2 frame while EITHER active peer still has an
+    // ordinary CAN/PID response waiting in the application queue.
+    // Inactive slots are not a reason to stall the log sender.
+    all_elm_queues_idle &=
+        m5can_log_stream_v2::PeerQosPolicy::elmQueueIdle(
+            peer.active,peer.pending_size);
+    if(peer.connection_id==id && peer.generation==gen)
+      eligible=m5can_log_stream_v2::PeerQosPolicy::eligible(
+          peer.active,peer.log_subscribed,peer.log_secured,
+          peer.mtu>=247,peer.tx_aborted);
+  }
+  portEXIT_CRITICAL(&mux_);
+  return m5can_log_stream_v2::PeerQosPolicy::maySend(
+      eligible,all_elm_queues_idle);
+}
+#endif
+
 bool BleElmTransport::isClientConnected(uint16_t id, uint32_t gen) const {
   portENTER_CRITICAL(&mux_);
   bool found = false;
@@ -581,6 +743,39 @@ static bool notifyCredit(uint16_t id,uint16_t& pending,uint16_t& queued) {
   // shared free capacity instead of removing all host staging.
   return present && queued<3 && pending<8;
 }
+
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+bool BleElmTransport::notifyLogFrame(uint16_t id,uint32_t gen,
+                                    const uint8_t* frame,size_t n) {
+  // The dedicated GATT service MUST NOT use the legacy byte-stream queue:
+  // splitting or interleaving a 244-byte binary packet corrupts framing.
+  if(!log_tx_characteristic_ || !frame || n<28 || n>244 ||
+     !logPeerReady(id,gen))return false;
+  m5can_log_stream_v2::Frame decoded{};
+  if(!m5can_log_stream_v2::decode(frame,n,decoded) ||
+     decoded.kind==m5can_log_stream_v2::Kind::Ack)return false;
+  uint16_t host_pending=0,host_queued=0;
+  if(os_msys_num_free()<8 ||
+     !notifyCredit(id,host_pending,host_queued))return false;
+  os_mbuf* packet=ble_hs_mbuf_from_flat(frame,n);
+  if(!packet)return false;
+  const int rc=ble_gattc_notify_custom(
+      id,log_tx_characteristic_->getHandle(),packet);
+  if(rc!=0)return false;
+  portENTER_CRITICAL(&mux_);
+  for(auto& peer:clients_) {
+    if(peer.active && peer.connection_id==id && peer.generation==gen) {
+      peer.traffic.tx_bytes+=n;
+      ++peer.traffic.notifications;
+      peer.traffic.last_tx_ms=millis();
+      stats_.tx_bytes+=n;
+      ++stats_.targeted_notifications;
+    }
+  }
+  portEXIT_CRITICAL(&mux_);
+  return true;
+}
+#endif
 
 bool BleElmTransport::responseReady(uint16_t id,uint32_t gen) const {
 #if defined(M5CAN_SYNC_NOTIFY_DIAGNOSTIC)

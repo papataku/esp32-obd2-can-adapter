@@ -11,6 +11,11 @@ g++ -std=c++17 -Wall -Wextra -Werror \
   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
   "$ROOT/tests/test_raw_can_service_recovery.cpp" "$ROOT/src/raw_can_service.cpp" \
   "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-raw-service-recovery-test
+
+# Test the same generation-bound mailbox under the opt-in V2 build flags.
+# BLE connection handle 0 is valid; generation 0 must still be rejected.
+g++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_LOG_STREAM_V2_EXPERIMENTAL=1 -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" "$ROOT/tests/test_raw_can_service_recovery.cpp" "$ROOT/src/raw_can_service.cpp" "$ROOT/tests/host_stubs/stubs.cpp" -o /tmp/m5can-raw-service-v2-peer0-test
+/tmp/m5can-raw-service-v2-peer0-test
 /tmp/m5can-raw-service-recovery-test
 
 g++ -std=c++17 -Wall -Wextra -Werror   -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src"   "$ROOT/tests/test_native_protocol.cpp"   "$ROOT/src/native_protocol.cpp"   "$ROOT/tests/host_stubs/stubs.cpp"   -o /tmp/m5can-native-test
@@ -223,3 +228,46 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -o /tmp/m5can-raw-ble-protocol-test
 /tmp/m5can-raw-ble-protocol-test
 echo "PASS PR32 BLE journal read chunk protocol, CRC32 and resume"
+
+# Streaming V2: MTU247 framing, CRC, durable ACK cursor, window credit/retry.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_stream_v2.cpp" \
+  -o /tmp/m5can-log-stream-v2-test
+/tmp/m5can-log-stream-v2-test
+echo "PASS V2 stream wire contract (bench-only; not wired to BLE)"
+
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_stream_roundtrip.cpp" \
+  -o /tmp/m5can-stream-roundtrip-test
+/tmp/m5can-stream-roundtrip-test
+echo "PASS deterministic 64KiB windowed stream loss/corruption recovery simulation"
+
+# Full committed-journal DATA/END sender packetization, ACK credit and fault
+# injection. Independent of BLE or flash: the production GATT path is not on.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_stream_v2_sender.cpp" \
+  -o /tmp/m5can-stream-sender-test
+/tmp/m5can-stream-sender-test
+echo "PASS V2 immutable-journal staged sender and SD-durable receipt simulation"
+
+# Dedicated versioned control characteristic: reject malformed START and
+# cross-kind writes before they can enter the BLE worker mailbox.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_stream_v2_gatt.cpp" \
+  -o /tmp/m5can-log-stream-v2-gatt-test
+/tmp/m5can-log-stream-v2-gatt-test
+echo "PASS V2 isolated GATT START/ACK wire compatibility and corruption checks"
+
+# V2 ACK timeout: slow two-peer notification pacing, duplicate ACK,
+# wraparound and END readback deadline must not cause premature rewind.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_v2_progress.cpp" \
+  -o /tmp/m5can-log-v2-progress-test
+/tmp/m5can-log-v2-progress-test
+
+# Ordinary CAN/ELM replies take priority but cannot revoke an authorized
+# log subscription. The V2 sender resumes when the peer queue drains.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -I"$ROOT/src" "$ROOT/tests/test_m5can_log_v2_peer_policy.cpp" \
+  -o /tmp/m5can-log-v2-peer-qos-test
+/tmp/m5can-log-v2-peer-qos-test

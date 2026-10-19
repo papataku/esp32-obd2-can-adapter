@@ -16,9 +16,12 @@ bool RawCanRecordingService::begin() {
   state_.store(initial,std::memory_order_release);
   return ready;
 }
+// NimBLE's first connection may have handle 0. Generation 0 is the
+// invalid/unassigned sentinel; reject it, not an otherwise valid handle 0.
+// Matching owner handle AND nonzero generation still fences stale peers.
 bool RawCanRecordingService::queueStartFromBle(
     uint32_t session,uint16_t peer,uint32_t generation) {
-  if(!session || !peer || !generation || state()!=State::Idle ||
+  if(!session || !generation || state()!=State::Idle ||
      requested_session_.load(std::memory_order_acquire))return false;
   // DualBleElm is the only BLE producer; release publishes both peer fields.
   requested_peer_.store(peer,std::memory_order_relaxed);
@@ -28,7 +31,7 @@ bool RawCanRecordingService::queueStartFromBle(
 }
 bool RawCanRecordingService::queueStopFromBle(
     uint16_t peer,uint32_t generation) {
-  if(!peer || !generation || state()!=State::Recording ||
+  if(!generation || state()!=State::Recording ||
      owner_peer_.load(std::memory_order_acquire)!=peer ||
      owner_generation_.load(std::memory_order_acquire)!=generation)
     return false;
@@ -39,7 +42,7 @@ bool RawCanRecordingService::queueStopFromBle(
 bool RawCanRecordingService::queueReadFromBle(
     uint32_t index,uint32_t offset,uint16_t peer,uint32_t generation) {
   const auto s=state();
-  if(!peer || !generation ||
+  if(!generation ||
      (s!=State::Complete && s!=State::RecoveryRequired) ||
      !rawCanJournal().status().ready)return false;
   uint8_t expected=ReadIdle;
@@ -98,6 +101,60 @@ void RawCanRecordingService::pollRead() {
   can_.endLogCheckpoint();
   read_state_.store(ReadReady,std::memory_order_release);
 }
+
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+bool RawCanRecordingService::queueStreamBlockFromBle(
+    uint32_t index,uint16_t peer,uint32_t generation) {
+  const auto& status=rawCanJournal().status();
+  if(!generation || state()!=State::Complete ||
+     !status.ready || !status.completed || index>=status.blocks)
+    return false;
+  uint8_t expected=ReadIdle;
+  if(!stream_state_.compare_exchange_strong(
+         expected,ReadFilling,std::memory_order_acq_rel))return false;
+  stream_reply_=StreamBlockReply{};
+  stream_reply_.peer=peer;
+  stream_reply_.generation=generation;
+  stream_reply_.index=index;
+  stream_state_.store(ReadQueued,std::memory_order_release);
+  return true;
+}
+bool RawCanRecordingService::takeStreamBlockForBle(StreamBlockReply& reply) {
+  if(stream_state_.load(std::memory_order_acquire)!=ReadReady)return false;
+  reply=stream_reply_;
+  stream_state_.store(ReadIdle,std::memory_order_release);
+  return true;
+}
+void RawCanRecordingService::pollStreamRead() {
+  if(stream_state_.load(std::memory_order_acquire)!=ReadQueued)return;
+  // Actual TWAI owner transaction has precedence over flash storage reads.
+  if(!can_.tryBeginLogCheckpoint())return;
+  stream_state_.store(ReadProcessing,std::memory_order_release);
+  auto& reply=stream_reply_;
+  const auto& status=rawCanJournal().status();
+  if(state()!=State::Complete || !status.ready ||
+     !status.completed || reply.index>=status.blocks) {
+    reply.error=1;
+  } else {
+    uint16_t size=0;
+    RawCanJournal::RecordType type=RawCanJournal::End;
+    if(!rawCanJournal().readBlock(reply.index,reply.bytes,
+                                  sizeof(reply.bytes),size,type)) {
+      reply.error=2;  // no payload supplied on invalid journal CRC
+    } else if((reply.index+1==status.blocks)!=(type==RawCanJournal::End)) {
+      reply.error=3;  // archive END must be last and unique
+    } else {
+      reply.total=size;
+      reply.type=static_cast<uint8_t>(type);
+    }
+  }
+  if(reply.error) {
+    reply.total=0;reply.type=0;  // fail closed
+  }
+  can_.endLogCheckpoint();
+  stream_state_.store(ReadReady,std::memory_order_release);
+}
+#endif
 
 bool RawCanRecordingService::start(uint32_t session_id) {
   // No auto-overwrite, no "record on boot", and no start before a verified
@@ -164,6 +221,9 @@ void RawCanRecordingService::poll() {
   }
   // Never read flash from the BLE worker; reply to one queued chunk per tick.
   pollRead();
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  pollStreamRead();
+#endif
   if((!recording_ && !stopping_)||fault_)return;
   // Never spend unbounded time draining the queue on the display/USB owner.
   for(unsigned i=0;i<48;++i) {
