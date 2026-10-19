@@ -907,18 +907,22 @@ void DualBleElm::pollLogV2() {
         log_stream_sender_.expectedBlock(),
         log_stream_peer_,log_stream_generation_);
   }
-  // Scheduling QoS: CAN PID dispatch and ASCII queues ran first.
-  // Only ONE V2 packet per iteration, with actual encrypted connection,
-  // ATT 247, host credit and mbuf checks performed in BleElmTransport.
+  // CAN PID dispatch and ASCII responses ran first. Burst at most three
+  // V2 frames per application poll. EACH notifyLogFrame rechecks both
+  // clients' pending ELM replies, MTU, bonded identity, generation and
+  // NimBLE mbuf/controller credit before consuming the next V2 frame.
+  // A busy host returns immediately; there is no spin or Flash access here.
   uint8_t frame[m5can_log_stream_v2::kMaxNotification]{};
-  const size_t n=log_stream_sender_.peek(frame,sizeof(frame));
-  if(n && ble_.notifyLogFrame(log_stream_peer_,log_stream_generation_,
-                               frame,n)) {
+  for(unsigned burst=0;
+      burst<m5can_log_stream_v2::PeerQosPolicy::kMaxLogFramesPerPoll;
+      ++burst) {
+    const size_t n=log_stream_sender_.peek(frame,sizeof(frame));
+    if(!n || !ble_.notifyLogFrame(log_stream_peer_,log_stream_generation_,
+                                   frame,n))break;
     if(!log_stream_sender_.queued()) {
       log_stream_sender_.cancel();log_stream_active_=false;return;
     }
-    // The 16-frame window may need >1.2s under fair two-peer QoS.
-    // Time the durable ACK from the LAST accepted notification.
+    // Keep ACK deadline anchored at the last accepted notification.
     log_stream_progress_.noteNotification(millis());
   }
   // Withhold credit indefinitely only until a bounded ACK deadline.
