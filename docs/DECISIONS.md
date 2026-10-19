@@ -249,3 +249,33 @@ Do not tear down protocol state in a diagnostics callback or silently map host
 reason integers to8-bit HCI codes. Preserve raw namespace/sequence/drop data.
 USB startup resets and intended client disconnects are separate from failures.
 See docs/issue21_tri_device/README.md; physical fixes require separate evidence.
+
+## D023 - Fresh-erased V2 CAN journal is a lab-only single-app layout
+
+For the M5Dial V2 RAW/SD validation requested on 2026-10-19, the owner
+explicitly allowed **deleting existing M5Dial internal Flash data**.
+The physically specified ESP32-S3FN8 has 8 MiB Flash. The opt-in
+`m5dial_v2_fresh_flash_lab` uses one 2 MiB factory app with
+`canlog` subtype 0x40 at 0x210000 (0x460000 = 4.375 MiB), leaving
+SPIFFS address space, NVS and coredump mapped but erased by a deliberate
+whole-chip reset. Do not try to reinterpret an existing OTA image as
+`canlog` by flashing only a new partition table.
+
+Neither the normal `m5dial` firmware, other device Flash, T4-S3 SD, nor
+iPad SQLite is authorized for deletion. A separate, explicit local
+acknowledgement and exact bonded peer allowlist are required even for
+a lab build. Compilation NEVER causes erasure or flashing. Flash size,
+partition table, firmware hash and port must be inspected before a
+manual whole-chip erase and factory image upload.
+
+This is **single-session** append-only journal storage: two owner
+sectors plus bounded committed data blocks. There is no automatic
+session reclaim, log overwrite, partition migration or OTA fallback.
+After testing, save/verify the actual USB/SD raw data before any new
+destructive reset. M5S2 V2 CRC, durable SD ACK, legacy ELM fallback and
+read-only CAN/TX lease constraints remain unchanged.
+
+The earlier decision D021 remains valid for normal firmware: sustained
+full-bus logging on Flash is not production-qualified. This decision
+only enables an intentional finite V2 lab capture for obtaining evidence.
+See `docs/m5dial_v2_fresh_flash_lab_2026-10-19.md`.
