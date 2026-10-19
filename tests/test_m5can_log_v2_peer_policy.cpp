@@ -3,6 +3,8 @@
 #include <iostream>
 using m5can_log_stream_v2::PeerQosPolicy;
 int main() {
+  static_assert(PeerQosPolicy::kMaxLogFramesPerPoll==3,
+                "V2 BLE worker must yield after three frames per poll");
   const bool eligible=PeerQosPolicy::eligible(true,true,true,true,false);
   assert(eligible);
   assert(PeerQosPolicy::maySend(eligible,true));
