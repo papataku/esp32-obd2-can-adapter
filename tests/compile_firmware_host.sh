@@ -213,6 +213,12 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -I"$ROOT/src" "$ROOT/tests/test_raw_can_codec.cpp" \
   -o /tmp/m5can-raw-codec-test
 /tmp/m5can-raw-codec-test
+# Issue #129 optional encoder limit is only for the 16-frame bench A/B:
+# verify it doesn't break the original ring, CRC, END or decode behavior.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
+  -DM5CAN_V2_SINGLE_WINDOW_CODEC=1 -I"$ROOT/src" \
+  "$ROOT/tests/test_raw_can_codec.cpp" -o /tmp/m5can-raw-codec-window16
+/tmp/m5can-raw-codec-window16
 echo "PASS PR32 CAN RX/TX SPSC ring, sequence gaps and lossless block codec"
 
 # PR #32 independent NOR flash journal; foreign OTA contents must fail closed.
