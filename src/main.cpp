@@ -107,6 +107,18 @@ void setup() {
       M5CAN_BUILD_SHA, static_cast<unsigned>(esp_reset_reason()),
       static_cast<unsigned>(rtc_get_reset_reason(0)));
 #endif
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  // Actual readiness requires all three: registered dedicated GATT service,
+  // allowlisted bonded peer and an already-safe committed CANLOG session.
+  // Never print the approved peer ID or call compiled==ready.
+  unsigned allowlisted=0;
+#if defined(M5CAN_LOG_V2_ALLOWED_PEER_ID48)
+  allowlisted=1;
+#endif
+  Serial.printf("#V2,compiled=1,gatt_init=%u,peer_allowlisted=%u,canlog_ready=%u,blocks=%lu,window=16,mtu_req=247\\n",
+      g_ble_ok?1U:0U,allowlisted,g_raw.ready()?1U:0U,
+      static_cast<unsigned long>(m5can::rawCanJournal().status().blocks));
+#endif
   if (!g_ble_ok) {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
     m5can::bleEvidenceJournal().appendError(m5can::DiagnosticError::BleInitFailure);
