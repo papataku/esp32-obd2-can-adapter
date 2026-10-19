@@ -24,6 +24,17 @@ extern "C" void ble_hs_unlock(void);
 #include "m5can_log_stream_v2_gatt.h"
 #include "m5can_log_v2_peer_policy.h"
 #endif
+#if defined(M5CAN_V2_AUTHENTICATED_LAB)
+#if !defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) || \
+    !defined(M5CAN_RAW_CAN_LOG_RUNTIME) || \
+    !defined(M5CAN_LOG_V2_ALLOWED_PEER_ID48)
+#error "V2 live lab requires RAW owner, V2 GATT, and explicit BLE peer allowlist"
+#endif
+static_assert(static_cast<uint64_t>(M5CAN_LOG_V2_ALLOWED_PEER_ID48)>0 &&
+              static_cast<uint64_t>(M5CAN_LOG_V2_ALLOWED_PEER_ID48)<
+                  0xFFFFFFFFFFFFULL,
+              "V2 allowed identity cannot be zero/broadcast");
+#endif
 
 namespace m5can {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
