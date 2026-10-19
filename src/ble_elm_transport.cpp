@@ -660,18 +660,25 @@ bool BleElmTransport::logPeerReady(uint16_t id,uint32_t gen) const {
   if(!logPeerAuthorized(id,gen))return false;
   // ASCII ELM replies/CAN diagnostics take precedence over bulk V2 logs.
   // This is TRANSIENT backpressure, not lost subscriber authorization.
-  bool idle=false;
+  bool eligible=false;
+  bool all_elm_queues_idle=true;
   portENTER_CRITICAL(&mux_);
   for(const auto& peer:clients_) {
-    if(peer.connection_id==id && peer.generation==gen &&
-       m5can_log_stream_v2::PeerQosPolicy::maySend(
-           m5can_log_stream_v2::PeerQosPolicy::eligible(
-               peer.active,peer.log_subscribed,peer.log_secured,
-               peer.mtu>=247,peer.tx_aborted),
-           peer.pending_size==0))idle=true;
+    // Both SmartRing and iPad/JC share NimBLE's packet budget. Do not
+    // enqueue a 244B V2 frame while EITHER active peer still has an
+    // ordinary CAN/PID response waiting in the application queue.
+    // Inactive slots are not a reason to stall the log sender.
+    all_elm_queues_idle &=
+        m5can_log_stream_v2::PeerQosPolicy::elmQueueIdle(
+            peer.active,peer.pending_size);
+    if(peer.connection_id==id && peer.generation==gen)
+      eligible=m5can_log_stream_v2::PeerQosPolicy::eligible(
+          peer.active,peer.log_subscribed,peer.log_secured,
+          peer.mtu>=247,peer.tx_aborted);
   }
   portEXIT_CRITICAL(&mux_);
-  return idle;
+  return m5can_log_stream_v2::PeerQosPolicy::maySend(
+      eligible,all_elm_queues_idle);
 }
 #endif
 
