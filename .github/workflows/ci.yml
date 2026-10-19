@@ -41,6 +41,23 @@ jobs:
         run: |
           test -s .pio/build/m5dial_v2_owner_compile/firmware.elf
           test -s .pio/build/m5dial_v2_owner_compile/firmware.bin
+      - name: Reject secure V2 lab builds without a provisioned identity
+        run: |
+          set -o pipefail
+          if pio run -e m5dial_v2_authenticated_lab > /tmp/v2-lab-denied.log 2>&1; then
+            echo 'ERROR: V2 lab image built without an allowlisted identity'
+            exit 1
+          fi
+          grep -q 'V2 Lab build BLOCKED' /tmp/v2-lab-denied.log
+      - name: Compile authenticated V2 GATT lab profile with TEST-ONLY identity
+        env:
+          M5CAN_LOG_V2_ALLOWED_PEER_ID48: '0x010203040506'
+        run: |
+          pio run -e m5dial_v2_authenticated_lab
+          test -s .pio/build/m5dial_v2_authenticated_lab/firmware.elf
+          test -s .pio/build/m5dial_v2_authenticated_lab/firmware.bin
+          # This is a synthetic CI identity and must NEVER be deployed.
+          rm -f .pio/build/m5dial_v2_authenticated_lab/firmware.bin
 
   platformio-build:
     runs-on: ubuntu-latest
