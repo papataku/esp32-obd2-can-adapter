@@ -4,6 +4,13 @@
 // All BLE connection, encryption and bonding checks remain in the transport.
 namespace m5can_log_stream_v2 {
 struct PeerQosPolicy {
+  // Keep individual BLE host polls bounded. Three 244B notifications (~732B)
+  // can fill the existing per-peer controller queue, but do not wait inside
+  // a poll; the next loop always serves normal ELM/PID output first.
+  // notifyCredit() and all two-peer checks run again for EACH frame.
+  static constexpr unsigned kMaxLogFramesPerPoll=3;
+  static_assert(kMaxLogFramesPerPoll<=3,
+                "V2 burst must not exceed the bounded host credit budget");
   static bool eligible(bool active,bool subscribed,bool authorized,
                        bool mtu_ok,bool tx_aborted) {
     return active && subscribed && authorized && mtu_ok && !tx_aborted;
