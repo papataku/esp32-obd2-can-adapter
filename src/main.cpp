@@ -249,6 +249,30 @@ void loop() {
     Serial.printf("#BLE_FLOW,waits=%lu,queue_peak=%u,host_peak=%u,host_queue_peak=%u,overflow=%lu,stalls=%lu\n",
         static_cast<unsigned long>(stats.credit_waits),stats.tx_queue_peak,stats.host_pending_peak,stats.host_queue_peak,
         static_cast<unsigned long>(stats.tx_queue_overflows),static_cast<unsigned long>(stats.tx_stalls));
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+    // Five-second snapshots, not per-notify Serial. Cumulative V2 reasons
+    // distinguish ordinary ELM traffic, host credit and memory pressure.
+    const auto credit=g_ble.v2CreditSnapshot();
+    Serial.printf("#BLE_V2_FLOW,ok=%lu,elm_wait=%lu,auth_denied=%lu,msys_wait=%lu,host_wait=%lu,mbuf_fail=%lu,notify_fail=%lu,bad=%lu\n",
+        static_cast<unsigned long>(stats.v2_notify_ok),
+        static_cast<unsigned long>(stats.v2_wait_elm),
+        static_cast<unsigned long>(stats.v2_denied_link),
+        static_cast<unsigned long>(stats.v2_wait_msys),
+        static_cast<unsigned long>(stats.v2_wait_host),
+        static_cast<unsigned long>(stats.v2_mbuf_fail),
+        static_cast<unsigned long>(stats.v2_notify_api_fail),
+        static_cast<unsigned long>(stats.v2_bad_frame));
+    Serial.printf("#BLE_V2_CREDIT,msys_free=%u,peer0=%u,ascii0=%u,outstanding0=%u,queued0=%u,peer1=%u,ascii1=%u,outstanding1=%u,queued1=%u\n",
+        static_cast<unsigned>(credit.msys_free),
+        credit.peers[0].active?1U:0U,
+        static_cast<unsigned>(credit.peers[0].ascii_pending_bytes),
+        static_cast<unsigned>(credit.peers[0].host_outstanding),
+        static_cast<unsigned>(credit.peers[0].host_queued),
+        credit.peers[1].active?1U:0U,
+        static_cast<unsigned>(credit.peers[1].ascii_pending_bytes),
+        static_cast<unsigned>(credit.peers[1].host_outstanding),
+        static_cast<unsigned>(credit.peers[1].host_queued));
+#endif
     Serial.printf("#BLE_TASK,core=%d,poll_peak_us=%lu,stack_free_bytes=%u,ui_loop_peak_us=%lu\n",
         M5CAN_DUAL_BLE_APP_CORE,
         static_cast<unsigned long>(g_ble_poll_peak_us.exchange(0)),
