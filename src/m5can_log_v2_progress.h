@@ -5,6 +5,14 @@
 namespace m5can_log_stream_v2 {
 class ProgressWatchdog {
  public:
+  // Earlier 1200ms generated repeated full-window retransmissions during
+  // encrypted two-peer GATT+SD ACK contention (real bench: duplicates/drop).
+  // 2500ms accommodates transient host delays while remaining below T4's
+  // 15s idle watchdog across the sender's bounded four retries.
+  static constexpr uint32_t kDataAckTimeoutMs=2500;
+  static constexpr uint32_t kFinalAckTimeoutMs=30000;
+  static_assert(kDataAckTimeoutMs * 5 < 15000,
+                "Sender retries must finish before receiver 15s idle guard");
   void reset(uint32_t now_ms) { last_ms_=now_ms; }
   void noteNotification(uint32_t now_ms) { last_ms_=now_ms; }
   bool noteAck(uint32_t before,uint32_t after,uint32_t now_ms) {
