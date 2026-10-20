@@ -297,3 +297,28 @@ partitions, or perform the original fresh-install migration again. The
 build acknowledgement and explicit real approved peer identity remain
 required. CI tests missing-ack denial and compiles with test-only identity,
 then removes that non-deployable binary.
+
+## D024 - Two-peer V2 bulk may not preload the next PID response's host FIFO
+
+The 2026-10-21 USB-only A2 bench reproduced a T4 RPM drop from 9.998Hz to
+6.637Hz over 52.430 counter seconds while Ring remained 9.841Hz. Both links
+stayed connected, queues reported no drop/invalid/full, SD made progress and
+T4's last128 batch RTT p95 reached290ms. The application ELM queues being
+empty is insufficient: up to eight already-accepted bulk notifications can
+remain in the same peer's controller/host FIFO ahead of a future PID reply.
+This is a concrete resource-ownership issue; its precise hardware contribution
+still requires the paired bench after this change.
+
+After the ordinary live NimBLE credit snapshot passes, V2 additionally admits
+bulk with TWO connected peers only when that target peer has no controller
+outstanding or host-queued packets. This bounds bulk occupancy to one pending
+notification. ASCII response credit is unchanged, and the existing single-peer
+preloaded path stays unchanged. Credit denial is transient backpressure,
+counted as v2_wait_host; it must not revoke the authenticated session, reset a
+cursor, erase data, or bypass durable SD ACK. No CAN, lease, journal layout,
+partition, wire format, deadline or notification-size policy is changed.
+
+FIFO/peer-transition host regression distinguishes old eight-packet head-of-line
+blocking from the new one-packet bound. That model is not an RF latency proof.
+Physical two-peer full-file CRC/END/SD-vs-USB and RPM-before/during/after gates
+remain required; preserve the failed A2 .part for comparison.

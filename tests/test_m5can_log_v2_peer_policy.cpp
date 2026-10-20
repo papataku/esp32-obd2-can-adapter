@@ -37,6 +37,30 @@ int main() {
   // Stale pending counts in a disconnected client slot cannot starve V2.
   assert(both_idle(true,0,false,42));
 
+  // Regression: an empty application FIFO did not prevent ELM head-of-line
+  // blocking behind eight RAW packets already admitted to the host FIFO.
+  // Model actual FIFO ordering, not RF throughput. A new ELM response can
+  // have at most ONE bulk packet ahead under the two-peer policy.
+  const auto preload=[](unsigned peers,bool guarded) {
+    unsigned pending=0;
+    while(pending<8 && (!guarded ||
+          PeerQosPolicy::rawHostCredit(peers,pending,0)))++pending;
+    return pending;
+  };
+  const unsigned old_ahead=preload(2,false);
+  const unsigned new_ahead=preload(2,true);
+  assert(old_ahead==8 && new_ahead==1);
+  assert(new_ahead*30u<100u && old_ahead*30u>100u);
+  // Preserve the single-peer fast pipeline. Joining a second peer stops
+  // new bulk admission until the existing finite FIFO has drained; leaving
+  // restores preloading without changing authorization or ACK cursor.
+  assert(preload(1,true)==old_ahead);
+  for(unsigned pending=old_ahead;pending>0;--pending)
+    assert(!PeerQosPolicy::rawHostCredit(2,pending,0));
+  assert(PeerQosPolicy::rawHostCredit(2,0,0));
+  assert(!PeerQosPolicy::rawHostCredit(2,0,1));
+  assert(PeerQosPolicy::rawHostCredit(1,3,2));
+
   // Deterministic TWO-peer scheduling simulation, not an on-air RF test.
   // Serve one ELM notification per active client before bulk V2, each tick.
   unsigned meter_pending=0,other_pending=0;
