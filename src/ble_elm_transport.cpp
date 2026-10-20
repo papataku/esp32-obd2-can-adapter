@@ -737,6 +737,9 @@ BleV2CreditSnapshot BleElmTransport::v2CreditSnapshot() const {
     ids[i]=clients_[i].connection_id;
   }
   portEXIT_CRITICAL(&mux_);
+  // The 5-second logger still runs after a failed BLE startup. Do not
+  // access the NimBLE host/mbuf allocator before server initialization.
+  if(!server_)return snapshot;
 #if defined(ARDUINO_ARCH_ESP32)
   ble_hs_lock();
   for(size_t i=0;i<kMaxClients;++i) {
