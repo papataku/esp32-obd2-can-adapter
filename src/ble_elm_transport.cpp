@@ -208,7 +208,11 @@ bool BleElmTransport::begin() {
   if(!log) {setError("V2 log service failed");return false;}
   NimBLECharacteristic* log_ctrl=log->createCharacteristic(
       m5can_log_stream_v2::kGattControl,
-      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC);
+      // START still uses write-with-response. A verified durable ACK may
+      // use encrypted write-without-response, with retry on lost ACK.
+      // The receiver must still be the pre-allowlisted bonded peer.
+      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR |
+      NIMBLE_PROPERTY::WRITE_ENC);
   log_tx_characteristic_=log->createCharacteristic(
       m5can_log_stream_v2::kGattData,NIMBLE_PROPERTY::NOTIFY);
   if(!log_ctrl || !log_tx_characteristic_) {
