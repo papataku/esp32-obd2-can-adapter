@@ -97,6 +97,24 @@ jobs:
           rm -f .pio/build/m5dial_v2_fresh_flash_window16_lab/firmware.bin
           rm -f .pio/build/m5dial_v2_fresh_flash_window16_lab/firmware.elf
 
+      - name: Build paired MTU247 V2 lab image (TEST identity, NEVER flash)
+        env:
+          M5CAN_LOG_V2_ALLOWED_PEER_ID48: '0x010203040506'
+        run: |
+          if pio run -e m5dial_v2_fresh_flash_mtu247_lab > /tmp/v2-mtu247-blocked.log 2>&1; then
+            echo "ERROR: MTU247 lab accepted a missing fresh-layout acknowledgement"
+            exit 1
+          fi
+          grep -q 'V2 fresh flash build BLOCKED' /tmp/v2-mtu247-blocked.log
+          M5CAN_V2_FRESH_FLASH_ACK=ERASE_ALL_8MB_OLD_DATA_REQUIRED \
+            pio run -e m5dial_v2_fresh_flash_mtu247_lab
+          python tools/check_single_app_canlog_partition.py \
+            partitions/m5can_8mb_single_app_canlog_proposed.csv \
+            --firmware-bin .pio/build/m5dial_v2_fresh_flash_mtu247_lab/firmware.bin
+          test -s .pio/build/m5dial_v2_fresh_flash_mtu247_lab/firmware.elf
+          rm -f .pio/build/m5dial_v2_fresh_flash_mtu247_lab/firmware.bin
+          rm -f .pio/build/m5dial_v2_fresh_flash_mtu247_lab/firmware.elf
+
   platformio-build:
     runs-on: ubuntu-latest
     steps:
