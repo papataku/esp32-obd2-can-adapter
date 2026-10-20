@@ -667,7 +667,9 @@ bool BleElmTransport::logPeerAuthorized(uint16_t id,uint32_t gen) const {
   return ble_gap_conn_find(id,&desc)==0 &&
          desc.sec_state.encrypted && desc.sec_state.bonded;
 }
-bool BleElmTransport::logPeerReady(uint16_t id,uint32_t gen) const {
+bool BleElmTransport::logPeerReady(uint16_t id,uint32_t gen,
+                                   V2ReadyReason* reason) const {
+  if(reason)*reason=V2ReadyReason::Unauthenticated;
   if(!logPeerAuthorized(id,gen))return false;
   // ASCII ELM replies/CAN diagnostics take precedence over bulk V2 logs.
   // This is TRANSIENT backpressure, not lost subscriber authorization.
@@ -688,8 +690,12 @@ bool BleElmTransport::logPeerReady(uint16_t id,uint32_t gen) const {
           peer.mtu>=247,peer.tx_aborted);
   }
   portEXIT_CRITICAL(&mux_);
-  return m5can_log_stream_v2::PeerQosPolicy::maySend(
+  const bool ready=m5can_log_stream_v2::PeerQosPolicy::maySend(
       eligible,all_elm_queues_idle);
+  if(reason)*reason=ready?V2ReadyReason::Ready:
+      eligible?V2ReadyReason::ElmQueueBusy:
+               V2ReadyReason::Unauthenticated;
+  return ready;
 }
 #endif
 
