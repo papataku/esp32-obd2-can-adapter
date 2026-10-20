@@ -72,6 +72,18 @@ struct BlePeerTraffic {
 struct BlePeersSnapshot {
   BlePeerTraffic peers[2]{};
 };
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+// Read-only, periodic on-demand sample; no remote identity or secret data.
+struct BleV2CreditSnapshot {
+  struct Peer {
+    bool active=false;
+    uint16_t ascii_pending_bytes=0;
+    uint16_t host_outstanding=0,host_queued=0;
+  };
+  Peer peers[2]{};
+  uint16_t msys_free=0;
+};
+#endif
 
 struct BleDiagnosticEvent {
   enum class Kind : uint8_t { Connect, Disconnect, Reject, Error };
@@ -138,6 +150,9 @@ class BleElmTransport {
 #endif
   uint8_t connectedClientCount() const;
   BlePeersSnapshot peerTraffic() const;
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  BleV2CreditSnapshot v2CreditSnapshot() const;
+#endif
   bool pollDiagnostic(BleDiagnosticEvent& event);
   uint32_t diagnosticDrops() const;
   void recordDiagnosticError(uint16_t connection_id,uint32_t generation,
