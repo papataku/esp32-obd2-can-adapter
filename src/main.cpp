@@ -253,7 +253,8 @@ void loop() {
     // Five-second snapshots, not per-notify Serial. Cumulative V2 reasons
     // distinguish ordinary ELM traffic, host credit and memory pressure.
     const auto credit=g_ble.v2CreditSnapshot();
-    Serial.printf("#BLE_V2_FLOW,ok=%lu,elm_wait=%lu,auth_denied=%lu,msys_wait=%lu,host_wait=%lu,mbuf_fail=%lu,notify_fail=%lu,bad=%lu\n",
+    Serial.printf("#BLE_V2_FLOW,uptime_ms=%lu,ok=%lu,elm_wait=%lu,auth_denied=%lu,msys_wait=%lu,host_wait=%lu,mbuf_fail=%lu,notify_fail=%lu,bad=%lu\n",
+        static_cast<unsigned long>(millis()),
         static_cast<unsigned long>(stats.v2_notify_ok),
         static_cast<unsigned long>(stats.v2_wait_elm),
         static_cast<unsigned long>(stats.v2_denied_link),
@@ -262,7 +263,8 @@ void loop() {
         static_cast<unsigned long>(stats.v2_mbuf_fail),
         static_cast<unsigned long>(stats.v2_notify_api_fail),
         static_cast<unsigned long>(stats.v2_bad_frame));
-    Serial.printf("#BLE_V2_CREDIT,msys_free=%u,peer0=%u,ascii0=%u,outstanding0=%u,queued0=%u,peer1=%u,ascii1=%u,outstanding1=%u,queued1=%u\n",
+    Serial.printf("#BLE_V2_CREDIT,uptime_ms=%lu,msys_free=%u,peer0=%u,ascii0=%u,outstanding0=%u,queued0=%u,peer1=%u,ascii1=%u,outstanding1=%u,queued1=%u\n",
+        static_cast<unsigned long>(millis()),
         static_cast<unsigned>(credit.msys_free),
         credit.peers[0].active?1U:0U,
         static_cast<unsigned>(credit.peers[0].ascii_pending_bytes),
