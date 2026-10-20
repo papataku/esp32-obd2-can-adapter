@@ -930,7 +930,9 @@ void DualBleElm::pollLogV2() {
   // END requires a whole-file SD CRC reread on the receiver's logger
   // task. Do not misdiagnose that legitimate long readback as lost BLE.
   const uint32_t ack_deadline_ms=
-      log_stream_sender_.awaitingFinalAck()?30000U:1200U;
+      log_stream_sender_.awaitingFinalAck()?
+          m5can_log_stream_v2::ProgressWatchdog::kFinalAckTimeoutMs:
+          m5can_log_stream_v2::ProgressWatchdog::kDataAckTimeoutMs;
   if(log_stream_sender_.outstanding() &&
      log_stream_progress_.elapsed(millis(),ack_deadline_ms)) {
     if(!log_stream_sender_.retryUnacked()) {
