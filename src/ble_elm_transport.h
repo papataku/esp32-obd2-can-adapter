@@ -38,6 +38,13 @@ struct BleStats {
   uint32_t memory_error_ms=0;
   uint16_t memory_error_conn=0,msys_min_free=UINT16_MAX;
   int32_t memory_error_code=0;
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  // Cumulative per-attempt V2 reason counters (NEVER reset on END).
+  // Snapshot before/after to distinguish V2 flow from ordinary ELM backlog.
+  uint32_t v2_notify_ok=0, v2_wait_elm=0, v2_denied_link=0;
+  uint32_t v2_wait_msys=0, v2_wait_host=0;
+  uint32_t v2_mbuf_fail=0, v2_notify_api_fail=0, v2_bad_frame=0;
+#endif
 };
 
 
