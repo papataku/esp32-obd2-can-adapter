@@ -724,6 +724,40 @@ BlePeersSnapshot BleElmTransport::peerTraffic() const {
   portEXIT_CRITICAL(&mux_);
   return snapshot;
 }
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+BleV2CreditSnapshot BleElmTransport::v2CreditSnapshot() const {
+  BleV2CreditSnapshot snapshot{};
+  uint16_t ids[kMaxClients]{};
+  // Read each per-peer ASCII queue and handle atomically, then release the
+  // application spinlock BEFORE acquiring NimBLE's host mutex.
+  portENTER_CRITICAL(&mux_);
+  for(size_t i=0;i<kMaxClients;++i) {
+    snapshot.peers[i].active=clients_[i].active;
+    snapshot.peers[i].ascii_pending_bytes=clients_[i].pending_size;
+    ids[i]=clients_[i].connection_id;
+  }
+  portEXIT_CRITICAL(&mux_);
+#if defined(ARDUINO_ARCH_ESP32)
+  ble_hs_lock();
+  for(size_t i=0;i<kMaxClients;++i) {
+    if(!snapshot.peers[i].active)continue;
+    const auto* conn=ble_hs_conn_find(ids[i]);
+    if(!conn)continue; // concurrent disconnect; no cached credit invented
+    snapshot.peers[i].host_outstanding=conn->bhc_outstanding_pkts;
+    const os_mbuf_pkthdr* entry;
+    STAILQ_FOREACH(entry,&conn->bhc_tx_q,omp_next) {
+      if(snapshot.peers[i].host_queued>=64)break;
+      ++snapshot.peers[i].host_queued;
+    }
+  }
+  ble_hs_unlock();
+#endif
+  const int free=os_msys_num_free();
+  snapshot.msys_free=static_cast<uint16_t>(
+      free<0?0:free>65535?65535:free);
+  return snapshot;
+}
+#endif
 
 #ifndef M5CAN_DUAL_NOTIFY_CHUNK_BYTES
 #define M5CAN_DUAL_NOTIFY_CHUNK_BYTES 20
