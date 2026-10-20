@@ -766,20 +766,45 @@ bool BleElmTransport::notifyLogFrame(uint16_t id,uint32_t gen,
                                     const uint8_t* frame,size_t n) {
   // The dedicated GATT service MUST NOT use the legacy byte-stream queue:
   // splitting or interleaving a 244-byte binary packet corrupts framing.
-  if(!log_tx_characteristic_ || !frame || n<28 || n>244 ||
-     !logPeerReady(id,gen))return false;
+  // Only integer counters, never Serial, on the BLE hot path.
+  // Separate V2 flow from the existing ASCII #BLE_FLOW credit_waits.
+  const auto count=[this](uint32_t BleStats::*field) {
+    portENTER_CRITICAL(&mux_);
+    ++(stats_.*field);
+    portEXIT_CRITICAL(&mux_);
+  };
+  if(!log_tx_characteristic_ || !frame || n<28 || n>244) {
+    count(&BleStats::v2_bad_frame);return false;
+  }
+  V2ReadyReason reason=V2ReadyReason::Unauthenticated;
+  if(!logPeerReady(id,gen,&reason)) {
+    count(reason==V2ReadyReason::ElmQueueBusy?
+          &BleStats::v2_wait_elm:&BleStats::v2_denied_link);
+    return false;
+  }
   m5can_log_stream_v2::Frame decoded{};
   if(!m5can_log_stream_v2::decode(frame,n,decoded) ||
-     decoded.kind==m5can_log_stream_v2::Kind::Ack)return false;
+     decoded.kind==m5can_log_stream_v2::Kind::Ack) {
+    count(&BleStats::v2_bad_frame);return false;
+  }
+  if(os_msys_num_free()<8) {
+    count(&BleStats::v2_wait_msys);return false;
+  }
   uint16_t host_pending=0,host_queued=0;
-  if(os_msys_num_free()<8 ||
-     !notifyCredit(id,host_pending,host_queued))return false;
+  if(!notifyCredit(id,host_pending,host_queued)) {
+    count(&BleStats::v2_wait_host);return false;
+  }
   os_mbuf* packet=ble_hs_mbuf_from_flat(frame,n);
-  if(!packet)return false;
+  if(!packet) {
+    count(&BleStats::v2_mbuf_fail);return false;
+  }
   const int rc=ble_gattc_notify_custom(
       id,log_tx_characteristic_->getHandle(),packet);
-  if(rc!=0)return false;
+  if(rc!=0) {
+    count(&BleStats::v2_notify_api_fail);return false;
+  }
   portENTER_CRITICAL(&mux_);
+  ++stats_.v2_notify_ok;
   for(auto& peer:clients_) {
     if(peer.active && peer.connection_id==id && peer.generation==gen) {
       peer.traffic.tx_bytes+=n;
