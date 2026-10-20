@@ -6,7 +6,13 @@
 using namespace m5can_log_stream_v2;
 int main() {
   ProgressWatchdog timer;
+  static_assert(ProgressWatchdog::kDataAckTimeoutMs == 2500,
+                "two-peer ACK time must not regress to 1200ms storm");
+  static_assert(ProgressWatchdog::kFinalAckTimeoutMs == 30000,
+                "SD whole-file END proof retains long deadline");
   timer.reset(100);
+  assert(!timer.elapsed(2599,ProgressWatchdog::kDataAckTimeoutMs));
+  assert(timer.elapsed(2600,ProgressWatchdog::kDataAckTimeoutMs));
   assert(!timer.elapsed(1299,1200));
   assert(timer.elapsed(1300,1200));
   // Duplicate/stale ACK must not indefinitely postpone retransmission.
