@@ -18,6 +18,22 @@
 #define M5CAN_BUILD_SHA "unknown"
 #endif
 #include "drive_log.h"
+#if defined(M5CAN_VEHICLE_TRIAL)
+// Keep vehicle-trial firmware a non-V2, real-TWAI, dual-peer V1 application.
+// These checks prevent accidental selection of an unsafe inherited profile.
+#if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL) || \
+    !defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL) || \
+    !defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+#error "Vehicle-trial profile requires ordinary dual BLE, multi-PID and V1 RAW"
+#endif
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) || \
+    defined(M5CAN_CAN_MODE_DRY_RUN) || defined(M5CAN_DEMO_FAULT_FIXTURE)
+#error "Vehicle-trial profile must not contain V2 bulk, CAN dry-run or DEMO fixture"
+#endif
+#if !defined(M5CAN_DUAL_NOTIFY_CHUNK_BYTES) || M5CAN_DUAL_NOTIFY_CHUNK_BYTES != 244
+#error "Vehicle-trial negotiated ASCII chunk limit must remain at 244"
+#endif
+#endif
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include "dual_ble_elm.h"
 #include "ble_evidence_journal.h"
