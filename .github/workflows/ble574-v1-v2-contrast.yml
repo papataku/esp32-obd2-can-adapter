@@ -1,0 +1,34 @@
+name: BLE 574 V1 versus V2 offline contrast
+
+on:
+  push:
+    branches:
+      - analysis/ble574-v1-v2-contrast-20261023
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-contrast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Existing single-shot parser tests
+        run: python3 -m unittest discover -s tests -p 'test_ble_linkedge_single.py' -v
+      - name: V1 failure to V2 success contrast regression tests
+        run: python3 -m unittest discover -s tests -p 'test_compare_ble574_v1_v2.py' -v
+      - name: Compile parser without reading actual private RAW
+        run: python3 -m py_compile tools/compare_ble574_v1_v2.py
+      - name: Verify product firmware and layout remain untouched
+        run: |
+          set -eu
+          git diff --name-only 7c8a9d1405b94dd2716759d44b4f87d685f13b7d HEAD > /tmp/ble574_v1_v2_names
+          if grep -E '^(src/|include/|platformio.ini|partitions/|tools/platformio_v2_|tools/check_dual_stack.py)' /tmp/ble574_v1_v2_names; then
+            echo "Unexpected product firmware or build-gate change"
+            exit 1
+          fi
