@@ -51,6 +51,8 @@ jobs:
             exit 1
           fi
           grep -q 'V2 Lab build BLOCKED' /tmp/m5-missing-id.log
+      - name: Compile unchanged deployed MTU247 baseline for strict stack comparison
+        run: pio run -e m5dial_v2_fresh_flash_mtu247_lab
       - name: Stack, layout and firmware image existence
         run: |
           set -eu
