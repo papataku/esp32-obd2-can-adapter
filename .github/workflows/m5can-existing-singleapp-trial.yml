@@ -1,0 +1,89 @@
+name: Existing single-app M5CAN trial (build only)
+
+on:
+  push:
+    branches:
+      - feature/m5can-existing-singleapp-vehicle-trial-20261023
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  host-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fail-closed build profile tests
+        run: python3 -m unittest discover -s tests -p test_vehicle_trial_profile.py -v
+      - name: Existing host and CAN safety regression
+        run: ./tests/run_all.sh
+
+  candidate-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # CI only. NO real BLE identity, no downloadable image.
+      M5CAN_VEHICLE_TRIAL_APPROVED_PEER_ID48: '0x010203040506'
+      M5CAN_VEHICLE_TRIAL_INSTALLED_PARTITIONS_SHA256: '7891dd9f69f2da4a49b4ed63ec4bd1651f9258d0f0787249e3f7bae65591645f'
+      M5CAN_VEHICLE_TRIAL_APP_ONLY_ACK: 'APP_ONLY_NO_ERASE_KEEP_NONAPP'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+      - name: Missing opt-in and unapproved identity must fail
+        run: |
+          set -eu
+          name=m5dial_existing_singleapp_vehicle_trial
+          if env -u M5CAN_VEHICLE_TRIAL_APP_ONLY_ACK pio run -e "$name" > /tmp/trial-noack.log 2>&1; then
+            echo 'ERROR: accepted missing app-only acknowledgement'
+            exit 1
+          fi
+          grep -q 'M5CAN vehicle-trial build BLOCKED' /tmp/trial-noack.log
+          if env -u M5CAN_VEHICLE_TRIAL_APPROVED_PEER_ID48 pio run -e "$name" > /tmp/trial-nopeer.log 2>&1; then
+            echo 'ERROR: accepted missing approved identity'
+            exit 1
+          fi
+          grep -q 'M5CAN vehicle-trial build BLOCKED' /tmp/trial-nopeer.log
+          if M5CAN_VEHICLE_TRIAL_INSTALLED_PARTITIONS_SHA256=$(printf '%064d' 0) pio run -e "$name" > /tmp/trial-wronglayout.log 2>&1; then
+            echo 'ERROR: accepted wrong installed partition hash'
+            exit 1
+          fi
+          grep -q 'M5CAN vehicle-trial build BLOCKED' /tmp/trial-wronglayout.log
+          if M5CAN_V2_FRESH_FLASH_ACK=ERASE_ALL_8MB_OLD_DATA_REQUIRED pio run -e "$name" > /tmp/trial-freshack.log 2>&1; then
+            echo 'ERROR: accepted destructive acknowledgement'
+            exit 1
+          fi
+          grep -q 'M5CAN vehicle-trial build BLOCKED' /tmp/trial-freshack.log
+      - name: Build matching V1 bench baseline (never upload)
+        run: pio run -e m5dial_dual_ble_multipid_mtu_bench
+      - name: Build guarded existing-single-app V1 trial (never upload)
+        run: pio run -e m5dial_existing_singleapp_vehicle_trial
+      - name: Exact layout, partition digest, image bounds and stack parity
+        run: |
+          set -eu
+          env=m5dial_existing_singleapp_vehicle_trial
+          test -s ".pio/build/$env/firmware.bin"
+          test -s ".pio/build/$env/firmware.elf"
+          test -s ".pio/build/$env/partitions.bin"
+          python tools/check_single_app_canlog_partition.py \
+            partitions/m5can_8mb_single_app_canlog_proposed.csv \
+            --firmware-bin ".pio/build/$env/firmware.bin"
+          actual=$(sha256sum ".pio/build/$env/partitions.bin" | cut -d' ' -f1)
+          test "$actual" = "$M5CAN_VEHICLE_TRIAL_INSTALLED_PARTITIONS_SHA256"
+          python tools/check_vehicle_trial_stack.py \
+            m5dial_dual_ble_multipid_mtu_bench "$env"
+          echo 'PASS: synthetic build only; no flash, no erase, no artifacts published'
+      - name: Delete ALL CI build images (synthetic identity)
+        if: always()
+        run: |
+          rm -f .pio/build/m5dial_existing_singleapp_vehicle_trial/firmware.bin
+          rm -f .pio/build/m5dial_existing_singleapp_vehicle_trial/firmware.elf
+          rm -f .pio/build/m5dial_dual_ble_multipid_mtu_bench/firmware.bin
+          rm -f .pio/build/m5dial_dual_ble_multipid_mtu_bench/firmware.elf
