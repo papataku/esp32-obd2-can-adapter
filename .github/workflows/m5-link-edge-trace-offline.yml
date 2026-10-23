@@ -37,6 +37,20 @@ jobs:
         run: python -m pip install --upgrade platformio
       - name: Build opt-in deployed-layout MTU247 M5 observer (no upload)
         run: pio run -e m5dial_v2_fresh_flash_mtu247_linkedge_lab
+      - name: Confirm existing identity and erase-ack gates still reject missing values
+        run: |
+          set -eu
+          target=m5dial_v2_fresh_flash_mtu247_linkedge_lab
+          if env -u M5CAN_V2_FRESH_FLASH_ACK pio run -e "$target" > /tmp/m5-missing-ack.log 2>&1; then
+            echo 'ERROR: M5 observer bypassed fresh-flash acknowledgement'
+            exit 1
+          fi
+          grep -q 'V2 fresh flash build BLOCKED' /tmp/m5-missing-ack.log
+          if env -u M5CAN_LOG_V2_ALLOWED_PEER_ID48 pio run -e "$target" > /tmp/m5-missing-id.log 2>&1; then
+            echo 'ERROR: M5 observer bypassed peer-identity gate'
+            exit 1
+          fi
+          grep -q 'V2 Lab build BLOCKED' /tmp/m5-missing-id.log
       - name: Stack, layout and firmware image existence
         run: |
           set -eu
