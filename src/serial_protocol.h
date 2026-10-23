@@ -97,7 +97,12 @@ class SerialProtocol {
   ElmCompat elm_{};
   ElmLink elm_link_ = ElmLink::None;
   bool elm_mode_ = false;
+#if defined(M5CAN_VEHICLE_TRIAL)
+  // Vehicle trial must never boot with DEMO AUTO, even if NVS says AUTO.
+  std::atomic<DemoSetting> demo_setting_{DemoSetting::Off};
+#else
   std::atomic<DemoSetting> demo_setting_{DemoSetting::Auto};
+#endif
   std::atomic<uint32_t> demo_start_ms_{0};
   bool elm_query_pending_ = false;
   bool elm_batch_active_ = false;

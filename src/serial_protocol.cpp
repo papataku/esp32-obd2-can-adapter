@@ -59,6 +59,12 @@ const char* SerialProtocol::demoSetting() const {
 }
 
 void SerialProtocol::setDemoAuto(bool enabled) {
+#if defined(M5CAN_VEHICLE_TRIAL)
+  // A driver may have saved AUTO in NVS on a previous bench firmware.
+  // Reject all trial-mode changes; never touch Preferences on this path.
+  if (enabled) Serial.println("#WARN,VEHICLE_TRIAL_DEMO_LOCKED_OFF");
+  return;
+#endif
   if (demoAutoEnabled()==enabled) return;
   demo_setting_=enabled ? DemoSetting::Auto : DemoSetting::Off;
   if (enabled) demo_start_ms_=millis(); // begin a fresh stress cycle
@@ -87,12 +93,14 @@ void SerialProtocol::emitDemoResponse(const ElmVehicleRequest& item) {
 void SerialProtocol::begin() {
   demo_start_ms_ = millis();
   Serial.begin(cfg::kSerialBaud);
+#if !defined(M5CAN_VEHICLE_TRIAL)
   Preferences settings;
   if (settings.begin("m5can_demo",true)) {
     demo_setting_=settings.getBool("auto",true) ?
         DemoSetting::Auto : DemoSetting::Off;
     settings.end();
   }
+#endif
   delay(80);
   emitTextHello();
   Serial.printf("#DEMO,setting=%s,active=%s,can_rx=%llu\n",
