@@ -3,6 +3,9 @@
 #include <Arduino.h>
 
 #include <cstdint>
+#if defined(M5CAN_BLE_EARLY_TRACE)
+#include "ble_link_edge_trace_model.h"
+#endif
 
 class BLEAdvertising;
 class BLEServer;
@@ -155,6 +158,10 @@ class BleElmTransport {
 #endif
   bool pollDiagnostic(BleDiagnosticEvent& event);
   uint32_t diagnosticDrops() const;
+#if defined(M5CAN_BLE_EARLY_TRACE)
+  void recordEarlyGapConnect(int32_t status,uint16_t handle);
+  BleLinkEdgeTrace earlyGapTrace() const;
+#endif
   void recordDiagnosticError(uint16_t connection_id,uint32_t generation,
                              uint16_t code,uint32_t detail=0);
 #endif
@@ -239,6 +246,9 @@ class BleElmTransport {
   volatile bool connected_ = false;
   volatile bool disconnect_event_ = false;
   BleStats stats_{};
+#if defined(M5CAN_BLE_EARLY_TRACE)
+  BleLinkEdgeTrace early_gap_{};
+#endif
   uint16_t peer_mtu_=23;
 
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
