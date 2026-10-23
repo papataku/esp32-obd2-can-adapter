@@ -832,7 +832,9 @@ bool BleElmTransport::notifyLogFrame(uint16_t id,uint32_t gen,
     count(&BleStats::v2_wait_msys);return false;
   }
   uint16_t host_pending=0,host_queued=0;
-  if(!notifyCredit(id,host_pending,host_queued)) {
+  if(!notifyCredit(id,host_pending,host_queued) ||
+     !m5can_log_stream_v2::PeerQosPolicy::rawHostCredit(
+         connectedClientCount(),host_pending,host_queued)) {
     count(&BleStats::v2_wait_host);return false;
   }
   os_mbuf* packet=ble_hs_mbuf_from_flat(frame,n);

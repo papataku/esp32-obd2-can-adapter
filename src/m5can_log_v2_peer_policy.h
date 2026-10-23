@@ -23,6 +23,15 @@ struct PeerQosPolicy {
   static bool elmQueueIdle(bool active,unsigned pending_count) {
     return !active || pending_count==0;
   }
+  // The application ELM FIFO can be empty while older bulk frames remain
+  // queued in NimBLE/controller FIFO ahead of the NEXT PID response. With
+  // two peers keep at most one RAW notification submitted but not completed.
+  // Called only after notifyCredit() validated the real peer/host snapshot;
+  // single-peer preloading and ASCII notification credit remain unchanged.
+  static bool rawHostCredit(unsigned active_peers,unsigned host_pending,
+                            unsigned host_queued) {
+    return active_peers<2 || (host_pending==0 && host_queued==0);
+  }
   static bool maySend(bool eligible_peer,bool all_elm_queues_empty) {
     return eligible_peer && all_elm_queues_empty;
   }
