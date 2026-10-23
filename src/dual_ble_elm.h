@@ -7,9 +7,18 @@
 #include "demo_drive.h"
 #include "adaptive_multi_pid.h"
 #include "diagnostic_pid_cache.h"
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+#include "m5can_log_stream_v2_sender.h"
+#include "m5can_log_v2_progress.h"
+#include "m5can_log_stream_v2_gatt.h"
+#include "m5can_log_v2_peer_policy.h"
+#endif
 
 namespace m5can {
 class SerialProtocol;
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+class RawCanRecordingService;
+#endif
 
 // Experimental two-client BLE ELM front-end. All state lives in this class,
 // which is polled from the Arduino loop. CAN continues on the existing
@@ -20,6 +29,9 @@ class DualBleElm {
              SerialProtocol& demo_source)
       : can_(can), ble_(ble), demo_source_(demo_source) {}
   void poll();
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  void setRawCanRecorder(RawCanRecordingService* service) { raw_service_=service; }
+#endif
   struct CoordinatorStats {
     uint32_t cache_hits=0, cache_misses=0, joins=0;
     uint32_t grouped_submissions=0, cross_group_submissions=0;
@@ -77,6 +89,15 @@ class DualBleElm {
   static DiagnosticRequest requestOf(const ElmVehicleRequest& item,
                                      const ElmCompat& elm);
 
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  void pollLogV2();
+  m5can_log_stream_v2::BlockSender log_stream_sender_{};
+  uint16_t log_stream_peer_=0;
+  uint32_t log_stream_generation_=0;
+  m5can_log_stream_v2::ProgressWatchdog log_stream_progress_{};
+  m5can_log_stream_v2::BlockFetchWatchdog log_stream_fetch_watchdog_{};
+  bool log_stream_active_=false,log_stream_fetch_pending_=false;
+#endif
   AdaptiveMultiPid adaptive_multi_pid_{};
   // Shared across both BLE sessions, independent of the CAN grouping policy.
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
@@ -91,6 +112,9 @@ class DualBleElm {
   CanMonitor& can_;
   BleElmTransport& ble_;
   SerialProtocol& demo_source_;
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  RawCanRecordingService* raw_service_=nullptr;
+#endif
   Session sessions_[2]{};
   // Atomics are published from BLE core1 and read by the Arduino/UI
   // task without exposing non-thread-safe cache internals.

@@ -6,7 +6,11 @@
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+#include "raw_can_service.h"
+#endif
 #include "app_config.h"
 #include "diagnostic_policy.h"
 #include "diagnostic_batch_planner.h"
@@ -63,6 +67,19 @@ void DualBleElm::event(const BleClientEvent& event) {
            &sessions_[active_secondary_owner_] == s))))
       adaptive_multi_pid_.disable();
     driveLog().event(DriveLog::Kind::Disconnect,s->conn_id);
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+    if(log_stream_active_ && log_stream_peer_==s->conn_id &&
+       log_stream_generation_==s->generation) {
+      log_stream_sender_.cancel();
+      log_stream_active_=log_stream_fetch_pending_=false;
+      log_stream_fetch_watchdog_.clear();
+    }
+#endif
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+    // Losing the recording meter requests a clean cut-off. If power dies,
+    // the immutable committed blocks remain recoverable after reboot.
+    if(raw_service_)raw_service_->queueStopFromBle(s->conn_id,s->generation);
+#endif
     s->multi_pid_pair = false;
     s->active = false;
     s->pending = false;
@@ -239,6 +256,59 @@ void DualBleElm::onLine(Session& s,const char* line) {
   char compact[96]{};
   upperNoSpaces(line,compact,sizeof(compact));
   if (s.elm.echo()) emitLine(s,line);
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  if(!std::strncmp(compact,"ATM5LOG",7)) {
+    // This ELM-compatible control plane is deliberately distinct from
+    // arbitrary CAN requests. The writer acts on the next Arduino poll:
+    // PENDING is NOT a durable recording ACK. No raw data is exposed here.
+    if(!raw_service_)emitLine(s,"M5LOG UNAVAILABLE");
+    else if(!std::strcmp(compact,"ATM5LOGCAP")) {
+      emitLine(s,raw_service_->ready()?
+          "M5LOG CAP V1 READY=1 READ=1 CHUNK=48 CRC=CRC32":
+          "M5LOG CAP V1 READY=0 READ=0 CHUNK=48 CRC=CRC32");
+    } else if(!std::strcmp(compact,"ATM5LOGSTATUS")) {
+      char info[200]{};
+      std::snprintf(info,sizeof(info),
+          "M5LOG STATUS STATE=%u SESSION=%lu Q=%lu LOST=%lu BLOCKS=%lu BYTES=%lu STORE_ERR=%lu CTRL_ERR=%lu",
+          static_cast<unsigned>(raw_service_->state()),
+          static_cast<unsigned long>(raw_service_->session()),
+          static_cast<unsigned long>(raw_service_->pending()),
+          static_cast<unsigned long>(raw_service_->dropped()),
+          static_cast<unsigned long>(raw_service_->committedBlocks()),
+          static_cast<unsigned long>(raw_service_->committedBytes()),
+          static_cast<unsigned long>(raw_service_->storageErrors()),
+          static_cast<unsigned long>(raw_service_->lastControlError()));
+      emitLine(s,info);
+    } else if(!std::strncmp(compact,raw_ble::kReadPrefix,
+                            std::strlen(raw_ble::kReadPrefix))) {
+      uint32_t index=0,offset=0;
+      const bool valid=raw_ble::parseReadArgs(
+          compact+std::strlen(raw_ble::kReadPrefix),index,offset);
+      if(valid && raw_service_->queueReadFromBle(
+          index,offset,s.conn_id,s.generation)) {
+        // Exactly one pending request, peer+generation bound. The Arduino
+        // owner reads and CRC-checks flash; its eventual reply ends with '>'.
+        // No speculative "success" ACK before verified data is available.
+        return;
+      }
+      emitLine(s,"M5LOG READ REJECTED");
+    } else if(!std::strncmp(compact,"ATM5LOGSTART",12)) {
+      char* end=nullptr;
+      const unsigned long id=std::strtoul(compact+12,&end,10);
+      const bool valid=compact[12] && end!=compact+12 &&
+          end && !*end && id && id<=0xFFFFFFFFUL;
+      const bool accepted=valid && raw_service_->queueStartFromBle(
+          static_cast<uint32_t>(id),s.conn_id,s.generation);
+      emitLine(s,accepted?"M5LOG START PENDING":"M5LOG START REJECTED");
+    } else if(!std::strcmp(compact,"ATM5LOGSTOP")) {
+      const bool accepted=raw_service_->queueStopFromBle(
+          s.conn_id,s.generation);
+      emitLine(s,accepted?"M5LOG STOP PENDING":"M5LOG STOP REJECTED");
+    } else emitLine(s,"M5LOG ?");
+    prompt(s);
+    return;
+  }
+#endif
   const ElmResult parsed=s.elm.execute(line);
   bool prompt_now=true;
   switch (parsed.action) {
@@ -749,15 +819,183 @@ void DualBleElm::dispatch() {
   }
 }
 
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+void DualBleElm::pollLogV2() {
+  if(!raw_service_)return;
+  // Never process external control bytes on NimBLE's GATT host task.
+  BleElmTransport::LogControlMessage control{};
+  for(unsigned n=0;n<4 && ble_.pollLogControl(control);++n) {
+    m5can_log_stream_v2::Control request{};
+    if(!m5can_log_stream_v2::decodeControl(
+            control.data,control.count,request))continue;
+    if(!ble_.logPeerAuthorized(control.peer,control.generation))continue;
+    if(request.kind==m5can_log_stream_v2::ControlKind::Start) {
+      // Explicit trigger only; never start on BLE connect / device boot.
+      if(log_stream_active_ || raw_service_->state()!=
+           RawCanRecordingService::State::Complete ||
+         !raw_service_->ready() ||
+         raw_service_->session()!=request.start.session ||
+         raw_service_->committedBlocks()!=request.start.blocks)continue;
+      if(!log_stream_sender_.begin(request.start.session,
+                                  request.start.blocks))continue;
+      log_stream_peer_=control.peer;
+      log_stream_generation_=control.generation;
+      log_stream_active_=true;
+      log_stream_fetch_pending_=false;
+      log_stream_fetch_watchdog_.clear();
+      log_stream_progress_.reset(millis());
+    } else if(request.kind==m5can_log_stream_v2::ControlKind::Ack) {
+      if(!log_stream_active_ || control.peer!=log_stream_peer_ ||
+         control.generation!=log_stream_generation_)continue;
+      const uint32_t previous=log_stream_sender_.durableSequence();
+      if(log_stream_sender_.acknowledge(request.ack))
+        log_stream_progress_.noteAck(previous,
+            log_stream_sender_.durableSequence(),millis());
+    }
+  }
+  if(!log_stream_active_)return;
+  if(!ble_.logPeerAuthorized(log_stream_peer_,log_stream_generation_) ||
+     log_stream_sender_.failed()) {
+    log_stream_sender_.cancel();
+    log_stream_active_=log_stream_fetch_pending_=false;
+    log_stream_fetch_watchdog_.clear();
+    return;
+  }
+  // A Flash mailbox request can be rejected or never answered. Retrying it
+  // must not defer a bounded 5-second deadline or destroy the source journal.
+  if(log_stream_sender_.needsBlock()) {
+    const uint32_t now=millis();
+    log_stream_fetch_watchdog_.arm(now);
+    if(log_stream_fetch_watchdog_.expired(now)) {
+      log_stream_sender_.cancel();
+      log_stream_active_=log_stream_fetch_pending_=false;
+      log_stream_fetch_watchdog_.clear();
+      return;
+    }
+  }
+  // A single flash-owning Arduino-loop poll produces verified staging.
+  // No GATT callback, BLE worker or TWAI ISR touches journal flash.
+  static RawCanRecordingService::StreamBlockReply received{};
+  if(raw_service_->takeStreamBlockForBle(received)) {
+    // Stale mailbox replies from a prior connection generation are harmless:
+    // consume them without resetting the new session's deadline or sender.
+    if(m5can_log_stream_v2::BlockFetchWatchdog::matchesReply(
+           log_stream_peer_,log_stream_generation_,
+           log_stream_sender_.expectedBlock(),
+           received.peer,received.generation,received.index)) {
+      log_stream_fetch_pending_=false;
+      if(received.error ||
+         !log_stream_sender_.stage(
+             static_cast<uint16_t>(received.index),
+             received.total?received.bytes:nullptr,
+             received.total,received.type==2)) {
+        log_stream_sender_.cancel();
+        log_stream_active_=false;
+        log_stream_fetch_watchdog_.clear();
+        return;
+      }
+      log_stream_fetch_watchdog_.clear();
+      log_stream_progress_.reset(millis());
+    }
+  }
+  if(log_stream_sender_.completed()) {
+    log_stream_fetch_watchdog_.clear();
+    log_stream_active_=false;return;
+  }
+  if(log_stream_sender_.needsBlock() && !log_stream_fetch_pending_) {
+    log_stream_fetch_pending_=raw_service_->queueStreamBlockFromBle(
+        log_stream_sender_.expectedBlock(),
+        log_stream_peer_,log_stream_generation_);
+  }
+  // CAN PID dispatch and ASCII responses ran first. Burst at most three
+  // V2 frames per application poll. EACH notifyLogFrame rechecks both
+  // clients' pending ELM replies, MTU, bonded identity, generation and
+  // NimBLE mbuf/controller credit before consuming the next V2 frame.
+  // A busy host returns immediately; there is no spin or Flash access here.
+  uint8_t frame[m5can_log_stream_v2::kMaxNotification]{};
+  for(unsigned burst=0;
+      burst<m5can_log_stream_v2::PeerQosPolicy::kMaxLogFramesPerPoll;
+      ++burst) {
+    const size_t n=log_stream_sender_.peek(frame,sizeof(frame));
+    if(!n || !ble_.notifyLogFrame(log_stream_peer_,log_stream_generation_,
+                                   frame,n))break;
+    if(!log_stream_sender_.queued()) {
+      log_stream_sender_.cancel();log_stream_active_=false;return;
+    }
+    // Keep ACK deadline anchored at the last accepted notification.
+    log_stream_progress_.noteNotification(millis());
+  }
+  // Withhold credit indefinitely only until a bounded ACK deadline.
+  // Retransmission reconstructs the original immutable staged block.
+  // END requires a whole-file SD CRC reread on the receiver's logger
+  // task. Do not misdiagnose that legitimate long readback as lost BLE.
+  const uint32_t ack_deadline_ms=
+      log_stream_sender_.awaitingFinalAck()?
+          m5can_log_stream_v2::ProgressWatchdog::kFinalAckTimeoutMs:
+          m5can_log_stream_v2::ProgressWatchdog::kDataAckTimeoutMs;
+  if(log_stream_sender_.outstanding() &&
+     log_stream_progress_.elapsed(millis(),ack_deadline_ms)) {
+    if(!log_stream_sender_.retryUnacked()) {
+      log_stream_sender_.cancel();log_stream_active_=false;
+    } else log_stream_progress_.reset(millis());
+  }
+}
+#endif
+
 void DualBleElm::poll() {
   BleClientEvent event_item{};
   for(int i=0;i<512 && ble_.pollClientEvent(event_item);++i)
     event(event_item);
   onResult();
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  if(raw_service_) {
+    // BLE app task has a strict 128-byte stack frame budget. Static storage
+    // is safe here: only the single BLE ELM worker ever executes poll().
+    static RawCanRecordingService::ExportReply reply{};
+    if(raw_service_->takeReadForBle(reply)) {
+      Session* recipient=find(reply.peer,reply.generation);
+      // Never route a response to a reused BLE connection id after reconnect.
+      if(recipient) {
+        static char line[250]{};
+        line[0]='\0';
+        if(reply.error) {
+          std::snprintf(line,sizeof(line),
+              "M5LOG READ ERROR BLOCK=%lu OFFSET=%lu CODE=%u",
+              static_cast<unsigned long>(reply.index),
+              static_cast<unsigned long>(reply.offset),
+              static_cast<unsigned>(reply.error));
+        } else {
+          static char hex[raw_ble::kChunkBytes*2+1]{};
+          if(!raw_ble::hexEncode(reply.bytes,reply.count,
+                                 hex,sizeof(hex))) {
+            emitLine(*recipient,"M5LOG READ INTERNAL");
+            prompt(*recipient);
+          } else {
+            std::snprintf(line,sizeof(line),
+                "M5LOG DATA BLOCK=%lu OFFSET=%lu SIZE=%u TOTAL=%u TYPE=%u CRC=%08lX HEX=%s",
+                static_cast<unsigned long>(reply.index),
+                static_cast<unsigned long>(reply.offset),
+                static_cast<unsigned>(reply.count),
+                static_cast<unsigned>(reply.total),
+                static_cast<unsigned>(reply.type),
+                static_cast<unsigned long>(reply.crc),hex);
+          }
+        }
+        if(line[0]) {
+          emitLine(*recipient,line);
+          prompt(*recipient);
+        }
+      }
+    }
+  }
+#endif
   for(auto& s:sessions_)
     if(s.active && s.batch && !s.pending)advanceBatch(s);
   dispatch();
   ble_.pollTx();
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  pollLogV2();
+#endif
 }
 } // namespace m5can
 

@@ -24,6 +24,79 @@ jobs:
       - name: Run host safety and protocol checks
         run: ./tests/run_all.sh
 
+  v2-isolated-build:
+    name: V2 encrypted GATT and CAN-idle owner compile-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+      - name: Compile complete opt-in V2 BLE service and journal pipeline
+        run: pio run -e m5dial_v2_owner_compile
+      - name: Confirm ELF and firmware exist; never auto flash
+        run: |
+          test -s .pio/build/m5dial_v2_owner_compile/firmware.elf
+          test -s .pio/build/m5dial_v2_owner_compile/firmware.bin
+      - name: Reject secure V2 lab builds without a provisioned identity
+        run: |
+          set -o pipefail
+          if pio run -e m5dial_v2_authenticated_lab > /tmp/v2-lab-denied.log 2>&1; then
+            echo 'ERROR: V2 lab image built without an allowlisted identity'
+            exit 1
+          fi
+          grep -q 'V2 Lab build BLOCKED' /tmp/v2-lab-denied.log
+      - name: Compile authenticated V2 GATT lab profile with TEST-ONLY identity
+        env:
+          M5CAN_LOG_V2_ALLOWED_PEER_ID48: '0x010203040506'
+        run: |
+          pio run -e m5dial_v2_authenticated_lab
+          test -s .pio/build/m5dial_v2_authenticated_lab/firmware.elf
+          test -s .pio/build/m5dial_v2_authenticated_lab/firmware.bin
+          # This is a synthetic CI identity and must NEVER be deployed.
+          rm -f .pio/build/m5dial_v2_authenticated_lab/firmware.bin
+      - name: Reject fresh-install V2 build without whole-flash erase acknowledgement
+        env:
+          M5CAN_LOG_V2_ALLOWED_PEER_ID48: '0x010203040506'
+        run: |
+          set -o pipefail
+          if pio run -e m5dial_v2_fresh_flash_lab > /tmp/v2-fresh-blocked.log 2>&1; then
+            echo 'ERROR: fresh erase-required V2 image compiled without acknowledgement'
+            exit 1
+          fi
+          grep -q 'V2 fresh flash build BLOCKED' /tmp/v2-fresh-blocked.log
+      - name: Build fresh 8MiB 4.375MiB CANLOG V2 lab image (TEST identity, NEVER flash)
+        env:
+          M5CAN_LOG_V2_ALLOWED_PEER_ID48: '0x010203040506'
+          M5CAN_V2_FRESH_FLASH_ACK: 'ERASE_ALL_8MB_OLD_DATA_REQUIRED'
+        run: |
+          pio run -e m5dial_v2_fresh_flash_lab
+          test -s .pio/build/m5dial_v2_fresh_flash_lab/firmware.elf
+          test -s .pio/build/m5dial_v2_fresh_flash_lab/firmware.bin
+          test -s .pio/build/m5dial_v2_fresh_flash_lab/partitions.bin
+          python tools/check_single_app_canlog_partition.py \
+            partitions/m5can_8mb_single_app_canlog_proposed.csv \
+            --firmware-bin .pio/build/m5dial_v2_fresh_flash_lab/firmware.bin
+          # Synthetic CI identity must never appear in a downloadable firmware.
+          rm -f .pio/build/m5dial_v2_fresh_flash_lab/firmware.bin
+          rm -f .pio/build/m5dial_v2_fresh_flash_lab/firmware.elf
+      - name: Build V2 16-frame MCAN codec A-B image (TEST identity, NEVER flash)
+        env:
+          M5CAN_LOG_V2_ALLOWED_PEER_ID48: '0x010203040506'
+          M5CAN_V2_FRESH_FLASH_ACK: 'ERASE_ALL_8MB_OLD_DATA_REQUIRED'
+        run: |
+          pio run -e m5dial_v2_fresh_flash_window16_lab
+          python tools/check_single_app_canlog_partition.py \
+            partitions/m5can_8mb_single_app_canlog_proposed.csv \
+            --firmware-bin .pio/build/m5dial_v2_fresh_flash_window16_lab/firmware.bin
+          test -s .pio/build/m5dial_v2_fresh_flash_window16_lab/firmware.elf
+          # No test-identity binary may be downloaded or automatically flashed.
+          rm -f .pio/build/m5dial_v2_fresh_flash_window16_lab/firmware.bin
+          rm -f .pio/build/m5dial_v2_fresh_flash_window16_lab/firmware.elf
+
   platformio-build:
     runs-on: ubuntu-latest
     steps:
@@ -35,6 +108,16 @@ jobs:
         run: python -m pip install --upgrade platformio
       - name: Build M5Dial firmware
         run: pio run -e m5dial
+      - name: Validate proposed 8MiB CAN log partition (build only; no flashing)
+        run: |
+          python tools/check_canlog_partition.py partitions/m5can_8mb_dual_ota_canlog_proposed.csv
+          pio run -e m5dial_flash_layout_eval
+          python tools/check_canlog_partition.py partitions/m5can_8mb_dual_ota_canlog_proposed.csv --firmware-bin .pio/build/m5dial_flash_layout_eval/firmware.bin
+      - name: Validate no-OTA single-app layout (compile/size check only, never flash)
+        run: |
+          python tools/check_single_app_canlog_partition.py partitions/m5can_8mb_single_app_canlog_proposed.csv
+          pio run -e m5dial_single_app_layout_eval
+          python tools/check_single_app_canlog_partition.py partitions/m5can_8mb_single_app_canlog_proposed.csv --firmware-bin .pio/build/m5dial_single_app_layout_eval/firmware.bin
       - name: Build two-client BLE opt-in bench
         run: pio run -e m5dial_dual_ble_bench
       - name: Build matched MTU247 two-client bench
@@ -49,6 +132,8 @@ jobs:
         run: pio run -e m5dial_integrated_soak
       - name: Build BLE MTU A/B benchmark firmware
         run: pio run -e m5dial_mtu23_bench -e m5dial_mtu_bench
+      - name: Build isolated full-block V2 CAN-idle journal owner mailbox (no GATT)
+        run: pio run -e m5dial_v2_owner_compile
       - name: Check compiler stack frame budgets
         run: python tools/check_dual_stack.py m5dial m5dial_dual_ble_bench m5dial_dual_ble_mtu_bench m5dial_dual_ble_canmode_dry_bench m5dial_dual_ble_multipid_bench m5dial_dual_ble_fault_fixture m5dial_mtu23_bench m5dial_mtu_bench m5dial_integrated_soak
       - name: Upload M5Dial build artifacts (quota-dependent)

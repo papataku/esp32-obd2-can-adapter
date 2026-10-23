@@ -9,6 +9,9 @@
 
 #include "ble_elm_transport.h"
 #include "can_monitor.h"
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+#include "raw_can_service.h"
+#endif
 #include "serial_protocol.h"
 #include "ui.h"
 #ifndef M5CAN_BUILD_SHA
@@ -34,6 +37,9 @@ uint32_t bootFreeHeapBytes() {
 }
 #endif
 m5can::CanMonitor g_can;
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+m5can::RawCanRecordingService g_raw(g_can);
+#endif
 m5can::BleElmTransport g_ble;
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
 m5can::SerialProtocol g_serial(g_can, nullptr); // USB only, separate ELM state
@@ -63,8 +69,23 @@ bool g_ble_ok = false;
 
 void setup() {
   g_serial.setDriveLogTransport(&g_ble);
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  g_serial.setRawCanRecorder(&g_raw);
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+  g_dual.setRawCanRecorder(&g_raw);
+#endif
+#endif
   g_ui.begin();
   g_serial.begin();
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  // Must run before starting TWAI/BLE. If the proposed 'canlog' partition
+  // is absent or still contains old OTA bytes, this fails closed.
+  const bool raw_ready=g_raw.begin();
+  Serial.printf("#CANLOG,boot_ready=%u,reason=%s,blocks=%lu,foreign=%u\n",
+      raw_ready?1U:0U,raw_ready?"OK":"ABSENT_OR_UNOWNED",
+      static_cast<unsigned long>(m5can::rawCanJournal().status().blocks),
+      m5can::rawCanJournal().status().foreign?1U:0U);
+#endif
 #if defined(ARDUINO_ARCH_ESP32)
   m5can::driveLog().begin(static_cast<uint32_t>(esp_reset_reason()),
       static_cast<uint32_t>(rtc_get_reset_reason(0)));
@@ -85,6 +106,18 @@ void setup() {
   Serial.printf("#BOOT,git=%s,reset=%u,rom_reset=%u,stack=NimBLE_dual_if_enabled\n",
       M5CAN_BUILD_SHA, static_cast<unsigned>(esp_reset_reason()),
       static_cast<unsigned>(rtc_get_reset_reason(0)));
+#endif
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  // Actual readiness requires all three: registered dedicated GATT service,
+  // allowlisted bonded peer and an already-safe committed CANLOG session.
+  // Never print the approved peer ID or call compiled==ready.
+  unsigned allowlisted=0;
+#if defined(M5CAN_LOG_V2_ALLOWED_PEER_ID48)
+  allowlisted=1;
+#endif
+  Serial.printf("#V2,compiled=1,gatt_init=%u,peer_allowlisted=%u,canlog_ready=%u,blocks=%lu,window=16,mtu_req=247\n",
+      g_ble_ok?1U:0U,allowlisted,g_raw.ready()?1U:0U,
+      static_cast<unsigned long>(m5can::rawCanJournal().status().blocks));
 #endif
   if (!g_ble_ok) {
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -157,6 +190,9 @@ void loop() {
     g_serial.toggleDemoAuto();
   }
   g_serial.pollInput();
+#if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
+  if(g_can_ok)g_raw.poll(); // bounded consumer, only Arduino CPU1 writes flash
+#endif
 #if !defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   if (g_ble_ok) {
     // Emit callback events from loop(), never from the BLE stack callback.
@@ -213,6 +249,32 @@ void loop() {
     Serial.printf("#BLE_FLOW,waits=%lu,queue_peak=%u,host_peak=%u,host_queue_peak=%u,overflow=%lu,stalls=%lu\n",
         static_cast<unsigned long>(stats.credit_waits),stats.tx_queue_peak,stats.host_pending_peak,stats.host_queue_peak,
         static_cast<unsigned long>(stats.tx_queue_overflows),static_cast<unsigned long>(stats.tx_stalls));
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+    // Five-second snapshots, not per-notify Serial. Cumulative V2 reasons
+    // distinguish ordinary ELM traffic, host credit and memory pressure.
+    const auto credit=g_ble.v2CreditSnapshot();
+    Serial.printf("#BLE_V2_FLOW,uptime_ms=%lu,ok=%lu,elm_wait=%lu,auth_denied=%lu,msys_wait=%lu,host_wait=%lu,mbuf_fail=%lu,notify_fail=%lu,bad=%lu\n",
+        static_cast<unsigned long>(millis()),
+        static_cast<unsigned long>(stats.v2_notify_ok),
+        static_cast<unsigned long>(stats.v2_wait_elm),
+        static_cast<unsigned long>(stats.v2_denied_link),
+        static_cast<unsigned long>(stats.v2_wait_msys),
+        static_cast<unsigned long>(stats.v2_wait_host),
+        static_cast<unsigned long>(stats.v2_mbuf_fail),
+        static_cast<unsigned long>(stats.v2_notify_api_fail),
+        static_cast<unsigned long>(stats.v2_bad_frame));
+    Serial.printf("#BLE_V2_CREDIT,uptime_ms=%lu,msys_free=%u,peer0=%u,ascii0=%u,outstanding0=%u,queued0=%u,peer1=%u,ascii1=%u,outstanding1=%u,queued1=%u\n",
+        static_cast<unsigned long>(millis()),
+        static_cast<unsigned>(credit.msys_free),
+        credit.peers[0].active?1U:0U,
+        static_cast<unsigned>(credit.peers[0].ascii_pending_bytes),
+        static_cast<unsigned>(credit.peers[0].host_outstanding),
+        static_cast<unsigned>(credit.peers[0].host_queued),
+        credit.peers[1].active?1U:0U,
+        static_cast<unsigned>(credit.peers[1].ascii_pending_bytes),
+        static_cast<unsigned>(credit.peers[1].host_outstanding),
+        static_cast<unsigned>(credit.peers[1].host_queued));
+#endif
     Serial.printf("#BLE_TASK,core=%d,poll_peak_us=%lu,stack_free_bytes=%u,ui_loop_peak_us=%lu\n",
         M5CAN_DUAL_BLE_APP_CORE,
         static_cast<unsigned long>(g_ble_poll_peak_us.exchange(0)),

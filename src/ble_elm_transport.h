@@ -15,6 +15,8 @@ namespace m5can {
 
 class M5CanBleServerCallbacks;
 class M5CanBleRxCallbacks;
+class M5CanLogControlCallbacks;
+class M5CanLogDataCallbacks;
 
 struct BleStats {
   uint64_t rx_bytes = 0;
@@ -36,6 +38,13 @@ struct BleStats {
   uint32_t memory_error_ms=0;
   uint16_t memory_error_conn=0,msys_min_free=UINT16_MAX;
   int32_t memory_error_code=0;
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  // Cumulative per-attempt V2 reason counters (NEVER reset on END).
+  // Snapshot before/after to distinguish V2 flow from ordinary ELM backlog.
+  uint32_t v2_notify_ok=0, v2_wait_elm=0, v2_denied_link=0;
+  uint32_t v2_wait_msys=0, v2_wait_host=0;
+  uint32_t v2_mbuf_fail=0, v2_notify_api_fail=0, v2_bad_frame=0;
+#endif
 };
 
 
@@ -63,6 +72,18 @@ struct BlePeerTraffic {
 struct BlePeersSnapshot {
   BlePeerTraffic peers[2]{};
 };
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+// Read-only, periodic on-demand sample; no remote identity or secret data.
+struct BleV2CreditSnapshot {
+  struct Peer {
+    bool active=false;
+    uint16_t ascii_pending_bytes=0;
+    uint16_t host_outstanding=0,host_queued=0;
+  };
+  Peer peers[2]{};
+  uint16_t msys_free=0;
+};
+#endif
 
 struct BleDiagnosticEvent {
   enum class Kind : uint8_t { Connect, Disconnect, Reject, Error };
@@ -108,8 +129,30 @@ class BleElmTransport {
                  const uint8_t* data,size_t length);
   bool responseReady(uint16_t connection_id,uint32_t generation) const;
   void pollTx(); // BLE application worker only; at most one chunk per peer.
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  // A completely separate, opt-in GATT service. Only the BLE worker calls
+  // pollLogControl/notifyLogFrame. ELM ASCII is never fed binary log bytes.
+  struct LogControlMessage {
+    uint16_t peer=0;
+    uint32_t generation=0;
+    uint8_t count=0;
+    uint8_t data[28]{};
+  };
+  bool pollLogControl(LogControlMessage& message);
+  // Eligibility does not depend on ELM queue occupancy. A busy ELM peer
+  // merely defers V2 notifications and MUST NOT cancel a live transfer.
+  enum class V2ReadyReason : uint8_t { Ready, Unauthenticated, ElmQueueBusy };
+  bool logPeerAuthorized(uint16_t peer,uint32_t generation) const;
+  bool logPeerReady(uint16_t peer,uint32_t generation,
+                    V2ReadyReason* reason=nullptr) const;
+  bool notifyLogFrame(uint16_t peer,uint32_t generation,
+                      const uint8_t* frame,size_t size);
+#endif
   uint8_t connectedClientCount() const;
   BlePeersSnapshot peerTraffic() const;
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  BleV2CreditSnapshot v2CreditSnapshot() const;
+#endif
   bool pollDiagnostic(BleDiagnosticEvent& event);
   uint32_t diagnosticDrops() const;
   void recordDiagnosticError(uint16_t connection_id,uint32_t generation,
@@ -121,6 +164,8 @@ class BleElmTransport {
  private:
   friend class M5CanBleServerCallbacks;
   friend class M5CanBleRxCallbacks;
+  friend class M5CanLogControlCallbacks;
+  friend class M5CanLogDataCallbacks;
 
   void onConnect();
   void onDisconnect();
@@ -134,6 +179,10 @@ class BleElmTransport {
   void onPeerDisconnect(uint16_t connection_id);
   void onPeerWrite(uint16_t connection_id, const uint8_t* data, size_t length);
   void onPeerMtu(uint16_t connection_id, uint16_t mtu);
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  void onLogWrite(uint16_t peer,const uint8_t* bytes,size_t count,bool secured);
+  void onLogSubscribe(uint16_t peer,bool subscribed);
+#endif
   void recordGapDisconnect(uint16_t connection_id, int reason,
                            uint16_t interval, uint16_t latency,
                            uint16_t supervision);
@@ -155,6 +204,9 @@ class BleElmTransport {
     uint16_t pending_head=0,pending_size=0;
     uint32_t progress_ms=0;
     bool stalled_reported=false,tx_aborted=false;
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+    bool log_subscribed=false,log_secured=false;
+#endif
   };
   static constexpr size_t kMaxClients = 2;
   static constexpr size_t kEventBufferSize = 2048;
@@ -169,6 +221,12 @@ class BleElmTransport {
   size_t diagnostic_head_ = 0, diagnostic_tail_ = 0;
   uint32_t diagnostic_seq_ = 0, diagnostic_drops_ = 0;
   NimBLEServer* server_ = nullptr;
+#if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
+  static constexpr unsigned kLogControlSlots=8;
+  LogControlMessage log_control_[kLogControlSlots]{};
+  uint8_t log_control_head_=0,log_control_tail_=0;
+  NimBLECharacteristic* log_tx_characteristic_=nullptr;
+#endif
 #endif
   void setError(const char* message);
 
