@@ -44,6 +44,14 @@ class M5CanBleServerCallbacks final : public NimBLEServerCallbacks {
     gap_owner_ = &owner;
   }
   static int gapEvent(ble_gap_event* event, void*) {
+#if defined(M5CAN_BLE_EARLY_TRACE)
+    // NimBLE GAP listener: callback-only scalar counters, never USB/NVS.
+    // Record connect failures even when NimBLEServer::onConnect is not called.
+    if (gap_owner_ && event && event->type == BLE_GAP_EVENT_CONNECT) {
+      gap_owner_->recordEarlyGapConnect(event->connect.status,
+                                        event->connect.conn_handle);
+    }
+#endif
     if (gap_owner_ && event && event->type == BLE_GAP_EVENT_DISCONNECT) {
       const auto& d = event->disconnect.conn;
       gap_owner_->recordGapDisconnect(d.conn_handle, event->disconnect.reason,
@@ -521,6 +529,9 @@ void BleElmTransport::pushDiagnostic(BleDiagnosticEvent::Kind kind, uint16_t id,
 void BleElmTransport::recordGapDisconnect(uint16_t id, int reason,
     uint16_t interval, uint16_t latency, uint16_t supervision) {
   portENTER_CRITICAL(&mux_);
+#if defined(M5CAN_BLE_EARLY_TRACE)
+  early_gap_.disconnect(millis(),reason,id);
+#endif
   stats_.last_disconnect_conn_id=id;
   stats_.last_disconnect_reason=reason;
   stats_.last_disconnect_reason_known=true;
@@ -531,6 +542,20 @@ void BleElmTransport::recordGapDisconnect(uint16_t id, int reason,
                  interval,latency,supervision);
   portEXIT_CRITICAL(&mux_);
 }
+#if defined(M5CAN_BLE_EARLY_TRACE)
+void BleElmTransport::recordEarlyGapConnect(int32_t status,uint16_t handle) {
+  portENTER_CRITICAL(&mux_);
+  early_gap_.connect(millis(),status,handle);
+  portEXIT_CRITICAL(&mux_);
+}
+BleLinkEdgeTrace BleElmTransport::earlyGapTrace() const {
+  portENTER_CRITICAL(&mux_);
+  const BleLinkEdgeTrace snapshot=early_gap_;
+  portEXIT_CRITICAL(&mux_);
+  return snapshot;
+}
+#endif
+
 void BleElmTransport::recordDiagnosticError(
     uint16_t id,uint32_t generation,uint16_t code,uint32_t detail) {
   portENTER_CRITICAL(&mux_);
