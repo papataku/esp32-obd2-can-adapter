@@ -46,11 +46,24 @@ m5can::SerialProtocol g_serial(g_can, nullptr); // USB only, separate ELM state
 m5can::DualBleElm g_dual(g_can,g_ble,g_serial);
 TaskHandle_t g_ble_app_task=nullptr;
 std::atomic<uint32_t> g_ble_poll_peak_us{0};
+#if defined(M5CAN_BLE_EARLY_TRACE)
+std::atomic<uint32_t> g_ble_interpoll_peak_us{0};
+#endif
 void bleAppTask(void*) {
   Serial.printf("#CORE,task=ble-elm,core=%d,priority=%u\n",
                 xPortGetCoreID(),static_cast<unsigned>(uxTaskPriorityGet(nullptr)));
+  uint32_t last_start_us=0;
   for (;;) {
     const uint32_t start_us=micros();
+#if defined(M5CAN_BLE_EARLY_TRACE)
+    if(last_start_us!=0) {
+      const uint32_t gap=start_us-last_start_us;
+      uint32_t prev=g_ble_interpoll_peak_us.load(std::memory_order_relaxed);
+      while(gap>prev && !g_ble_interpoll_peak_us.compare_exchange_weak(
+          prev,gap,std::memory_order_relaxed)) {}
+    }
+#endif
+    last_start_us=start_us;
     g_dual.poll();
     const uint32_t elapsed_us=micros()-start_us;
     uint32_t current=g_ble_poll_peak_us.load(std::memory_order_relaxed);
@@ -281,6 +294,22 @@ void loop() {
         static_cast<unsigned>(uxTaskGetStackHighWaterMark(g_ble_app_task)),
         static_cast<unsigned long>(loop_peak_us));
     loop_peak_us=0;
+#if defined(M5CAN_BLE_EARLY_TRACE)
+    const auto edge=g_ble.earlyGapTrace();
+    Serial.printf("#BLE_EDGE,con=%lu,ok=%lu,err=%lu,last=%ld,last_ms=%lu,first=%ld,first_ms=%lu,disc=%lu,reason=%ld,disc_ms=%lu END\n",
+        static_cast<unsigned long>(edge.gap_connect_events),
+        static_cast<unsigned long>(edge.gap_connect_ok),
+        static_cast<unsigned long>(edge.gap_connect_failed),
+        static_cast<long>(edge.last_connect_status),
+        static_cast<unsigned long>(edge.last_connect_ms),
+        static_cast<long>(edge.first_failure_status),
+        static_cast<unsigned long>(edge.first_failure_ms),
+        static_cast<unsigned long>(edge.gap_disconnect_events),
+        static_cast<long>(edge.last_disconnect_reason),
+        static_cast<unsigned long>(edge.last_disconnect_ms));
+    Serial.printf("#BLE_EDGE_TASK,interpoll_peak_us=%lu END\n",
+        static_cast<unsigned long>(g_ble_interpoll_peak_us.exchange(0)));
+#endif
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
     const auto coordinator=g_dual.coordinatorStats();
     // These are logical coordinator submissions; physical TX is separately
