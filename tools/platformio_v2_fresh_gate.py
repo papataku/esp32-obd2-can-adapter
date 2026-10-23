@@ -14,7 +14,8 @@ from check_single_app_canlog_partition import validate
 
 expected = "ERASE_ALL_8MB_OLD_DATA_REQUIRED"
 if env["PIOENV"] not in ("m5dial_v2_fresh_flash_lab",
-                         "m5dial_v2_fresh_flash_window16_lab"):
+                         "m5dial_v2_fresh_flash_window16_lab",
+                         "m5dial_v2_fresh_flash_mtu247_lab"):
     raise RuntimeError("V2 fresh-install gate was applied outside an allowed lab profile")
 if os.environ.get("M5CAN_V2_FRESH_FLASH_ACK", "") != expected:
     raise RuntimeError(

@@ -279,3 +279,21 @@ The earlier decision D021 remains valid for normal firmware: sustained
 full-bus logging on Flash is not production-qualified. This decision
 only enables an intentional finite V2 lab capture for obtaining evidence.
 See `docs/m5dial_v2_fresh_flash_lab_2026-10-19.md`.
+
+### Paired MTU247 ASCII path within the V2 lab
+
+`m5dial_v2_fresh_flash_mtu247_lab` retains the V2 lab journal, bonded
+single-peer allowlist, exact flash layout, sender fairness and SD durable
+ACK rules, but uses the already-tested 244-byte ELM notification cap.
+Both meter receivers MUST explicitly enable
+`VEHICLE_M5CAN_MTU247_EXPERIMENTAL`. Negotiated MTU alone is insufficient.
+The ordinary V2 lab and production profiles retain the 20-byte baseline.
+This isolates ASCII fragmentation from binary V2 performance; it does not
+claim to fix RF connection-establishment failure or physical CAN pacing.
+
+On an already-verified migrated device, switch only the application after
+checking the installed partition table; do not erase NVS/CANLOG, write
+partitions, or perform the original fresh-install migration again. The
+build acknowledgement and explicit real approved peer identity remain
+required. CI tests missing-ack denial and compiles with test-only identity,
+then removes that non-deployable binary.
