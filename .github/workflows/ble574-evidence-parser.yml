@@ -1,0 +1,30 @@
+name: BLE 574 offline evidence audit
+
+on:
+  push:
+    branches:
+      - analysis/ble574-single-shot-evidence-20261023
+
+permissions:
+  contents: read
+
+jobs:
+  offline-parser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Unit tests for private RAW evidence boundaries
+        run: python3 -m unittest discover -s tests -p test_ble_linkedge_single.py -v
+      - name: Syntax validation
+        run: python3 -m py_compile tools/analyze_ble_linkedge_single.py tests/test_ble_linkedge_single.py
+      - name: Verify no firmware modifications
+        run: |
+          git diff --name-only 371445bd007779fc8b037faa2294e207ea2616fc HEAD |
+            tee /tmp/ble574_changed_files
+          if grep -E '^(src/|include/|platformio.ini|partitions/)' /tmp/ble574_changed_files; then
+            echo 'Unexpected firmware source or layout modification'
+            exit 1
+          fi
