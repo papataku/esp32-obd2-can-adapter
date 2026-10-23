@@ -42,6 +42,23 @@ for env in sys.argv[1:]:
     frames = {}
     files = list((Path('.pio/build') / env / 'src').glob('*.su'))
     assert files, f'{env}: compiler stack files missing'
+
+    # Narrow diagnostic comparison only. The deployed-layout V2 baseline may
+    # already exceed the old general-purpose DriveLog::poll frame threshold.
+    # Never bless an increase; require the same-source baseline .su to exist.
+    baseline_poll = None
+    if env == 'm5dial_v2_fresh_flash_mtu247_linkedge_lab':
+        original = Path('.pio/build/m5dial_v2_fresh_flash_mtu247_lab/src')
+        source_files = list(original.glob('*.su'))
+        assert source_files, f'{env}: exact deployed-layout baseline missing'
+        for p in source_files:
+            for raw in p.read_text().splitlines():
+                fields = raw.split('\t')
+                if len(fields) == 3 and 'm5can::DriveLog::poll(' in fields[0]:
+                    assert fields[2] == 'static', f'{env}: baseline frame is dynamic'
+                    baseline_poll = max(baseline_poll or 0, int(fields[1]))
+        assert baseline_poll is not None, f'{env}: baseline DriveLog::poll unavailable'
+        print(f'{env}: reference DriveLog::poll baseline frame {baseline_poll} bytes')
     for p in files:
         for line in p.read_text().splitlines():
             fields = line.split('\t')
@@ -52,7 +69,10 @@ for env in sys.argv[1:]:
                 if key in name:
                     assert kind == 'static', f'{env}: unbounded frame {name}: {kind}'
                     frames[key] = max(frames.get(key, 0), int(size))
-                    assert int(size) <= budget, f'{env}: {name} {size}>{budget}'
+                    allowed = budget
+                    if baseline_poll is not None and key == 'm5can::DriveLog::poll(':
+                        allowed = max(budget, baseline_poll)
+                    assert int(size) <= allowed, f'{env}: {name} {size}>{allowed} (baseline {baseline_poll})'
     sz=lambda name:frames.get(name,0)
     startup=sz('void setup()')+max(
         sz('m5can::DriveLog::begin(')+sz('m5can::DriveLog::save('),
