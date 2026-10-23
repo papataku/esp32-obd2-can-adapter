@@ -52,7 +52,9 @@ std::atomic<uint32_t> g_ble_interpoll_peak_us{0};
 void bleAppTask(void*) {
   Serial.printf("#CORE,task=ble-elm,core=%d,priority=%u\n",
                 xPortGetCoreID(),static_cast<unsigned>(uxTaskPriorityGet(nullptr)));
+#if defined(M5CAN_BLE_EARLY_TRACE)
   uint32_t last_start_us=0;
+#endif
   for (;;) {
     const uint32_t start_us=micros();
 #if defined(M5CAN_BLE_EARLY_TRACE)
@@ -62,8 +64,8 @@ void bleAppTask(void*) {
       while(gap>prev && !g_ble_interpoll_peak_us.compare_exchange_weak(
           prev,gap,std::memory_order_relaxed)) {}
     }
-#endif
     last_start_us=start_us;
+#endif
     g_dual.poll();
     const uint32_t elapsed_us=micros()-start_us;
     uint32_t current=g_ble_poll_peak_us.load(std::memory_order_relaxed);
