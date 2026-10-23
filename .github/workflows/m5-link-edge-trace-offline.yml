@@ -1,0 +1,51 @@
+name: M5 574 early-link observer offline CI
+
+on:
+  push:
+    branches:
+      - bench/m5-link-edge-observer-20261023
+
+permissions:
+  contents: read
+
+jobs:
+  host-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run bounded GAP event model
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror tests/test_ble_link_edge_trace.cpp -o /tmp/ble-link-edge-test
+          /tmp/ble-link-edge-test
+      - name: Existing host tests
+        run: ./tests/run_all.sh
+
+  m5-offline-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Synthetic test identity only: this build must NEVER be deployed.
+      M5CAN_LOG_V2_ALLOWED_PEER_ID48: '0x010203040506'
+      # Build gate acknowledgement only; this job never erases a device.
+      M5CAN_V2_FRESH_FLASH_ACK: ERASE_ALL_8MB_OLD_DATA_REQUIRED
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+      - name: Build opt-in deployed-layout MTU247 M5 observer (no upload)
+        run: pio run -e m5dial_v2_fresh_flash_mtu247_linkedge_lab
+      - name: Stack, layout and firmware image existence
+        run: |
+          set -eu
+          env=m5dial_v2_fresh_flash_mtu247_linkedge_lab
+          python tools/check_dual_stack.py "$env"
+          python tools/check_single_app_canlog_partition.py \
+            partitions/m5can_8mb_single_app_canlog_proposed.csv \
+            --firmware-bin ".pio/build/$env/firmware.bin"
+          test -s ".pio/build/$env/firmware.elf"
+          test -s ".pio/build/$env/firmware.bin"
+          # Never publish an image containing the synthetic identity.
+          rm -f ".pio/build/$env/firmware.bin" ".pio/build/$env/firmware.elf"
