@@ -118,9 +118,16 @@ class DiagnosticRequestPacer {
     bool valid = false;
   };
 
+  static bool observed(uint32_t id) {
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+    return DiagnosticPolicy::observedPhysicalEcu(id);
+#else
+    (void)id;return false;
+#endif
+  }
   static bool grouped(const DiagnosticRequest& request) {
     return (request.can_id == 0x18DB33F1U ||
-            DiagnosticPolicy::observedPhysicalEcu(request.can_id)) && request.length == 3 &&
+            observed(request.can_id)) && request.length == 3 &&
            request.data[0] == 0x01 && request.data[1] == 0x0C &&
            request.data[2] == 0x0D;
   }
@@ -138,7 +145,7 @@ class DiagnosticRequestPacer {
     const uint32_t can_id = request.can_id;
     return (can_id == 0x18DB33F1U || can_id == 0x18DBEFF1U ||
             can_id == 0x18DA01F1U ||
-            DiagnosticPolicy::observedPhysicalEcu(can_id)) &&
+            observed(can_id)) &&
            (request.length == 2 || request.length == 3);
   }
 
@@ -149,7 +156,7 @@ class DiagnosticRequestPacer {
     const bool meter=request.data[0]==0x01 &&
         (request.data[1]==0x0C || request.data[1]==0x0D);
     const uint32_t key_id=meter &&
-        DiagnosticPolicy::observedPhysicalEcu(request.can_id)
+        observed(request.can_id)
         ? 0x18DB33F1U : request.can_id;
     return (static_cast<uint64_t>(key_id) << 32) |
            (static_cast<uint64_t>(request.length) << 24) |

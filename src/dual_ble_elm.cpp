@@ -66,6 +66,9 @@ void DualBleElm::event(const BleClientEvent& event) {
           (active_secondary_owner_ >= 0 &&
            &sessions_[active_secondary_owner_] == s))))
       adaptive_multi_pid_.disable();
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+    ecu_selector_.disable();
+#endif
     driveLog().event(DriveLog::Kind::Disconnect,s->conn_id);
 #if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL) && defined(M5CAN_RAW_CAN_LOG_RUNTIME)
     if(log_stream_active_ && log_stream_peer_==s->conn_id &&
@@ -197,8 +200,12 @@ void DualBleElm::advanceBatch(Session& s) {
       // CACHE MISSES. If either PID is fresh, serve it independently and
       // do not issue an unnecessary grouped physical CAN query.
       const uint64_t now_us=static_cast<uint64_t>(esp_timer_get_time());
-      if (!pid_cache_.hasFresh(first,now_us) &&
-          !pid_cache_.hasFresh(second,now_us)) {
+      if (
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+          ecu_selector_.probing() ||
+#endif
+          (!pid_cache_.hasFresh(first,now_us) &&
+           !pid_cache_.hasFresh(second,now_us))) {
         const auto plan=DiagnosticBatchPlanner::plan(
             first,&second,adaptive_multi_pid_);
         if (plan.kind==DiagnosticBatchPlanner::Kind::GroupDistinct) {
@@ -498,6 +505,11 @@ void DualBleElm::onResult() {
   const int second=active_secondary_owner_;
   const uint32_t secondary_generation=active_secondary_generation_;
   const bool cross=active_cross_group_;
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+  const bool was_ecu_group=active_ecu_group_;
+  const bool was_physical=active_ecu_physical_;
+  active_ecu_group_=active_ecu_physical_=false;
+#endif
   active_query_owner_=-1;
   active_secondary_owner_=-1;
   active_secondary_generation_=0;
@@ -512,6 +524,82 @@ void DualBleElm::onResult() {
   const uint64_t now_us=static_cast<uint64_t>(esp_timer_get_time());
   const uint64_t acquired_us =
       result.completed_at_us ? result.completed_at_us : now_us;
+
+
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+  // The selector, unlike the legacy one-probe classifier, treats unequal
+  // answers from DIFFERENT ECUs as candidate evidence, not ValuesDisagree.
+  if(was_ecu_group && (cross || s.multi_pid_pair)) {
+    const auto previous=ecu_selector_.state();
+    DiagnosticRawFrame virtual_frames[2]{};
+    const bool good=ecu_selector_.observe(result,was_physical,virtual_frames);
+    const auto next=ecu_selector_.state();
+    if(previous!=next) {
+      pid_cache_.clear(); // no stale functional values across source states
+      if(ecu_selector_.legacy())adaptive_multi_pid_.disable();
+      Serial.printf("#ECU_STATE,from=%u,to=%u,source=%08lX,probes=%u,rechecks=%u,physical_ok=%lu,physical_fail=%lu\\n",
+                    unsigned(previous),unsigned(next),
+                    static_cast<unsigned long>(ecu_selector_.chosenResponse()),
+                    unsigned(ecu_selector_.probes()),unsigned(ecu_selector_.retries()),
+                    static_cast<unsigned long>(ecu_selector_.physicalOk()),
+                    static_cast<unsigned long>(ecu_selector_.physicalFailed()));
+      for(uint8_t k=0;k<ecu_selector_.candidates();++k) {
+        const auto& c=ecu_selector_.candidate(k);
+        Serial.printf("#ECU_CAND,id=%08lX,success=%lu,changes=%lu,avg_us=%llu,rejected=%u\\n",
+                      static_cast<unsigned long>(c.can_id),
+                      static_cast<unsigned long>(c.successes),
+                      static_cast<unsigned long>(c.changes),
+                      static_cast<unsigned long long>(c.successes?
+                          c.latency_us/c.successes:0),unsigned(c.disqualified));
+      }
+      const auto cs=can_.stats();
+      Serial.printf("#ECU_TRAFFIC,tx_attempt=%llu,tx_success=%llu,rx_total=%llu,selected_rx=%llu\\n",
+                    static_cast<unsigned long long>(cs.tx_attempts),
+                    static_cast<unsigned long long>(cs.tx_success),
+                    static_cast<unsigned long long>(cs.rx_frames),
+                    static_cast<unsigned long long>(ecu_selector_.rawRxFrames()));
+    }
+    if(was_physical && !good) {
+      Serial.printf("#ECU_FAILURE,source=%08lX,status=%u,response_count=%u,physical_fail=%lu\\n",
+                    static_cast<unsigned long>(ecu_selector_.chosenResponse()),
+                    unsigned(result.status),unsigned(result.response_count),
+                    static_cast<unsigned long>(ecu_selector_.physicalFailed()));
+    }
+    if(cross) {
+      if(!primary_live || !other_live) {
+        ecu_selector_.disable();
+        adaptive_multi_pid_.disable();
+        return; // do not deliver to a disconnected generation
+      }
+      const bool first_is_rpm=s.request.data[1]==0x0C;
+      if(good) {
+        appendFrame(s,virtual_frames[first_is_rpm?0:1]);
+        appendFrame(*other,virtual_frames[first_is_rpm?1:0]);
+      } else {
+        emitLine(s,"NO DATA");
+        emitLine(*other,"NO DATA");
+      }
+      s.pending=false;other->pending=false;
+      if(s.batch){++s.batch_next;advanceBatch(s);}else prompt(s);
+      if(other->batch){++other->batch_next;advanceBatch(*other);}
+      else prompt(*other);
+      return;
+    }
+    if(!primary_live){
+      ecu_selector_.disable();
+      adaptive_multi_pid_.disable();
+      return;
+    }
+    s.multi_pid_pair=false;s.pending=false;
+    emitLine(s,"M5ITEM:00:010C");
+    if(good)appendFrame(s,virtual_frames[0]);else emitLine(s,"NO DATA");
+    emitLine(s,"M5ITEM:00:010D");
+    if(good)appendFrame(s,virtual_frames[1]);else emitLine(s,"NO DATA");
+    s.batch_next=static_cast<uint8_t>(s.batch_next+2);
+    advanceBatch(s);
+    return;
+  }
+#endif
 
   if (cross) {
     // The pair was constructed solely from TWO ALREADY PENDING peers.
@@ -768,6 +856,17 @@ void DualBleElm::dispatch() {
     const bool shared=plan.kind==DiagnosticBatchPlanner::Kind::JoinSameParameter;
 #endif
 
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+    // Keep logical BLE M5ITEM addressing unchanged. Convert ONLY requested
+    // Mode01 0C/0D (or the exact paired request) to the pinned physical ID.
+    if(ecu_selector_.fixed() && outgoing.can_id==0x18DB33F1U &&
+       outgoing.data[0]==0x01 &&
+       ((outgoing.length==2 &&
+         (outgoing.data[1]==0x0C || outgoing.data[1]==0x0D)) ||
+        (outgoing.length==3 && outgoing.data[1]==0x0C &&
+         outgoing.data[2]==0x0D)))
+      outgoing.can_id=ecu_selector_.physicalId();
+#endif
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
       ble_.recordDiagnosticError(s.conn_id,s.generation,
           static_cast<uint16_t>(DiagnosticError::CanLeaseRequired),
@@ -793,6 +892,12 @@ void DualBleElm::dispatch() {
       continue;
     }
     if (can_.submitQuery(outgoing)) {
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+      active_ecu_group_=outgoing.length==3 && outgoing.data[0]==0x01 &&
+                        outgoing.data[1]==0x0C && outgoing.data[2]==0x0D;
+      active_ecu_physical_=active_ecu_group_ &&
+                           outgoing.can_id!=0x18DB33F1U;
+#endif
       driveLog().submitted(outgoing);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
       if (shared) joins_.fetch_add(1,std::memory_order_relaxed);
