@@ -35,10 +35,40 @@ class EcuPhysicalSelector {
   uint32_t physicalFailed() const { return physical_failed_; }
   uint64_t rawRxFrames() const { return raw_rx_frames_; }
   void disable() { state_=State::Legacy; }
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+  bool restoredNeedsPhysicalProof() const { return restored_unconfirmed_; }
+  // Called only after an exact current-boot functional CAN/RAW fingerprint
+  // matched the saved advisory hint. Never authorize TX based on NVS alone.
+  bool restoreAfterFunctionalProof(const DiagnosticResult& result,
+                                   uint32_t response_id,
+                                   DiagnosticRawFrame frames[2]) {
+    if(state_!=State::Discover || probes_!=0 ||
+       !DiagnosticPolicy::observedPhysicalEcu(
+          0x18DA00F1U|((response_id&0xFFU)<<8)) ||
+       !decode(result,response_id,frames))return false;
+    chosen_=response_id;
+    state_=State::Fixed;
+    restored_unconfirmed_=true;
+    return true;
+  }
+#endif
   // Single-parameter reads to the same pinned ECU share failure accounting.
   void observeSingle(bool valid,DiagnosticStatus status) {
     if(!fixed())return;
-    if(valid){++physical_ok_;consecutive_bad_=0;return;}
+    if(valid){
+      ++physical_ok_;consecutive_bad_=0;
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+      restored_unconfirmed_=false;
+#endif
+      return;
+    }
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+    if(restored_unconfirmed_) {
+      ++physical_failed_;
+      resetAfterUnconfirmedHint();
+      return;
+    }
+#endif
     markFailure(status);
   }
 
@@ -71,8 +101,19 @@ class EcuPhysicalSelector {
     if(physical) {
       if(!fixed())return false;
       if(decode(r,chosen_,out)) {
-        ++physical_ok_;consecutive_bad_=0;return true;
+        ++physical_ok_;consecutive_bad_=0;
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+        restored_unconfirmed_=false;
+#endif
+        return true;
       }
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+      if(restored_unconfirmed_) {
+        ++physical_failed_;
+        resetAfterUnconfirmedHint();
+        return false;
+      }
+#endif
       markFailure(r.status);
       return false;
     }
@@ -118,6 +159,16 @@ class EcuPhysicalSelector {
     return decode(r,provisional,out);
   }
  private:
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+  void resetAfterUnconfirmedHint() {
+    // The saved hint was NOT a new full selection. Start fresh bounded
+    // evaluation rather than freezing a potentially wrong ECU.
+    restored_unconfirmed_=false;
+    state_=State::Discover;
+    chosen_=0;probes_=0;used_=0;consecutive_bad_=0;
+    for(auto& candidate:candidates_)candidate=Candidate{};
+  }
+#endif
   void markFailure(DiagnosticStatus status) {
     ++physical_failed_;
     // No additional automatic probes on lease/driver/bus failures.
@@ -173,6 +224,9 @@ class EcuPhysicalSelector {
     if(state_==State::Discover)chosen_=best->can_id;
     state_=State::Fixed;consecutive_bad_=0;
   }
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+  bool restored_unconfirmed_=false;
+#endif
   State state_=State::Discover;
   Candidate candidates_[kDiagnosticMaxResponses]{};
   uint32_t chosen_=0,physical_ok_=0,physical_failed_=0;

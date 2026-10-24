@@ -150,6 +150,12 @@ jobs:
           test -s .pio/build/m5dial_ecu_selection_lab/firmware.elf
           test -s .pio/build/m5dial_ecu_selection_lab/firmware.bin
           rm -f .pio/build/m5dial_ecu_selection_lab/firmware.bin
+      - name: Compile vehicle-hint opt-in lab (no upload)
+        run: |
+          pio run -e m5dial_ecu_hint_lab
+          test -s .pio/build/m5dial_ecu_hint_lab/firmware.elf
+          test -s .pio/build/m5dial_ecu_hint_lab/firmware.bin
+          rm -f .pio/build/m5dial_ecu_hint_lab/firmware.bin
       - name: Build explicit TX-disabled DEMO error fixture
         run: pio run -e m5dial_dual_ble_fault_fixture
       - name: Build integrated DEMO soak with CAN TX disabled
@@ -159,7 +165,7 @@ jobs:
       - name: Build isolated full-block V2 CAN-idle journal owner mailbox (no GATT)
         run: pio run -e m5dial_v2_owner_compile
       - name: Check compiler stack frame budgets
-        run: python tools/check_dual_stack.py m5dial m5dial_dual_ble_bench m5dial_dual_ble_mtu_bench m5dial_dual_ble_canmode_dry_bench m5dial_dual_ble_multipid_bench m5dial_ecu_selection_lab m5dial_dual_ble_fault_fixture m5dial_mtu23_bench m5dial_mtu_bench m5dial_integrated_soak
+        run: python tools/check_dual_stack.py m5dial m5dial_dual_ble_bench m5dial_dual_ble_mtu_bench m5dial_dual_ble_canmode_dry_bench m5dial_dual_ble_multipid_bench m5dial_ecu_selection_lab m5dial_ecu_hint_lab m5dial_dual_ble_fault_fixture m5dial_mtu23_bench m5dial_mtu_bench m5dial_integrated_soak
       - name: Upload M5Dial build artifacts (quota-dependent)
         continue-on-error: true
         uses: actions/upload-artifact@v4
