@@ -93,6 +93,10 @@ void setup() {
 #endif
   g_ui.begin();
   g_serial.begin();
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+  // Read-only NVS hint before BLE begins; this NEVER triggers CAN TX.
+  g_dual.loadEcuHintBeforeBleStarts();
+#endif
 #if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
   // Must run before starting TWAI/BLE. If the proposed 'canlog' partition
   // is absent or still contains old OTA bytes, this fails closed.
@@ -385,6 +389,10 @@ void loop() {
       coord_log.single_submissions);
 #endif
   m5can::driveLog().poll(g_can,g_ble,g_serial.demoActive());
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+  // Single Arduino flash owner: no writes on BLE/RTOS or CAN callbacks.
+  g_dual.pollEcuHintStore();
+#endif
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   // Flash only from Arduino loop and only at CAN-idle checkpoints.
   // Never block NimBLE GAP callbacks or CPU0 CAN owner with NVS writes.

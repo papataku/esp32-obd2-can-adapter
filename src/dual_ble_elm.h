@@ -8,6 +8,10 @@
 #include "adaptive_multi_pid.h"
 #if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
 #include "ecu_physical_selector.h"
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+#include "ecu_vehicle_hint.h"
+#include "ecu_hint_store.h"
+#endif
 #endif
 #include "diagnostic_pid_cache.h"
 #if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
@@ -32,6 +36,12 @@ class DualBleElm {
              SerialProtocol& demo_source)
       : can_(can), ble_(ble), demo_source_(demo_source) {}
   void poll();
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+  // Arduino/UI loop only: load once BEFORE BLE worker creation, and commit
+  // advisory hints only at CAN-idle flash checkpoints.
+  void loadEcuHintBeforeBleStarts() { ecu_hint_store_.loadBeforeBleStarts(); }
+  void pollEcuHintStore() { ecu_hint_store_.poll(can_); }
+#endif
 #if defined(M5CAN_RAW_CAN_LOG_RUNTIME)
   void setRawCanRecorder(RawCanRecordingService* service) { raw_service_=service; }
 #endif
@@ -107,6 +117,11 @@ class DualBleElm {
   AdaptiveMultiPid adaptive_multi_pid_{};
 #if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
   EcuPhysicalSelector ecu_selector_{};
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+  EcuHintStore ecu_hint_store_{};
+  EcuVehicleHint full_probe_hint_{};
+  bool full_probe_hint_ready_=false;
+#endif
   bool active_ecu_group_=false,active_ecu_physical_=false;
   bool active_ecu_single_physical_=false;
 #endif

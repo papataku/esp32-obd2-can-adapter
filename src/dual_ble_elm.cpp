@@ -316,6 +316,25 @@ void DualBleElm::onLine(Session& s,const char* line) {
     return;
   }
 #endif
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+  // Explicit, read-only, opt-in sideband. No unsolicited annotations inside
+  // strict legacy M5ITEM/M5DONE frames. Does not acquire lease or send CAN.
+  if(!std::strcmp(compact,"ATM5ECU")) {
+    const char* state=ecu_selector_.legacy()?"LEGACY":
+        ecu_selector_.fixed()?"FIXED":
+        ecu_selector_.state()==EcuPhysicalSelector::State::Recheck?
+          "RECHECK":"DISCOVER";
+    char text[160]{};
+    std::snprintf(text,sizeof(text),
+        "M5CAN-ECU V=1 STATE=%s SOURCE=%08lX PROBES=%u RECHECKS=%u CONFIRMED=%u",
+        state,static_cast<unsigned long>(ecu_selector_.chosenResponse()),
+        unsigned(ecu_selector_.probes()),unsigned(ecu_selector_.retries()),
+        ecu_selector_.fixed() && !ecu_selector_.restoredNeedsPhysicalProof()?1U:0U);
+    emitLine(s,text);
+    prompt(s);
+    return;
+  }
+#endif
   const ElmResult parsed=s.elm.execute(line);
   bool prompt_now=true;
   switch (parsed.action) {
@@ -533,7 +552,51 @@ void DualBleElm::onResult() {
   if(was_ecu_group && (cross || s.multi_pid_pair || s.ecu_probe_single)) {
     const auto previous=ecu_selector_.state();
     DiagnosticRawFrame virtual_frames[2]{};
-    bool good=ecu_selector_.observe(result,was_physical,virtual_frames);
+    bool good=false;
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+    // Saved source is untrusted. Always demand a fresh functional request
+    // and validate the ENTIRE RAW-backed responder set first.
+    if(!was_physical && previous==EcuPhysicalSelector::State::Discover &&
+       ecu_selector_.probes()==0) {
+      EcuVehicleHint saved{};
+      if(ecu_hint_store_.bootHint(saved)) {
+        if(EcuHintCodec::matches(saved,result) &&
+           ecu_selector_.restoreAfterFunctionalProof(
+               result,saved.source,virtual_frames)) {
+          good=true;
+          Serial.printf("#ECU_HINT,fast_restore=1,source=%08lX,count=%u\\n",
+                        static_cast<unsigned long>(saved.source),
+                        unsigned(saved.count));
+        } else {
+          ecu_hint_store_.invalidateBootHint();
+          Serial.println("#ECU_HINT,fast_restore=0,reason=stale_or_mismatch");
+        }
+      }
+    }
+#endif
+    if(!good)good=ecu_selector_.observe(result,was_physical,virtual_frames);
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+    if(!was_physical &&
+       previous==EcuPhysicalSelector::State::Discover &&
+       ecu_selector_.fixed() &&
+       !ecu_selector_.restoredNeedsPhysicalProof()) {
+      // Never commit a candidate before it succeeds physically.
+      full_probe_hint_ready_=EcuHintCodec::fromFunctional(
+          result,ecu_selector_.chosenResponse(),full_probe_hint_);
+    }
+    if(was_physical && !good &&
+       previous==EcuPhysicalSelector::State::Fixed &&
+       ecu_selector_.state()==EcuPhysicalSelector::State::Discover) {
+      ecu_hint_store_.invalidateBootHint();
+      full_probe_hint_ready_=false;
+      pid_cache_.clear();
+      Serial.println("#ECU_HINT,physical_reject=1,relearning=1");
+    }
+    if(was_physical && good && full_probe_hint_ready_) {
+      ecu_hint_store_.stage(full_probe_hint_);
+      full_probe_hint_ready_=false;
+    }
+#endif
     const auto next=ecu_selector_.state();
     if(previous!=next) {
       pid_cache_.clear(); // no stale functional values across source states
@@ -815,6 +878,19 @@ void DualBleElm::onResult() {
             std::memcmp(&raw.data[1],message.data,message.length)==0;
     }
     ecu_selector_.observeSingle(valid,result.status);
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+    if(valid && full_probe_hint_ready_) {
+      ecu_hint_store_.stage(full_probe_hint_);
+      full_probe_hint_ready_=false;
+    }
+    if(!valid && old==EcuPhysicalSelector::State::Fixed &&
+       ecu_selector_.state()==EcuPhysicalSelector::State::Discover) {
+      ecu_hint_store_.invalidateBootHint();
+      full_probe_hint_ready_=false;
+      pid_cache_.clear();
+      Serial.println("#ECU_HINT,physical_reject=1,relearning=1");
+    }
+#endif
     if(old!=ecu_selector_.state()) {
       pid_cache_.clear();
       if(ecu_selector_.legacy())adaptive_multi_pid_.disable();
