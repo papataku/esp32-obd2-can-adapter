@@ -254,6 +254,79 @@ int main() {
     assert(requests[8].can_id==0x18DA01F1U && requests[8].length==2);
     assert(output(7).find("18DAF101 04 41 0C")!=std::string::npos);
   }
+#if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
+  // No new vehicle service: cache is persisted only after full functional
+  // discovery plus a successful physical read. A second boot must re-check.
+  Preferences::storage.erase("m5can_ecu/hint");
+  {
+    mode=Ecu::MultiConflict;
+    Bench fresh;
+    fresh.dual.loadEcuHintBeforeBleStarts();
+    for(int n=0;n<8;++n){
+      test_notifications.clear();
+      write(fresh.a,"ATM5B00:010C,010D");
+      fresh.drain();
+      assert(requests.back().can_id==0x18DB33F1U);
+    }
+    assert(Preferences::storage.count("m5can_ecu/hint")==0);
+    test_notifications.clear();
+    write(fresh.a,"ATM5B00:010C,010D");
+    fresh.drain();
+    assert(requests.back().can_id==0x18DA01F1U);
+    fresh.dual.pollEcuHintStore(); // Arduino-owned idle NVS checkpoint
+    assert(Preferences::storage.count("m5can_ecu/hint")==1);
+  }
+  {
+    mode=Ecu::MultiConflict;
+    Bench resumed;
+    resumed.dual.loadEcuHintBeforeBleStarts();
+    write(resumed.a,"ATM5B00:010C,010D");
+    resumed.drain();
+    assert(requests.size()==1 && requests.back().can_id==0x18DB33F1U);
+    test_notifications.clear();
+    write(resumed.b,"ATM5B00:010C,010D");
+    resumed.drain();
+    assert(requests.size()==2 && requests.back().can_id==0x18DA01F1U);
+    assert(output(19).find("M5ITEM:00:010C")!=std::string::npos);
+    assert(output(19).find("M5DONE")!=std::string::npos);
+    const auto before=requests.size();
+    test_notifications.clear();
+    write(resumed.a,"ATM5ECU");resumed.drain();
+    assert(requests.size()==before);
+    assert(output(7).find("M5CAN-ECU V=1 STATE=FIXED")!=std::string::npos);
+    assert(output(7).find("CONFIRMED=1")!=std::string::npos);
+    assert(output(19).empty());
+  }
+  {
+    mode=Ecu::Full;
+    Bench changed_vehicle;
+    changed_vehicle.dual.loadEcuHintBeforeBleStarts();
+    write(changed_vehicle.a,"ATM5B00:010C,010D");
+    changed_vehicle.drain();
+    assert(requests.size()==1 && requests.back().can_id==0x18DB33F1U);
+    write(changed_vehicle.a,"ATM5B00:010C,010D");
+    changed_vehicle.drain();
+    assert(requests.size()==2 && requests.back().can_id==0x18DB33F1U);
+  }
+  {
+    mode=Ecu::MultiConflict;
+    Bench stale_physical;
+    stale_physical.dual.loadEcuHintBeforeBleStarts();
+    write(stale_physical.a,"ATM5B00:010C,010D");
+    stale_physical.drain();
+    assert(requests.size()==1 && requests.back().can_id==0x18DB33F1U);
+    mode=Ecu::Silent;
+    write(stale_physical.a,"ATM5B00:010C,010D");
+    stale_physical.drain();
+    assert(requests.size()==2 && requests.back().can_id==0x18DA01F1U);
+    mode=Ecu::MultiConflict;
+    write(stale_physical.a,"ATM5B00:010C,010D");
+    stale_physical.drain();
+    assert(requests.size()==3 && requests.back().can_id==0x18DB33F1U);
+  }
+  std::cout<<"PASS Issue54 NVS restore challenge, 2 BLE peers, status-only request and mismatch fallback\\n";
+#endif
+
   std::cout<<"PASS Issue54 real dual-peer coordinator: 8 functional probes, pinned physical ECU, recheck and no switch\n";
   return 0;
 #endif
