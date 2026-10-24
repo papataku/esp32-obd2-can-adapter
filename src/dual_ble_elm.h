@@ -6,6 +6,9 @@
 #include "elm_compat.h"
 #include "demo_drive.h"
 #include "adaptive_multi_pid.h"
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+#include "ecu_physical_selector.h"
+#endif
 #include "diagnostic_pid_cache.h"
 #if defined(M5CAN_LOG_STREAM_V2_EXPERIMENTAL)
 #include "m5can_log_stream_v2_sender.h"
@@ -62,6 +65,9 @@ class DualBleElm {
     bool pending = false;
     bool batch = false;
     bool multi_pid_pair = false;
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+    bool ecu_probe_single = false;
+#endif
     uint8_t batch_next = 0;
     uint8_t batch_count = 0;
     ElmVehicleRequest items[ElmResult::kBatchMaxIDs]{};
@@ -99,6 +105,11 @@ class DualBleElm {
   bool log_stream_active_=false,log_stream_fetch_pending_=false;
 #endif
   AdaptiveMultiPid adaptive_multi_pid_{};
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+  EcuPhysicalSelector ecu_selector_{};
+  bool active_ecu_group_=false,active_ecu_physical_=false;
+  bool active_ecu_single_physical_=false;
+#endif
   // Shared across both BLE sessions, independent of the CAN grouping policy.
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   DiagnosticPidCache pid_cache_{};

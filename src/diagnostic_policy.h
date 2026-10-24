@@ -59,6 +59,9 @@ struct DiagnosticResult {
 class DiagnosticPolicy {
  public:
   static bool allowedHeader(uint32_t can_id);
+  static bool observedPhysicalEcu(uint32_t request_id);
+  static void observeFunctionalPairs(const DiagnosticRequest& request,
+                                     const DiagnosticResult& result);
   static bool allowedReadRequest(const DiagnosticRequest& request);
   static bool allowedResponseId(uint32_t can_id);
   static bool responseBelongsToRequest(const DiagnosticRequest& request,

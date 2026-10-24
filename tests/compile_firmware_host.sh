@@ -280,3 +280,22 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined \
   -I"$ROOT/src" "$ROOT/tests/test_m5can_log_v2_peer_policy.cpp" \
   -o /tmp/m5can-log-v2-peer-qos-test
 /tmp/m5can-log-v2-peer-qos-test
+
+
+# Issue54 opt-in source syntax, CAN policy and selection host regression.
+for source in "$ROOT"/src/*.cpp; do
+  g++ -std=c++17 -Wall -Wextra -Werror \
+    -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+    -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+    -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
+    -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+    -fsyntax-only "$source"
+done
+g++ -std=c++17 -Wall -Wextra -Werror \
+  -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_ecu_physical_selector.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-issue54-ecu-selector-test
+/tmp/m5can-issue54-ecu-selector-test

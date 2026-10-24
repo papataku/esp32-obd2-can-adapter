@@ -118,8 +118,16 @@ class DiagnosticRequestPacer {
     bool valid = false;
   };
 
+  static bool observed(uint32_t id) {
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+    return DiagnosticPolicy::observedPhysicalEcu(id);
+#else
+    (void)id;return false;
+#endif
+  }
   static bool grouped(const DiagnosticRequest& request) {
-    return request.can_id == 0x18DB33F1U && request.length == 3 &&
+    return (request.can_id == 0x18DB33F1U ||
+            observed(request.can_id)) && request.length == 3 &&
            request.data[0] == 0x01 && request.data[1] == 0x0C &&
            request.data[2] == 0x0D;
   }
@@ -136,14 +144,21 @@ class DiagnosticRequestPacer {
   static bool trackable(const DiagnosticRequest& request) {
     const uint32_t can_id = request.can_id;
     return (can_id == 0x18DB33F1U || can_id == 0x18DBEFF1U ||
-            can_id == 0x18DA01F1U) &&
+            can_id == 0x18DA01F1U ||
+            observed(can_id)) &&
            (request.length == 2 || request.length == 3);
   }
 
   static uint64_t requestKey(const DiagnosticRequest& request) {
     // 29-bit arbitration ID / 8-bit length / up to 3 read-only data bytes.
     // Other request fields such as timeout do not identify a parameter.
-    return (static_cast<uint64_t>(request.can_id) << 32) |
+    // Functional and observed physical request for the SAME PID share 50ms.
+    const bool meter=request.data[0]==0x01 &&
+        (request.data[1]==0x0C || request.data[1]==0x0D);
+    const uint32_t key_id=meter &&
+        observed(request.can_id)
+        ? 0x18DB33F1U : request.can_id;
+    return (static_cast<uint64_t>(key_id) << 32) |
            (static_cast<uint64_t>(request.length) << 24) |
            (static_cast<uint64_t>(request.data[0]) << 16) |
            (static_cast<uint64_t>(request.data[1]) << 8) |
