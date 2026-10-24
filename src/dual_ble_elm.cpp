@@ -532,7 +532,7 @@ void DualBleElm::onResult() {
   if(was_ecu_group && (cross || s.multi_pid_pair)) {
     const auto previous=ecu_selector_.state();
     DiagnosticRawFrame virtual_frames[2]{};
-    const bool good=ecu_selector_.observe(result,was_physical,virtual_frames);
+    bool good=ecu_selector_.observe(result,was_physical,virtual_frames);
     const auto next=ecu_selector_.state();
     if(previous!=next) {
       pid_cache_.clear(); // no stale functional values across source states
@@ -558,6 +558,21 @@ void DualBleElm::onResult() {
                     static_cast<unsigned long long>(cs.tx_success),
                     static_cast<unsigned long long>(cs.rx_frames),
                     static_cast<unsigned long long>(ecu_selector_.rawRxFrames()));
+    }
+    // Populate the existing shared 100ms cache only AFTER coherent source
+    // validation and the selection state transition. Both peers use the
+    // unchanged functional logical cache keys, but the same pinned ECU.
+    if(good && ecu_selector_.fixed()) {
+      DiagnosticRequest rpm_key{};
+      rpm_key.can_id=0x18DB33F1U;rpm_key.length=2;
+      rpm_key.data[0]=0x01;rpm_key.data[1]=0x0C;
+      DiagnosticRequest speed_key=rpm_key;speed_key.data[1]=0x0D;
+      if(!pid_cache_.rememberApprovedPair(
+          rpm_key,speed_key,virtual_frames,acquired_us)) {
+        // A provenance conflict is never exposed as an accepted sample.
+        pid_cache_.clear();ecu_selector_.disable();
+        adaptive_multi_pid_.disable();good=false;
+      }
     }
     if(was_physical && !good) {
       Serial.printf("#ECU_FAILURE,source=%08lX,status=%u,response_count=%u,physical_fail=%lu\n",
