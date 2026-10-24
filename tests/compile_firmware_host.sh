@@ -299,3 +299,23 @@ g++ -std=c++17 -Wall -Wextra -Werror \
   "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
   -o /tmp/m5can-issue54-ecu-selector-test
 /tmp/m5can-issue54-ecu-selector-test
+
+# Vehicle-change hint is a separate opt-in profile, not the default ECU trial.
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+  -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
+  -DM5CAN_VEHICLE_HINT_EXPERIMENTAL=1 \
+  -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+  "$ROOT/tests/test_ecu_vehicle_hint.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-issue54-vehicle-hint-test
+/tmp/m5can-issue54-vehicle-hint-test
+for source in "$ROOT"/src/*.cpp; do
+  g++ -std=c++17 -Wall -Wextra -Werror \
+    -DM5CAN_DUAL_BLE_EXPERIMENTAL=1 \
+    -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+    -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
+    -DM5CAN_VEHICLE_HINT_EXPERIMENTAL=1 \
+    -I"$ROOT/tests/host_stubs" -I"$ROOT/include" -I"$ROOT/src" \
+    -fsyntax-only "$source"
+done

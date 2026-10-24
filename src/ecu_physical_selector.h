@@ -65,7 +65,9 @@ class EcuPhysicalSelector {
 #if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
     if(restored_unconfirmed_) {
       ++physical_failed_;
-      resetAfterUnconfirmedHint();
+      if(status!=DiagnosticStatus::Ok && status!=DiagnosticStatus::NoData &&
+         status!=DiagnosticStatus::IsoTpError)disable();
+      else resetAfterUnconfirmedHint();
       return;
     }
 #endif
@@ -110,7 +112,9 @@ class EcuPhysicalSelector {
 #if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
       if(restored_unconfirmed_) {
         ++physical_failed_;
-        resetAfterUnconfirmedHint();
+        if(r.status!=DiagnosticStatus::Ok && r.status!=DiagnosticStatus::NoData &&
+           r.status!=DiagnosticStatus::IsoTpError)disable();
+        else resetAfterUnconfirmedHint();
         return false;
       }
 #endif
