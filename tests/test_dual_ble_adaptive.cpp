@@ -239,6 +239,21 @@ int main() {
     assert(requests.back().can_id==0x18DA01F1U);
     assert(output(7).find("18DAF101 04 41 0C")!=std::string::npos);
   }
+
+  {
+    mode=Ecu::MultiConflict; Bench only_rpm;
+    for(int n=0;n<8;++n) {
+      test_notifications.clear();
+      write(only_rpm.a,"010C");only_rpm.drain();
+      assert(requests[static_cast<size_t>(n)].can_id==0x18DB33F1U);
+      assert(requests[static_cast<size_t>(n)].length==3);
+      assert(output(7).find("18DAF101 04 41 0C")!=std::string::npos);
+    }
+    test_notifications.clear();
+    write(only_rpm.a,"010C");only_rpm.drain();
+    assert(requests[8].can_id==0x18DA01F1U && requests[8].length==2);
+    assert(output(7).find("18DAF101 04 41 0C")!=std::string::npos);
+  }
   std::cout<<"PASS Issue54 real dual-peer coordinator: 8 functional probes, pinned physical ECU, recheck and no switch\n";
   return 0;
 #endif

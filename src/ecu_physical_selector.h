@@ -35,6 +35,12 @@ class EcuPhysicalSelector {
   uint32_t physicalFailed() const { return physical_failed_; }
   uint64_t rawRxFrames() const { return raw_rx_frames_; }
   void disable() { state_=State::Legacy; }
+  // Single-parameter reads to the same pinned ECU share failure accounting.
+  void observeSingle(bool valid,DiagnosticStatus status) {
+    if(!fixed())return;
+    if(valid){++physical_ok_;consecutive_bad_=0;return;}
+    markFailure(status);
+  }
 
   static bool parsePair(const DiagnosticMessage& m,uint16_t& rpm,uint8_t& speed) {
     if ((m.can_id&0x1FFFFF00U)!=0x18DAF100U ||
@@ -67,17 +73,7 @@ class EcuPhysicalSelector {
       if(decode(r,chosen_,out)) {
         ++physical_ok_;consecutive_bad_=0;return true;
       }
-      ++physical_failed_;
-      // Lease/bus/driver errors must not cause a new diagnostic TX.
-      if(r.status!=DiagnosticStatus::Ok && r.status!=DiagnosticStatus::NoData &&
-         r.status!=DiagnosticStatus::IsoTpError) { disable();return false; }
-      if(++consecutive_bad_==kFailureLimit) {
-        if(retries_!=0) disable();
-        else {
-          ++retries_;state_=State::Recheck;probes_=used_=0;
-          for(auto& candidate:candidates_)candidate=Candidate{};
-        }
-      }
+      markFailure(r.status);
       return false;
     }
     if(!probing())return false;
@@ -122,6 +118,19 @@ class EcuPhysicalSelector {
     return decode(r,provisional,out);
   }
  private:
+  void markFailure(DiagnosticStatus status) {
+    ++physical_failed_;
+    // No additional automatic probes on lease/driver/bus failures.
+    if(status!=DiagnosticStatus::Ok && status!=DiagnosticStatus::NoData &&
+       status!=DiagnosticStatus::IsoTpError) {disable();return;}
+    if(++consecutive_bad_>=kFailureLimit){
+      if(retries_!=0)disable();
+      else {
+        ++retries_;state_=State::Recheck;probes_=used_=0;
+        for(auto& candidate:candidates_)candidate=Candidate{};
+      }
+    }
+  }
   Candidate* entry(uint32_t id) {
     for(uint8_t i=0;i<used_;++i)
       if(candidates_[i].can_id==id)return &candidates_[i];

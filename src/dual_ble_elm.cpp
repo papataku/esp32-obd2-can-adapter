@@ -508,7 +508,8 @@ void DualBleElm::onResult() {
 #if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
   const bool was_ecu_group=active_ecu_group_;
   const bool was_physical=active_ecu_physical_;
-  active_ecu_group_=active_ecu_physical_=false;
+  const bool was_physical_single=active_ecu_single_physical_;
+  active_ecu_group_=active_ecu_physical_=active_ecu_single_physical_=false;
 #endif
   active_query_owner_=-1;
   active_secondary_owner_=-1;
@@ -529,7 +530,7 @@ void DualBleElm::onResult() {
 #if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
   // The selector, unlike the legacy one-probe classifier, treats unequal
   // answers from DIFFERENT ECUs as candidate evidence, not ValuesDisagree.
-  if(was_ecu_group && (cross || s.multi_pid_pair)) {
+  if(was_ecu_group && (cross || s.multi_pid_pair || s.ecu_probe_single)) {
     const auto previous=ecu_selector_.state();
     DiagnosticRawFrame virtual_frames[2]{};
     bool good=ecu_selector_.observe(result,was_physical,virtual_frames);
@@ -603,6 +604,23 @@ void DualBleElm::onResult() {
     if(!primary_live){
       ecu_selector_.disable();
       adaptive_multi_pid_.disable();
+      return;
+    }
+    if(s.ecu_probe_single) {
+      s.ecu_probe_single=false;
+      if(!primary_live){ecu_selector_.disable();return;}
+      const uint8_t index=s.request.data[1]==0x0C?0:1;
+      s.pending=false;
+      if(good)appendFrame(s,virtual_frames[index]);
+      else emitLine(s,"NO DATA");
+      if(s.batch){++s.batch_next;advanceBatch(s);}else prompt(s);
+      if(other_live && other->pending){
+        other->pending=false;
+        if(good)appendFrame(*other,virtual_frames[index]);
+        else emitLine(*other,"NO DATA");
+        if(other->batch){++other->batch_next;advanceBatch(*other);}
+        else prompt(*other);
+      }
       return;
     }
     s.multi_pid_pair=false;s.pending=false;
@@ -781,6 +799,40 @@ void DualBleElm::onResult() {
   // A successful single PID updates the same cache used by both peers,
   // whether it was sent alone or followed a failed group probe. Cache
   // failures invalidate ONLY the requested PID, never unrelated samples.
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+  if(was_physical_single) {
+    const auto old=ecu_selector_.state();
+    bool valid=false;
+    if(result.status==DiagnosticStatus::Ok && result.response_count==1 &&
+       result.raw_frame_count==1) {
+      const auto& message=result.responses[0];
+      const auto& raw=result.raw_frames[0];
+      valid=message.can_id==ecu_selector_.chosenResponse() &&
+            message.length==(s.request.data[1]==0x0C?4U:3U) &&
+            message.data[0]==0x41 && message.data[1]==s.request.data[1] &&
+            raw.can_id==message.can_id &&
+            raw.dlc>=message.length+1U && raw.data[0]==message.length &&
+            std::memcmp(&raw.data[1],message.data,message.length)==0;
+    }
+    ecu_selector_.observeSingle(valid,result.status);
+    if(old!=ecu_selector_.state()) {
+      pid_cache_.clear();
+      if(ecu_selector_.legacy())adaptive_multi_pid_.disable();
+      Serial.printf("#ECU_SINGLE_STATE,from=%u,to=%u,source=%08lX,rechecks=%u,ok=%lu,fail=%lu\n",
+                    unsigned(old),unsigned(ecu_selector_.state()),
+                    static_cast<unsigned long>(ecu_selector_.chosenResponse()),
+                    unsigned(ecu_selector_.retries()),
+                    static_cast<unsigned long>(ecu_selector_.physicalOk()),
+                    static_cast<unsigned long>(ecu_selector_.physicalFailed()));
+    }
+    if(!valid && result.status==DiagnosticStatus::Ok) {
+      // A malformed/negative but transport-complete reply must never
+      // masquerade as a positive meter sample or enter either cache.
+      result.status=DiagnosticStatus::NoData;
+      result.response_count=result.raw_frame_count=0;
+    }
+  }
+#endif
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   pid_cache_.rememberSingle(s.request,result,acquired_us);
 #endif
@@ -882,6 +934,18 @@ void DualBleElm::dispatch() {
          outgoing.data[2]==0x0D)))
       outgoing.can_id=ecu_selector_.physicalId();
 #endif
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+    // An RPM-only or speed-only client can drive the SAME bounded
+    // functional discovery; this additional PID is authorized solely by
+    // Issue54 probe policy, and never as unsolicited boot-time traffic.
+    if(ecu_selector_.probing() && !demo_source_.demoActive() &&
+       !s.multi_pid_pair && !cross && outgoing.can_id==0x18DB33F1U &&
+       outgoing.length==2 && outgoing.data[0]==0x01 &&
+       (outgoing.data[1]==0x0C || outgoing.data[1]==0x0D)) {
+      s.ecu_probe_single=true;
+      outgoing.length=3;outgoing.data[1]=0x0C;outgoing.data[2]=0x0D;
+    }
+#endif
     if (!can_.acquireLease(cfg::kTxLeaseMaxMs)) {
       ble_.recordDiagnosticError(s.conn_id,s.generation,
           static_cast<uint16_t>(DiagnosticError::CanLeaseRequired),
@@ -912,6 +976,10 @@ void DualBleElm::dispatch() {
                         outgoing.data[1]==0x0C && outgoing.data[2]==0x0D;
       active_ecu_physical_=active_ecu_group_ &&
                            outgoing.can_id!=0x18DB33F1U;
+      active_ecu_single_physical_=!active_ecu_group_ &&
+          outgoing.length==2 && outgoing.data[0]==0x01 &&
+          (outgoing.data[1]==0x0C || outgoing.data[1]==0x0D) &&
+          outgoing.can_id==ecu_selector_.physicalId() && ecu_selector_.fixed();
 #endif
       driveLog().submitted(outgoing);
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)

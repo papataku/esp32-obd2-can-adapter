@@ -65,6 +65,9 @@ class DualBleElm {
     bool pending = false;
     bool batch = false;
     bool multi_pid_pair = false;
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+    bool ecu_probe_single = false;
+#endif
     uint8_t batch_next = 0;
     uint8_t batch_count = 0;
     ElmVehicleRequest items[ElmResult::kBatchMaxIDs]{};
@@ -105,6 +108,7 @@ class DualBleElm {
 #if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
   EcuPhysicalSelector ecu_selector_{};
   bool active_ecu_group_=false,active_ecu_physical_=false;
+  bool active_ecu_single_physical_=false;
 #endif
   // Shared across both BLE sessions, independent of the CAN grouping policy.
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
