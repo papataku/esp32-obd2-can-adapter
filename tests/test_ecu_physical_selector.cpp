@@ -109,5 +109,5 @@ int main(){
     assert(!bad.observe(p,false,frames));
   }
   assert(bad.legacy());
-  std::cout<<"PASS Issue54 observed-ECU allowlist, physical source isolation, 50ms and ranking\\n";
+  std::cout<<"PASS Issue54 observed-ECU allowlist, physical source isolation, 50ms and ranking\n";
 }

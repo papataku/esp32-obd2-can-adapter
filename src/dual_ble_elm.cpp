@@ -537,7 +537,7 @@ void DualBleElm::onResult() {
     if(previous!=next) {
       pid_cache_.clear(); // no stale functional values across source states
       if(ecu_selector_.legacy())adaptive_multi_pid_.disable();
-      Serial.printf("#ECU_STATE,from=%u,to=%u,source=%08lX,probes=%u,rechecks=%u,physical_ok=%lu,physical_fail=%lu\\n",
+      Serial.printf("#ECU_STATE,from=%u,to=%u,source=%08lX,probes=%u,rechecks=%u,physical_ok=%lu,physical_fail=%lu\n",
                     unsigned(previous),unsigned(next),
                     static_cast<unsigned long>(ecu_selector_.chosenResponse()),
                     unsigned(ecu_selector_.probes()),unsigned(ecu_selector_.retries()),
@@ -545,7 +545,7 @@ void DualBleElm::onResult() {
                     static_cast<unsigned long>(ecu_selector_.physicalFailed()));
       for(uint8_t k=0;k<ecu_selector_.candidates();++k) {
         const auto& c=ecu_selector_.candidate(k);
-        Serial.printf("#ECU_CAND,id=%08lX,success=%lu,changes=%lu,avg_us=%llu,rejected=%u\\n",
+        Serial.printf("#ECU_CAND,id=%08lX,success=%lu,changes=%lu,avg_us=%llu,rejected=%u\n",
                       static_cast<unsigned long>(c.can_id),
                       static_cast<unsigned long>(c.successes),
                       static_cast<unsigned long>(c.changes),
@@ -553,14 +553,14 @@ void DualBleElm::onResult() {
                           c.latency_us/c.successes:0),unsigned(c.disqualified));
       }
       const auto cs=can_.stats();
-      Serial.printf("#ECU_TRAFFIC,tx_attempt=%llu,tx_success=%llu,rx_total=%llu,selected_rx=%llu\\n",
+      Serial.printf("#ECU_TRAFFIC,tx_attempt=%llu,tx_success=%llu,rx_total=%llu,selected_rx=%llu\n",
                     static_cast<unsigned long long>(cs.tx_attempts),
                     static_cast<unsigned long long>(cs.tx_success),
                     static_cast<unsigned long long>(cs.rx_frames),
                     static_cast<unsigned long long>(ecu_selector_.rawRxFrames()));
     }
     if(was_physical && !good) {
-      Serial.printf("#ECU_FAILURE,source=%08lX,status=%u,response_count=%u,physical_fail=%lu\\n",
+      Serial.printf("#ECU_FAILURE,source=%08lX,status=%u,response_count=%u,physical_fail=%lu\n",
                     static_cast<unsigned long>(ecu_selector_.chosenResponse()),
                     unsigned(result.status),unsigned(result.response_count),
                     static_cast<unsigned long>(ecu_selector_.physicalFailed()));

@@ -75,7 +75,7 @@ class EcuPhysicalSelector {
         if(retries_!=0) disable();
         else {
           ++retries_;state_=State::Recheck;probes_=used_=0;
-          std::memset(candidates_,0,sizeof(candidates_));
+          for(auto& candidate:candidates_)candidate=Candidate{};
         }
       }
       return false;
