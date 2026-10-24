@@ -158,7 +158,12 @@ bool CanMonitor::submitQuery(const DiagnosticRequest& r) {
 }
 bool CanMonitor::pollQueryResult(DiagnosticResult& result) {
   if(!ready || hold) return false;
-  completed=ecuReply(queued);result=completed;ready=false;query_in_flight_=false;
+  completed=ecuReply(queued);
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+  // Simulate the same CAN-owner only RAW-backed confirmation as rxTask().
+  DiagnosticPolicy::observeFunctionalPairs(queued,completed);
+#endif
+  result=completed;ready=false;query_in_flight_=false;
   if(result.status==DiagnosticStatus::BusOff || result.status==DiagnosticStatus::ModeError)
     fault_locked_=true;
   return true;
@@ -182,6 +187,59 @@ int main() {
   assert(output(19).find("41 0D")!=std::string::npos);
   assert(requests.empty());
   std::cout << "PASS DEMO fault replies, silent timeout, peer isolation and fresh recovery without CAN submission\n";
+  return 0;
+#endif
+
+
+#if defined(M5CAN_ECU_SELECTION_EXPERIMENTAL)
+  {
+    mode=Ecu::MultiConflict;
+    Bench bench;
+    // Five-ECU real class: differing RPM values do NOT disable grouped
+    // polling; after eight demand-triggered probes, physical ECU01 wins.
+    for(int n=0;n<8;++n) {
+      test_notifications.clear();
+      write(bench.a,"ATM5B00:010C,010D");
+      bench.drain();
+      assert(requests.size()==static_cast<size_t>(n+1));
+      assert(requests.back().can_id==0x18DB33F1U);
+      assert(output(7).find("18DAF101 04 41 0C")!=std::string::npos);
+      assert(output(19).empty());
+    }
+    assert(DiagnosticPolicy::observedPhysicalEcu(0x18DA01F1U));
+    test_notifications.clear();
+    bench.batchBoth();bench.drain();
+    assert(requests.size()>=9);
+    assert(requests[8].can_id==0x18DA01F1U);
+    // Shared ECU for both BLE sessions, no foreign ECU02 payloads.
+    for(uint16_t id:{7,19}) {
+      assert(output(id).find("18DAF101 04 41 0C")!=std::string::npos);
+      assert(output(id).find("18DAF102 04 41 0C")==std::string::npos);
+      assert(output(id).find("M5DONE")!=std::string::npos);
+    }
+    // Three timeouts do not silently pick a different physical ECU.
+    mode=Ecu::Silent;
+    for(int n=0;n<3;++n) {
+      test_notifications.clear();
+      write(bench.a,"ATM5B00:010C,010D");
+      bench.drain();
+      assert(output(7).find("NO DATA")!=std::string::npos);
+    }
+    mode=Ecu::MultiConflict;
+    const size_t before=requests.size();
+    for(int n=0;n<8;++n) {
+      test_notifications.clear();
+      write(bench.a,"ATM5B00:010C,010D");
+      bench.drain();
+      assert(requests[before+static_cast<size_t>(n)].can_id==0x18DB33F1U);
+    }
+    test_notifications.clear();
+    write(bench.a,"ATM5B00:010C,010D");
+    bench.drain();
+    assert(requests.back().can_id==0x18DA01F1U);
+    assert(output(7).find("18DAF101 04 41 0C")!=std::string::npos);
+  }
+  std::cout<<"PASS Issue54 real dual-peer coordinator: 8 functional probes, pinned physical ECU, recheck and no switch\n";
   return 0;
 #endif
 
