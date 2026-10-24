@@ -75,7 +75,8 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
     // RPM+speed is exactly six diagnostic bytes and MUST fit one Classical
     // CAN ISO-TP Single Frame. Never issue Flow Control for a purported
     // multi-PID First Frame; it could belong to another diagnostic tester.
-    if (request_.can_id == 0x18DB33F1U && request_.length == 3 &&
+    if ((request_.can_id == 0x18DB33F1U ||
+         DiagnosticPolicy::observedPhysicalEcu(request_.can_id)) && request_.length == 3 &&
         request_.data[0] == 0x01 && request_.data[1] == 0x0C &&
         request_.data[2] == 0x0D) return event;
     if (dlc < 4) return event;

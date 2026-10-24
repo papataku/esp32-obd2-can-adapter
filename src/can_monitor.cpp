@@ -180,6 +180,8 @@ void CanMonitor::rxTask() {
               request, static_cast<uint64_t>(esp_timer_get_time()), result);
       if (!from_cache) {
         performQuery(request,result);
+        // Trust only actual CAN-owner parsed + RAW-backed paired response.
+        DiagnosticPolicy::observeFunctionalPairs(request,result);
         if(!result.completed_at_us)
           result.completed_at_us=static_cast<uint64_t>(esp_timer_get_time());
         result_cache_.remember(request,result,result.completed_at_us);
