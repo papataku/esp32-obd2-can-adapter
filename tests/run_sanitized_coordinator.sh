@@ -44,3 +44,16 @@ echo "PASS ASan+UBSan PID cache, pacing, and BLE/CAN coordinator simulation"
   "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
   -o /tmp/m5can-issue54-dual-coordinator-sanitized
 /tmp/m5can-issue54-dual-coordinator-sanitized
+
+# Stacked v1 advisory hint on top of Issue54: the actual two-client
+# scheduler and host ECU simulate reboot, different ECU-set and stale reply.
+"$CXX" "${CXXFLAGS[@]}" \
+  -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
+  -DM5CAN_VEHICLE_HINT_EXPERIMENTAL=1 \
+  "$ROOT/tests/test_dual_ble_adaptive.cpp" \
+  "$ROOT/src/dual_ble_elm.cpp" "$ROOT/src/ble_elm_transport.cpp" "$ROOT/src/drive_log.cpp" \
+  "$ROOT/src/elm_compat.cpp" "$ROOT/src/elm_response_formatter.cpp" \
+  "$ROOT/src/diagnostic_transaction.cpp" "$ROOT/src/isotp_reassembler.cpp" \
+  "$ROOT/src/diagnostic_policy.cpp" "$ROOT/tests/host_stubs/stubs.cpp" \
+  -o /tmp/m5can-ecu-hint-coordinator-sanitized
+/tmp/m5can-ecu-hint-coordinator-sanitized
