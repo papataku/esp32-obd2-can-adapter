@@ -97,7 +97,7 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         w16(reply + 2, 512);
         w16(reply + 4, 244);
         w16(reply + 6, 3000);
-        reply[8] = 16;
+        reply[8] = static_cast<uint8_t>(MaxSubscriptions);
         reply[10] = 1;
         reply[11] = 0;
         w32(reply + 12, 1);
@@ -105,16 +105,19 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
       }
       break;
     case 2: {
-      if (n < 8 || b[4] > 8 || b[5] || b[6] || b[7] ||
+      if (n < 8 || b[4] > MaxSubscriptions || b[5] || b[6] || b[7] ||
           n != size_t(8 + 24 * b[4]) || revision_ == UINT32_MAX ||
           u32(b) != revision_ + 1) {
         result = Reject;
         break;
       }
+      // All accepted profiles must fit a COMPLETE snapshot, never truncate it.
+      size_t snapshot_bytes = 16;
       bool valid = true, relax = false;
       for (unsigned i = 0; i < b[4]; ++i) {
         const auto e = b + 8 + 24 * i;
         uint16_t pid = u16(e + 4);
+        snapshot_bytes += 44 + (pid == 0x9a ? 8 : (pid == 0x0c ? 4 : 3));
         valid &= u16(e) != 0 && e[2] == 1 && e[3] == 0 &&
                  (pid == 0x0c || pid == 0x0d || pid == 0x05 || pid == 0x5b ||
                   pid == 0x9a) &&
@@ -130,6 +133,8 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
           if (u16(e) == u16(b + 8 + 24 * j))
             valid = false;
       }
+      if (snapshot_bytes > MaxPdu - Header)
+        valid = false;
       if (!valid) {
         result = Reject;
         break;
@@ -200,6 +205,8 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         result = ProtocolError;
       else if (u32(b + 4) != revision_)
         result = BadRevision;
+      else if (!active(now))
+        result = TxLocked; // expired/paused leases cannot revive valid cache
       else
         snapshot_ = true;
       break;
@@ -274,6 +281,14 @@ void Session::apply(const uint8_t *b, uint32_t now) {
 bool Session::produce(uint32_t now, Packet &out, const Simulator *source) {
   if (!hello_)
     return false;
+  // Expiration invalidates pending snapshots as well as demand. Never reissue
+  // a VALID cache after the acquisition lease expired or PAUSE was applied.
+  if (!active(now)) {
+    snapshot_ = false;
+    cache_count_ = 0;
+    cache_size_ = 0;
+    cache_lengths_.fill(0);
+  }
   uint8_t p[486]{};
   if (snapshot_) {
     snapshot_ = false;
