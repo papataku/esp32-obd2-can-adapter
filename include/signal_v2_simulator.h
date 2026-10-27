@@ -9,6 +9,7 @@ public:
   static constexpr uint16_t Pids[5] = {0x0d, 0x0c, 0x05, 0x5b, 0x9a};
   struct Sample {
     uint32_t observed_ms = 0, sequence = 0, next_ms = 0;
+    uint16_t period_ms = 0;
     bool valid = false;
   };
   using Demand = std::array<uint16_t, 5>;
@@ -28,10 +29,16 @@ public:
         continue;
       }
       ++reservations_;
+      if (s.valid && s.period_ms != demand[i])
+        s.next_ms = s.observed_ms + demand[i];
       if (!s.valid || int32_t(now - s.next_ms) >= 0) {
+        s.next_ms =
+            s.valid ? s.next_ms + (uint32_t(now - s.next_ms) / demand[i] + 1) *
+                                      demand[i]
+                    : now + demand[i];
         s.valid = true;
         s.observed_ms = now;
-        s.next_ms = now + demand[i];
+        s.period_ms = demand[i];
         ++s.sequence;
         ++acquisitions_;
       }

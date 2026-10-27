@@ -80,6 +80,19 @@ int main(int argc, char **argv) {
   assert(s.revision() == 1);
   s.invalidate();
   assert(!s.active(0));
+  // ACK stalls may delay a delivery, but must not accumulate phase drift.
+  Session cadence;
+  cadence.connect(0x11223344, 0xa1b2c3d4);
+  cadence.control(hello, true, 0, out);
+  cadence.control(profile, true, 100, out);
+  assert(cadence.produce(100, out) && out.bytes[4] == 0x21);
+  assert(cadence.produce(150, out) && out.bytes[4] == 0x20);
+  assert(cadence.produce(300, out) &&
+         out.bytes[4] == 0x20); // not deferred to 350
+  assert(!cadence.produce(499, out));
+  assert(cadence.produce(510, out) && out.bytes[4] == 0x20);
+  assert(cadence.produce(700, out) &&
+         out.bytes[4] == 0x20); // not deferred to 710
   // RELAXED plan is only committed by explicit ACCEPT_PLAN, then cached ACK.
   Session planner;
   planner.connect(0x11223344, 0xa1b2c3d4);
@@ -115,12 +128,16 @@ int main(int argc, char **argv) {
   planner.demand(2, demand);
   source.tick(2, demand);
   assert(source.reservations() == 1 && source.acquisitions() == 1);
-  source.tick(3, demand);
-  assert(source.acquisitions() == 1);
+  source.tick(203, demand);
+  assert(source.acquisitions() == 2);
+  source.tick(402, demand);
+  assert(source.acquisitions() == 3); // original 2+200n phase
+  source.tick(403, demand);
+  assert(source.acquisitions() == 3);
   demand.fill(0);
   planner.demand(3001, demand);
   source.tick(3001, demand);
-  assert(source.reservations() == 0 && source.acquisitions() == 1);
+  assert(source.reservations() == 0 && source.acquisitions() == 3);
   // Alternating snapshots: partial writes never supersede a valid generation.
   Registry reg;
   Identity id{0, 1, 2, 3, 4, 5, 6};

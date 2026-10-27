@@ -305,7 +305,10 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source) {
   for (unsigned i = 0; i < count_; ++i) {
     auto e = entries_.data() + 24 * i;
     if (int32_t(now - due_[i]) >= 0) {
-      due_[i] = now + u16(e + 16);
+      const uint16_t period = u16(e + 16);
+      // Keep the admitted phase across transient ACK/notify backpressure.
+      // Skip missed deadlines, never manufacture old observations or bursts.
+      due_[i] += (uint32_t(now - due_[i]) / period + 1) * period;
       uint16_t pid = u16(e + 4);
       auto r = cache_.data() + 52 * i;
       uint8_t len = pid == 0x9a ? 8 : (pid == 0x0c ? 4 : 3);
