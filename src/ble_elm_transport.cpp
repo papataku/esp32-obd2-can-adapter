@@ -1,3 +1,4 @@
+#include "signal_v2_gatt.h"
 #include "ble_elm_transport.h"
 #include "diagnostic_error_catalog.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -49,14 +50,23 @@ class M5CanBleServerCallbacks final : public NimBLEServerCallbacks {
       gap_owner_->recordGapDisconnect(d.conn_handle, event->disconnect.reason,
           d.conn_itvl, d.conn_latency, d.supervision_timeout);
     }
+    #if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+    signal_v2::gap(event);
+#endif
     return 0; // observer only: never consume or alter GAP/session state
   }
   void onConnect(NimBLEServer*, ble_gap_conn_desc* d) override {
+    #if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+    if(d)signal_v2::connected(d->conn_handle);
+#endif
     if (d) owner_.onPeerConnect(d->conn_handle,
         static_cast<uint16_t>((static_cast<uint16_t>(d->peer_ota_addr.val[1]) << 8) |
                                d->peer_ota_addr.val[0]));
   }
   void onDisconnect(NimBLEServer*, ble_gap_conn_desc* d) override {
+    #if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+    if(d)signal_v2::disconnected(d->conn_handle);
+#endif
     if (d) owner_.onPeerDisconnect(d->conn_handle);
   }
   void onMTUChange(uint16_t mtu, ble_gap_conn_desc* d) override {
@@ -221,6 +231,9 @@ bool BleElmTransport::begin() {
   log_ctrl->setCallbacks(new M5CanLogControlCallbacks(*this));
   log_tx_characteristic_->setCallbacks(new M5CanLogDataCallbacks(*this));
   log->start();
+#endif
+#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+  if(!signal_v2::begin(server))return false;
 #endif
   advertising_=NimBLEDevice::getAdvertising();
 #else

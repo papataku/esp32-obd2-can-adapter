@@ -211,7 +211,11 @@ ElmResult ElmCompat::execute(const char* command) {
     // New firmware can preserve V1 compatibility or advertise V2 explicitly.
     std::snprintf(result.reply, sizeof(result.reply),
                   "M5CAN-CAPS PROTO=1.1 FW=%s BATCH=16 "
-                  "OPS=OBD01,UDS22 STREAM=0 LEASE=IMPLICIT",
+                  "OPS=OBD01,UDS22 STREAM=0 LEASE=IMPLICIT"
+#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+                  " SIGNALV2=1"
+#endif
+                  ,
                   cfg::kFirmwareVersion);
     return result;
   }

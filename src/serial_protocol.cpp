@@ -1,3 +1,4 @@
+#include "signal_v2_gatt.h"
 #include "serial_protocol.h"
 
 #include <algorithm>
@@ -352,6 +353,9 @@ void SerialProtocol::handleElmLine(const char* line, ElmLink link) {
 
   const ElmResult result = elm_.execute(line);
   bool prompt_now = true;
+#if defined(M5CAN_CAN_TX_HARD_DISABLED)
+  if(result.action==ElmAction::VehicleRead||result.action==ElmAction::BatchRead||result.action==ElmAction::LeaseAcquire){writeElmLine("M5CAN TX LOCKED");writeElmPrompt();return;}
+#endif
 
   switch (result.action) {
     case ElmAction::ReplyOnly:
@@ -482,6 +486,9 @@ void SerialProtocol::handleBleDisconnect() {
 }
 
 void SerialProtocol::handleUsbLine(const char* line) {
+#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+  if(signal_v2::usbCommand(line))return;
+#endif
   if (elm_mode_ && elm_link_ == ElmLink::Usb) {
     handleElmLine(line, ElmLink::Usb);
     return;
