@@ -58,7 +58,7 @@ def test_can_protocol_selection(elm, proto, expected):
 def test_reset_restores_echo(elm):
     _lines(elm.exchange("ATE0"))
     assert not _lines(elm.exchange("ATI")).startswith("ATI")
-    assert "ATZ" in _lines(elm.exchange("ATZ"))
+    assert "ELM327" in _lines(elm.exchange("ATZ"))
     assert _lines(elm.exchange("ATI")).startswith("ATI")
 
 
