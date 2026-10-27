@@ -1575,3 +1575,110 @@ V2-0仕様を固定しても、以下の点は未実証である。
 - 独立レビュー：`ttm-v2-review-codex.md` / `ttm-v2-review-ble.md` / `ttm-v2-review-safety.md`
 
 **本書のステータス：** PMによるV2-0仕様凍結候補。実装・実機の合格を証明する文書ではなく、V2-1の実装と受入を拘束する設計基準である。
+
+---
+
+# 規範追補 A — Signal V2-1 wire のオフセット、Admission、失効（2026-10-27）
+
+**適用範囲:** V2-0 v3.0 の未規定項目を補完する。PR #59 M-01〜M-04に対応。従来のG01〜G12 hex、Major=2、Minor=0、CRC32/ISO-HDLC、UUIDは不変更。正式な相互運用承認・実車CAN許可とは独立。
+
+## A.1 HELLO（opcode 0x01 / 12B body）
+
+| Body offset | 型 | 規範的意味 |
+|---:|---|---|
+| 0 | u8 | ClientMinMajor。現実装は1 |
+| 1 | u8 | ClientMaxMajor。現実装は2 |
+| 2..3 | u16 | Reserved。必ず0 |
+| 4..5 | u16 | ClientMaxPDU、50以上を要求。サーバ上限は512 |
+| 6..7 | u16 | 希望転送chunkサイズ（参考値、G01=244）。実際のATT MTUは接続毎に独立計測 |
+| 8..11 | u32 | ClientNonce。現実装は使用・エコーしない。認証証明ではない |
+
+初回HELLO要求PDUのBootId/SessionIdは0、ExpectedRevision=0。bond＋M5CAN登録済みの暗号化接続からのHELLOのみ有効。SessionIdは接続毎に新規発行し、HELLOのみでCAN権限を与えない。
+
+HELLO ACK（Result=ACCEPT）の16B body：
+
+| Body offset | 型 | 内容 |
+|---:|---|---|
+| 0..1 | u16 | MaxPDU=512 |
+| 2..3 | u16 | MaxSnapshotPDU=512 |
+| 4..5 | u16 | MaxFragmentData=244（実ATT MTUでも制限） |
+| 6..7 | u16 | DefaultLeaseMs=3000 |
+| 8 | u8 | MaxSubscriptionDescriptors=16（構文上限。容量保証ではない） |
+| 9 | u8 | Reserved=0 |
+| 10 | u8 | Capabilities=1（SIMULATED_DEMO、CANなし） |
+| 11 | u8 | Reserved=0 |
+| 12..15 | u32 | SourceGeneration=1（DEMO専用、物理ECU承認ではない） |
+
+G02のHELLO上限16は不変更。
+
+## A.2 SET_PROFILE / 24B Subscription Entry
+
+SET_PROFILE bodyは 8+24×N B（0<=N<=16）。0..3 NewRevision:u32（現在+1、wrap不可）、4 Count:u8、5..7 Reserved=0。全entryを検証し、原子的に受理・拒否する。
+
+| Entry offset | 型 | 内容・制約 |
+|---:|---|---|
+| 0..1 | u16 | SubscriptionId。非0、Profile内一意 |
+| 2 | u8 | Service=1（Service 01のみ） |
+| 3 | u8 | Reserved=0 |
+| 4..5 | u16 | PID：000C、000D、0005、005B、009Aのみ |
+| 6 | u8 | Priority=0速度、1主、2補助、3情報。速度PID 000Dは必ず0 |
+| 7 | u8 | Reserved=0 |
+| 8..11 | u32 | ResponseCANID。V2-1はDEMOルート用ヒントでありCAN許可・LIVE証明にならない |
+| 12..15 | u32 | SourceGeneration=1（合成ソース） |
+| 16..17 | u16 | RequestedPeriodMs、1..10000 |
+| 18..19 | u16 | MaxPeriodMs >= RequestedPeriodMs |
+| 20..21 | u16 | DeadlineMs >= RequestedPeriodMs |
+| 22..23 | u16 | Reserved=0 |
+
+RequestedPeriodMsが200未満なら、MaxPeriodMsとDeadlineMsがともに200以上の場合にのみRELAXEDを提示する。さもなくばREJECT。ResponseCANIDは将来、iOSと独立した車両取得元承認マニフェストで検証する必要がある。
+
+### A.2.1 M-01 容量Admissionの安全補正
+
+旧実装の8件固定上限は**16件の形式上限へ修正**。ただし全レコードのSnapshotが論理PDU最大512B（Header26B、Payload486B）に収まることを要求する。V2-1予測RawLengthはRPM(0C)=4、POWER(9A)=8、その他PID=3。Admission式は次のとおり。
+
+    SnapshotBytes = 16 + Σ [44 + RawLength(PID_i)]
+    ACCEPT only if SnapshotBytes <= 486
+
+超過ならProfile全体をREJECTし、旧Revision・旧購読を保持する。容量超過に対する部分Snapshotや「部分ACCEPT」は禁止。RPM9件は448BでACCEPT、RPM10件は496BでREJECT、RawLength3の10件は486Bでサイズ上受理可能。16件を構文上処理できてもデータ長によってREJECTすることは、HELLOのDescriptors上限16と矛盾しない。RELAXED提案が16件の場合のACK body上限は4+8+24×16=396B、PDU全長は438Bであり、固定返信バッファもこれを格納できなければならない。
+
+## A.3 OriginFlags と品質
+
+| SignalRecord offset3 | 意味 | V2-1 |
+|---|---|---|
+| 0x01 | CAN RAW | G05等の固定デコーダーfixture専用。実機生成・LIVE昇格禁止 |
+| 0x02 | DEMO | 合成信号として受信可能。LIVE昇格禁止 |
+| 0x04 | REPLAY予約 | 今回生成しない。未対応クライアントは採用禁止 |
+| 他値・複数bit合成 | 未定義 | fail-closed |
+
+Quality=0x00 VALID / 0x01 VALID_ZEROはOrigin=DEMOの場合には合成サンプル内の品質だけを示す。実車のLIVE値にはならない。欠測・古いECU・未承認を0として扱わない。
+
+## A.4 RELAXED ACK / ACCEPT_PLAN
+
+RELAXEDはACK Result=0x01でProfileRevisionを変更しない。Bodyは次の連結である。
+
+    PlanId:u32 + ProposedProfile[8+24×N]
+
+PlanIdは該当SET_PROFILEのRequestId。ProposedProfileはNewRevision、Count、Reserved、24Bの全entryを保持する。RequestedPeriodMsだけを必要に応じて200へ緩和し、他フィールドは維持。提案の有効期間は単調時計3000ms。ACCEPT_PLAN opcode0x03のBodyは PlanId:u32 + NewRevision:u32。保存中PlanId、提案ProfileのNewRevision、現在Revision+1、期限内のすべてが一致した場合だけ原子的コミットしACCEPT。未知ID、期限切れ、Revision不整合はREJECT、現行Profile不変更。同RequestId＋同内容の再送は保存済みACKのみ返して副作用0、異内容はPROTOCOL_ERROR。
+
+## A.5 SNAPSHOT / HEARTBEAT / 失効
+
+SNAPSHOT Type0x21のPayload先頭16B：
+
+| Offset | 型 | 意味 |
+|---:|---|---|
+| 0..3 | u32 | ResumeSequence = SNAPSHOTのFrameSequence+1 |
+| 4..7 | u32 | SnapshotFlags=3（完全な再同期境界、現実装固定） |
+| 8..11 | u32 | ProfileRevision |
+| 12 | u8 | RecordCount |
+| 13..15 | 3B | Reserved=0 |
+| 16.. | 可変 | 44+RawLengthの完全なSignalRecord列 |
+
+再送するキャッシュのSampleSeq・ObservedAtUs・SourceGeneration・ModeGenerationは変えない。BootId、SessionId、ProfileRevision、全recordのorigin/source/mode/quality、ResumeSequenceのいずれも検証できない受信者はRESYNC_REQUIREDのままとする。
+
+**M-03安全補正：** lease失効、PAUSE、購読なし、無効セッションではSNAPSHOT_REQをTX_LOCKEDで拒否する。古いVALID/VALID_ZEROキャッシュを返さず、保留Snapshot・古いcacheを無効化し、Data Notifyへ既にキューされた旧DATA/SNAPSHOTも送信しない。新規許可と再購読なしにFresh採用を復活させない。直前のSampleSeq/ObservedAtUsを新時刻に更新しない。
+
+**M-02安全補正：** DATA、HEARTBEAT、SNAPSHOTは同一Central・同一Data laneのFrameSequenceを共有する。HELLO後、検証済みSNAPSHOTが到着するまで通常DATA/HEARTBEATを採用しない。DATA frame=11を失った後にHEARTBEAT=12が到着した場合、最後の検証済みframe=10との差分で必ずRESYNC_REQUIREDへ移行し、HEARTBEATによる連番上書きを禁止する。Snapshot検証後だけ次の連番基準を設定。連番wrap時は再同期を要求。HEARTBEATは新規観測・Fresh延長を意味しない。
+
+## A.6 差分の識別と残余Gate
+
+G01〜G12とwire major/minorは変更しない。実装変更は(1)8件→16件の構文上限とSnapshotサイズAdmission、(2)HEARTBEAT共通sequence検査、(3)lease/PAUSE後のSnapshot拒否・保留DATA破棄、(4)追跡対象からの実機BLE識別子排除。いずれも安全・仕様整合のための変更。CAN物理TXは引き続き無効、V1・既存RAWログV2・iOSの250ms/4件を緩めない。独立相互運用のPM承認、物理MTU23/247、2 Central・8時間soak・on-air G01〜G12・故障注入は未完了。
