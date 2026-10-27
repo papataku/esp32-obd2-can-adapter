@@ -60,9 +60,23 @@ inspection. Revoke never deletes the BLE bond. Re-registration starts a new
 session; reconnect retains registration but never profile or lease.
 
 The SmartRing console reports pending registration, HELLO, ACK, DEMO data and
-recovery. It connects only to the bench M5Dial BLE address 48:ca:43:3a:11:f5
-(base USB identity +1 on these two-universal-address ESP32-S3 builds); verify this on hardware before
-changing it. Send `g` over its USB console for the firmware codec G01–G12 test.
+recovery. **No real BLE target identity is shipped or checked into Git.**
+Before compiling on the operator's Mac, copy
+`test_clients/smartring_signal_v2/signal_v2_target_local.h.example`
+to the adjacent `signal_v2_target_local.h` (gitignored). Replace its
+`SIGNAL_V2_TARGET_ADDRESS` placeholder with the target personally
+verified through USB-only `SIGV2 PEERS` / local board checks. A missing
+configuration disables all automatic connection; it never falls back to the
+first advertised device. Do NOT commit this local file or copy its
+contents into issues, CI, runbooks, logs or screenshots. Remove stale
+compile artifacts before provisioning a different target.
+
+`SIGV2 PEERS` is an **explicit USB administrator-only disclosure** and now
+uses the `#SIGNALV2_ADMIN_PRIVATE` prefix. Do not capture it in automatic
+bench evidence. Ordinary `SIGV2 STATUS`, startup logs and runbook contain
+no full BLE addresses, keys or key fingerprints. The actual identity
+remains accessible only to the present operator to perform APPROVE/REVOKE.
+Send `g` over its USB console for the firmware codec G01–G12 test.
 No existing meter UI or acquisition pipeline is included in this lab image.
 
 ## Protocol and resource checks
@@ -79,7 +93,12 @@ No existing meter UI or acquisition pipeline is included in this lab image.
   on all lanes; MTU23/247, CRC and exact ordered reconstruction are checked.
 - Eight cached Control results per session; content-changing reuse rejected;
   old evicted IDs yield RESULT_UNKNOWN. RENEW does not advance revision.
-- SIMULATED_ADMISSION: <=8 entries fit a complete snapshot, periods >=200ms.
+- SIMULATED_ADMISSION: up to 16 entries are parsed and advertised in HELLO;
+  Admission computes the COMPLETE snapshot payload (16B prefix plus every
+  expected 44B record + raw sample bytes) and atomically REJECTs any plan
+  exceeding 486B. Nine RPM records (448B snapshot) are accepted, ten RPM
+  records (496B) are rejected, without partial profile commit. All periods
+  remain >=200ms after any explicit RELAXED approval.
   Slower requested periods are honored independently. Faster requests with
   adequate max/deadline return RELAXED; explicit ACCEPT_PLAN is required.
   The relaxed lab ACK body is PlanId followed by the complete proposed profile.
@@ -95,15 +114,32 @@ No existing meter UI or acquisition pipeline is included in this lab image.
 - SmartRing requires matching boot/session/revision/source/mode, DEMO origin,
   complete snapshot and matching ResumeSequence. Resync <=5s, <=2 attempts.
 
-## Interpretation requiring PM review
+## Normative wire addendum for PM review
 
-The frozen v3 text supplies complete Golden bytes but does not enumerate every
-HELLO/24-byte subscription/RELAXED/Snapshot field or OriginFlags value. This
-prototype preserves all Golden bytes and interprets entry byte 6 as priority,
-byte 7 reserved, SourceGeneration at 12; Snapshot prefix as ResumeSequence,
-flags=3, revision, count/reserved. DEMO=0x02 and the RELAXED body above require
-explicit cross-client review before interoperability/production approval.
-No minor/major bump or new production wire claim is made by this Draft.
+The full v3 text plus offset-precise normative addendum is now checked into
+`docs/v2/m5can-v2-spec-v3.md` on this PR. The addendum spells out HELLO,
+24B subscription entry, OriginFlags, RELAXED/ACCEPT_PLAN, Snapshot and
+lease/paused behavior. It retains existing G01-G12 bytes. Independent
+interoperability qualification remains pending PM approval.
+
+## Remaining *hardware* acceptance (NOT demonstrated by CI)
+
+- A second physical Central: concurrent connections, one disconnect/lease
+  expiry/revocation without harming the other, slow peer, indication stall,
+  CCCD loss, security change and re-registration.
+- Physical ATT MTU23 and MTU247 sessions, with packet and fragment captures.
+- An actual on-air G01-G12 replay and deliberate DATA-gap then HEARTBEAT
+  fault to force SNAPSHOT, including gap after reconnect.
+- Multiple simultaneous subscription records on a physical Central:
+  this SmartRing minimal client intentionally requests and accepts only
+  ONE record; the host M5CAN Session codec tests 9-record DATA/SNAPSHOT.
+- Eight-hour dual-Central soak with mbuf pressure, lost indications,
+  RSSI/interval telemetry, heap minima, largest free block and stack marks.
+- Hardware NVS write interruption and restoration, plus every existing
+  saved bond/log verification. No destructive test without separate approval.
+- Post-fix reflash/boot verification is **NOT performed in this change**;
+  PM will commission the next authorized USB-only reflashing separately.
+- No real vehicle CAN, SOC/POWER LIVE or new-CAN-observation Hz testing.
 
 ## Acceptance and restoration
 
