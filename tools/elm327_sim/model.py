@@ -48,7 +48,7 @@ def _can_id(value, extended):
 class Response:
     request: bytes
     payload: bytes
-    response_id_11: int
+    response_id_11: int | None
     response_id_29: int
     delay_ms: int
     drop_every: int | None
@@ -102,11 +102,11 @@ def parse_model(raw: dict) -> ECUModel:
             if not (payload.startswith(bytes([request[0] + 0x40]) + request[1:]) or
                     (len(payload) == 3 and payload[:2] == bytes([0x7F, request[0]]))):
                 raise ValueError("response service/PID/DID mismatch")
-            rid11 = _can_id(obj["response_id_11"], False)
+            rid11 = (_can_id(obj["response_id_11"], False) if obj["response_id_11"] is not None else None)
             rid29 = _can_id(obj["response_id_29"], True)
             ecu_n = int(name[3:], 16)
-            if not (0 <= ecu_n <= 7 and rid11 == 0x7E8 + ecu_n):
-                raise ValueError("11-bit ECU ID must be 0..7 and matched to 7E8..7EF")
+            if rid11 is not None and not 0x7E8 <= rid11 <= 0x7EF:
+                raise ValueError("11-bit response must be 7E8..7EF")
             if rid29 != 0x18DAF100 | ecu_n:
                 raise ValueError("29-bit response ECU ID mismatch")
             delay = obj["delay_ms"]
