@@ -63,10 +63,10 @@ def test_missing_every_third_ecu02_response(bus):
     assert counts == [1, 1, 0]
 
 
-@pytest.mark.parametrize("request", [b"\x02\x2e\x20", b"\x02\x27\x01",
+@pytest.mark.parametrize("command_bytes", [b"\x02\x2e\x20", b"\x02\x27\x01",
                                      b"\x02\x10\x03", b"\x02\x31\x01"])
-def test_write_control_services_have_zero_replies(bus, request):
-    assert bus.on_frame(CANFrame(0x18DA01F1, request, True), 0) == []
+def test_write_control_services_have_zero_replies(bus, command_bytes):
+    assert bus.on_frame(CANFrame(0x18DA01F1, command_bytes, True), 0) == []
     assert bus.tick(1000) == []
 
 
