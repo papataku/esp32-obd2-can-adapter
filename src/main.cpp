@@ -1,3 +1,4 @@
+#include "signal_v2_gatt.h"
 #include "evidence_store.h"
 #include <Arduino.h>
 #include <atomic>
@@ -68,6 +69,9 @@ void bleAppTask(void*) {
   for (;;) {
     const uint32_t start_us=micros();
     g_dual.poll();
+#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+    signal_v2::poll();
+#endif
     const uint32_t elapsed_us=micros()-start_us;
     uint32_t current=g_ble_poll_peak_us.load(std::memory_order_relaxed);
     if (elapsed_us>current)
@@ -102,13 +106,13 @@ void setup() {
       static_cast<unsigned long>(m5can::rawCanJournal().status().blocks),
       m5can::rawCanJournal().status().foreign?1U:0U);
 #endif
-#if defined(ARDUINO_ARCH_ESP32)
+#if defined(ARDUINO_ARCH_ESP32) && !defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
   m5can::driveLog().begin(static_cast<uint32_t>(esp_reset_reason()),
       static_cast<uint32_t>(rtc_get_reset_reason(0)));
-#else
+#elif !defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
   m5can::driveLog().begin(0);
 #endif
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL) && !defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
   const bool log_store_ready=m5can::initializeEvidenceStore();
   Serial.printf("#LOGSTORE,ready=%u,sectors=%lu,foreign=%u\n",log_store_ready?1U:0U,
       static_cast<unsigned long>(m5can::evidenceStore().status().sectors),

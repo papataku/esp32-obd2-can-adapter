@@ -311,6 +311,9 @@ void DualBleElm::onLine(Session& s,const char* line) {
 #endif
   const ElmResult parsed=s.elm.execute(line);
   bool prompt_now=true;
+#if defined(M5CAN_CAN_TX_HARD_DISABLED)
+  if(parsed.action==ElmAction::VehicleRead||parsed.action==ElmAction::BatchRead||parsed.action==ElmAction::LeaseAcquire){emitLine(s,"M5CAN TX LOCKED");prompt(s);return;}
+#endif
   switch (parsed.action) {
     case ElmAction::ReplyOnly:
       if (parsed.reply[0]) {

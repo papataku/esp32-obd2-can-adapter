@@ -1,3 +1,9 @@
+#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL) && (!defined(M5CAN_CAN_TX_HARD_DISABLED) || !M5CAN_CAN_TX_HARD_DISABLED)
+#error "Signal V2 requires CAN TX hard disabled"
+#endif
+#if defined(M5CAN_CAN_TX_HARD_DISABLED) && (defined(M5CAN_VEHICLE_TRIAL) || defined(M5CAN_CAN_TX_ENABLED))
+#error "Conflicting CAN TX build flags"
+#endif
 #include "diagnostic_error_catalog.h"
 #include "can_monitor.h"
 #include "adaptive_multi_pid.h"
@@ -42,6 +48,9 @@ void CanMonitor::setError(const char* message) {
 }
 
 bool CanMonitor::installDriver(twai_mode_t mode) {
+#if defined(M5CAN_CAN_TX_HARD_DISABLED)
+  (void)mode;return false;
+#else
   twai_general_config_t general =
       TWAI_GENERAL_CONFIG_DEFAULT(cfg::kCanTxPin, cfg::kCanRxPin, mode);
   general.tx_queue_len =
@@ -64,9 +73,13 @@ bool CanMonitor::installDriver(twai_mode_t mode) {
     return false;
   }
   return true;
+#endif
 }
 
 bool CanMonitor::begin() {
+#if defined(M5CAN_CAN_TX_HARD_DISABLED)
+  setError("CAN TX HARD DISABLED; TWAI NOT INITIALIZED");return true;
+#endif
   if (running_) return true;
 
   frame_queue_ = xQueueCreate(cfg::kFrameQueueLen, sizeof(CapturedFrame));
@@ -285,6 +298,9 @@ void CanMonitor::updateDriverStats() {
 }
 
 bool CanMonitor::acquireLease(uint32_t duration_ms) {
+#if defined(M5CAN_CAN_TX_HARD_DISABLED)
+  (void)duration_ms;return false;
+#endif
   if (fault_locked_) return false;
   if (duration_ms == 0) duration_ms = cfg::kTxLeaseDefaultMs;
   duration_ms = std::min(duration_ms, cfg::kTxLeaseMaxMs);
@@ -344,7 +360,7 @@ void CanMonitor::enterFaultLocked(const char* reason) {
 
 esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
                                          uint32_t wait_ms) {
-#if defined(M5CAN_CAN_MODE_DRY_RUN)
+#if defined(M5CAN_CAN_MODE_DRY_RUN) || defined(M5CAN_CAN_TX_HARD_DISABLED)
   // USB-only mode-switch stack regression: no call to the physical TX API.
   (void)message;
   (void)wait_ms;
