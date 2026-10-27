@@ -111,5 +111,13 @@ def test_spaces_and_headers_are_independent(elm_can):
 def test_monitor_stop_command_boundary(elm):
     _lines(elm.exchange("ATE0"))
     response = elm.exchange("ATMA")
-    assert response.endswith(b">")
+    assert not response.endswith(b">")
     assert "STOPPED" in _lines(elm.exchange("ATI"))
+
+
+def test_caf1_multiframe_segmented_data_with_length(elm_can):
+    _setup(elm_can, protocol=7, headers=False, spaces=True)
+    data = _lines(elm_can.exchange("019A"))
+    assert "00A" in data
+    assert "0: 41 9A 07 00 3D BD" in data
+    assert "1: FF 70 AA BB" in data
