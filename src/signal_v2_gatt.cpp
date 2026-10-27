@@ -166,7 +166,7 @@ void manage(const char *cmd, uint32_t now) {
         }
       }
     }
-    Serial.printf("#SIGNALV2,synthetic_demo=%s,usb_only=1,can_tx_disabled=1,volatile=1\\n",
+    Serial.printf("#SIGNALV2,synthetic_demo=%s,usb_only=1,can_tx_disabled=1,volatile=1\n",
                   demo_enabled ? "ON" : "OFF");
     return;
   }
