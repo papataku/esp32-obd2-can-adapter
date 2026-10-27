@@ -1,0 +1,5 @@
+#pragma once
+// Copy to signal_v2_target_local.h in the same directory (gitignored).
+// Set this ONLY on the operator-controlled Mac to the USB-verified lab target.
+// No real BLE identity belongs in a tracked source or benchmark log.
+#define SIGNAL_V2_TARGET_ADDRESS "REPLACE_WITH_USB_VERIFIED_TARGET"
