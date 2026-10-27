@@ -60,8 +60,8 @@ inspection. Revoke never deletes the BLE bond. Re-registration starts a new
 session; reconnect retains registration but never profile or lease.
 
 The SmartRing console reports pending registration, HELLO, ACK, DEMO data and
-recovery. It connects only to the bench M5Dial BLE address 48:ca:43:3a:11:f6
-(base USB identity plus Espressif's BLE offset); verify this on hardware before
+recovery. It connects only to the bench M5Dial BLE address 48:ca:43:3a:11:f5
+(base USB identity +1 on these two-universal-address ESP32-S3 builds); verify this on hardware before
 changing it. Send `g` over its USB console for the firmware codec G01–G12 test.
 No existing meter UI or acquisition pipeline is included in this lab image.
 
@@ -121,3 +121,15 @@ erase; verify full-bank hash and original boot. Restoring NVS replaces lab-added
 registrations/bonds with the captured baseline. Never use a failed old-tool
 read as the restoration source. Full backups contain private bond/settings data
 and must remain local, outside Git/PR artifacts.
+
+### JTAG after-app verification workaround on this bench
+
+The new app exposed a flasher-stub panic with both cores active. A CPU0-only
+OpenOCD target plus holding CPU1 reset/stall during RAM-stub operations resolves
+it. Use `set ESP_ONLYCPU 1` before esp32s3.cfg, then `reset halt; mww 0x600c0000 7`
+(S3 SYSTEM_CORE_1_CONTROL_0, reset+clock+stall). Use `no_clock_boost` for programming;
+verify app hash plus saved bootloader/partition/otadata sectors. Before normal
+boot, restore this register to its reset default with `mww 0x600c0000 4`, then
+`reset run`. This is a volatile reset control, not an eFuse/flash modification.
+Never leave CPU1 stalled when evaluating the application. Reopen CDC only after
+USB re-enumerates. This workaround is specific to the observed ESP32-S3 bench.

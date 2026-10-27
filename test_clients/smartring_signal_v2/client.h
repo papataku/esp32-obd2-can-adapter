@@ -129,7 +129,7 @@ void loop() {
     auto results = scan->start(3, false);
     for (int i = 0; i < results.getCount(); ++i) {
       auto d = results.getDevice(i);
-      if (d.getAddress().toString() != "48:ca:43:3a:11:f6")
+      if (d.getAddress().toString() != "48:ca:43:3a:11:f5")
         continue;
       if (!client->connect(&d) || !client->secureConnection()) {
         client->disconnect();
