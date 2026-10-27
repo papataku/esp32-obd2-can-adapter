@@ -1684,3 +1684,89 @@ SNAPSHOT Type0x21のPayload先頭16B：
 G01〜G12とwire major/minorは変更しない。実装変更は(1)8件→16件の構文上限とSnapshotサイズAdmission、(2)HEARTBEAT共通sequence検査、(3)lease/PAUSE後のSnapshot拒否・保留DATA破棄、(4)追跡対象からの実機BLE識別子排除。いずれも安全・仕様整合のための変更。CAN物理TXは引き続き無効、V1・既存RAWログV2・iOSの250ms/4件を緩めない。独立相互運用・実機受入のPM最終判定、物理MTU23/247、2 Central・8時間soak・on-air G01〜G12・故障注入は未完了。
 
 承認：PM 2026-10-27、レビュー 20aa3af、オーナー最終承認待ち
+
+
+---
+
+# 追補B：性能目標（10Hz）— オーナー決定 2026-10-27
+
+**優先関係と適用時期:** 本追補BはV2の性能目標について、本文の旧5Hz目標および過去の「5Hzは未実証」という記述に優先する。**10HzはV2-2以降の目標であって、現行V2-1の達成性能・新しい物理CAN送信の許可ではない。** V2-1実装のperiod 200ms下限（100ms要求にはRELAXED）を本ドキュメントだけで変更しない。wire Major=2/Minor=0、G01〜G12、既存GATT、CAN TX無効、既存NVS/bond/V1を維持する。実車評価と新しいCAN予算は別審査・別承認とする。
+
+## B.1 標準購読セット（5 PID、必須メーター表示）
+
+| Service 01 PID | 信号・表示名 | 既定Priority | V2希望周期 | LIVE判定 |
+|---|---|---:|---:|---|
+| `010D` | SPEED / 車速（10Hz判定の基準） | 0（速度専用） | 100ms | ECU・取得元・Freshness承認が必要 |
+| `010C` | RPM / 回転数 | 1（主） | 100ms | 同上 |
+| `0105` | WATER / 水温 | 2（補助） | 100ms | 同上 |
+| `015B` | SOC / HV電池の候補値 | 2（補助） | 100ms | **物理意味・ECU・TTL検証とiOS別承認まではLIVE禁止** |
+| `019A` | POWER / 電池電力の候補値 | 2（補助） | 100ms | **物理意味・電圧/電流の符号・ECU・TTL検証とiOS別承認まではLIVE禁止** |
+
+5信号は**常に表示対象**とする。ただし「必須表示」は未承認CAN取得を強制せず、値が得られない間は空欄/INVALID/研究中などの明示表示とする。ゼロ値、想像値、DEMO値を実車LIVEとして埋めてはならない。車両/ECUの対応状況によって要求はREJECT/RELAXEDになり得る。`RequestedPeriodMs=100` とAdmission済みの実効period（例200ms）を区別し、実際のHzを別に測定する。優先度0は`010D`のみ。V2-2では同じ5信号をSmartRingのV2 Centralも使用することを目標とし、同一ECU/PIDの取得需要をM5CANの単一CAN ownerで共有し、CentralごとにBLE通知を分離する。通信量削減は**未測定の予測**である。
+
+5レコードのSnapshot想定payloadは、現行V2-1のraw長モデル（RPM4B、速度/水温/SOC各3B、POWER8B）を使うと `16 + (44+4) + 3*(44+3) + (44+8) = 257B` で、486B上限内。これは **wire容量の机上計算に過ぎず、実車019Aなどの応答長・group可否・10Hz取得を証明しない**。
+
+## B.2 10Hzの定義、タイムスタンプと安全判定
+
+**主KPIは車速`010D`の「独立した有効なCAN診断応答から新たに得たサンプル」の実測頻度であり、目標は100ms/sample ≒ 10Hz。** 同じ数値が続いても、新しく完了したECU応答なら別観測として数えてよい。一方、BLE Notify/Statusの周期、GATT書込み間隔、SmartRing/iOSの描画FPS、キャッシュの繰返し送出、Heartbeat、Snapshot、旧SampleSeqの再送は**新規サンプルに数えない**。
+
+- 観測時刻 `ObservedAtUs` はM5CAN側の単調時計による**ISO-TP応答の完全な受理/検証時刻**（一貫した採時点）とする。複数PIDを含む単一応答では同一transaction完了の時刻を使い、PIDごとの新規観測の証拠は診断transaction ID・ECU ID・SampleSeqで独立に保持する。壁時計の時刻補正でFresh期間を延長しない。
+- 計数対象は、CRC/ISO-TP/応答形式が完全、正しいService/PID・承認済みのECU応答元とSourceGeneration/ModeGeneration、単調増加SampleSeq、許可済みProfileRevision、TTL内のCAN originに限る。DEMO/REPLAY、誤ECU、破損、欠測、未知の生値は除外。
+- 各連続サンプルの `Δt = ObservedAtUs[i] - ObservedAtUs[i-1]`、実効率、p50/p95/p99/maxを測定。BLE受信時刻・画面採用時刻・通知bytes/s・欠落数は**別指標**にする。複数Centralの受信通知数の合計を観測数へ加算しない。
+- 受入候補の暫定案：少なくとも10分連続・複数運転状態の各条件で、車速の新規観測率が毎60秒窓9.5Hz以上、Δt p50が90〜110ms、p95≦120ms、p99≦150ms、連続gap最大300ms以下。**これは設計の提案値であり、実車SLAとしての最終承認ではない。** 速度10Hz達成と5信号すべて10Hz達成は別々に記録し、低優先度がRELAXEDでも速度10Hzを誤記しない。
+
+## B.3 複数PIDの同時取得・ISO-TP・ECU対応
+
+SAE J1979のService 01／ISO 15765-4 CANでは、**1個の要求で最大6個のPID**を指定可能（Single Frameの診断payload最大7B=Service 1B+PID 6B）。5信号は形式上最大6件以下だが、**同じECUがその5つを同時にサポートする保証はない**。ISO-TPは要求・応答を運ぶ転送方式であって、複数PIDを「どのECUからでも1回で取れる」仕組みではない。
+
+- 同じService、承認された**同じ物理ECU**に属し、当該ECUが集合要求を受けることを個別試験したPIDのみグループ化する。車種別のsupport bitmapと個別成功は、group成功の代替にはならない。機能アドレスへの一斉要求から異なるECUの応答を混ぜて1観測としない。
+- 多PID応答は単一CAN frameに収まらない場合がある。First Frame、Consecutive Frame、Flow Controlの**実TX本数**・対象ECU・PCI長・全長・sequence・タイムアウト・negative/partial応答を検査する。FCも車両送信予算・認可ゲートに含める。
+- group未対応、ECU変更、部分応答、異なる順、ISO-TP破損、期限超過時はgroupをFail-closedで退避。個別PIDへfallbackする場合も、合計TX・FC・ECU負荷を再Admissionし、速度優先で予算内のものだけ実行。無断の再試行burstは禁止。
+- V2-2で検討する grouping は次の単位：確認済みECUごとの [`010D,010C,0105,015B,019A`] 部分集合。ただしPID/応答長/ECUの事前実証が前提。まず単独PID、次に同一ECUの2〜3 PID、最後に6以下の複数PIDを比較。**現行V2-1実装にgrouped CAN通信は存在しない**と扱う。
+
+参考：ELM327 Operation Manual「Multiple PID Requests」https://www.manualshelf.com/manual/elm/327/operation-manual-english.html 。実装時は適用版のSAE J1979・ISO 15765-2/-4を原典確認する。
+
+## B.4 CANバス負荷の暫定上限案（CAN有効化の承認ではない）
+
+車両側のbitrateは実測・設定で確認し、診断トラフィックを **M5CANのTX + ECUの当該応答 + ISO-TP FC + 再送** の合計として、既存通常トラフィックからの増分を測る。29bit識別子、DLC、CRC、stuffing、intermission、retryを含む**実bit相当**を積算し、リクエスト数だけで負荷を推定しない。
+
+| 条件 | V2-2暫定の試験提案 |
+|---|---|
+| 1秒移動窓の診断増分負荷 | CAN bitrateの**5%以下**（500kbpsでは25kbit/s相当） |
+| 100ms移動窓の診断増分負荷 | CAN bitrateの**10%以下**（500kbpsでは5kbit/100ms相当） |
+| 要求の合計 | 1要求6PID以下、既存CAN owner/pacer・逐次化・認可制約をすべて維持。10Hzに必要な要求レートへの増加は別審査 |
+| 過負荷/不明/異常 | 非速度→主メーター→速度の順に許可済み予算内で緩和・停止。速度でも不達ならDelayedにし、達成を宣言しない |
+
+**上限値は候補**であって現車で承認された負荷ではない。車載の他機能/他診断器への影響、ECU処理余裕、NRC/ResponsePending、多ECU同時応答、TWAI RX欠落も独立STOP条件とする。既存のCAN安全制限（V1含む）を緩和せず、段階的実車評価とオーナー承認を経なければ物理送信モードに移らない。
+
+## B.5 目標未達の品質 `Delayed`
+
+- 速度について直近の**新規**取得間隔または観測年齢が150msを超えたとき、10Hz目標未達として**派生品質 `Delayed`** に遷移する。他信号は要求100msと受入実効周期を明示し、希望周期・承認済みDeadlineを超えた場合に個別Delayedとする。通知周期だけが100msでも、Observationが200ms間隔ならDelayed。
+- **v3 wireには `Delayed` のQuality数値がない。** 今回はwire値・Goldenを追加/変更せず、受信・表示・メトリクスの派生状態として定義する。適用可能な既存Quality=`DEADLINE_MISSED(0x08)` は新規応答の期限超過、`STALE(0x07)` はTTL失効の状態を示す。新しいQuality enumを追加する場合は別のwire互換審査を要する。
+- 取得が停止したときは新規SampleSeq/ObservedAtUsを捏造せず、Heartbeat/キャッシュではDelayed解除しない。TTL失効や不正来歴があれば**STALE/INVALIDがDelayedより優先**。未承認SOC/POWERは依然としてLIVE=INVALID。新規の完全な観測が戻って初めて回復を判定する。
+- 受理された実効periodが200msなら100ms希望との差を表示・ログへ残す。200msの正常notifyを10Hz合格やCAN実観測10Hzと呼ばない。iOSのhost 250ms/4件/sの送信予算も不変（プッシュ受信Hzとは別）。
+
+## B.6 検証範囲の区分
+
+| ベンチ・ホストで検証できる事項（V2-1 CAN TX無効でも可） | 実車でしか確定しない事項（V2-2以降、別許可） |
+|---|---|
+| 5 PIDのProfile、Admission、Snapshot全件・容量、Golden G01〜G12不変 | 各PIDの物理応答ECU、support bitmap、group要求の真の対応 |
+| 100ms模擬時刻とgap/Delayedの計数、重複SampleSeq非採用 | CAN由来の実Observation10Hz、ECU内部値の実更新周期 |
+| 6 PID以下の要求フォーマット・Multi Frame/FCの固定fixture・故障注入 | 実応答のISO-TP長・FC・タイムアウト・ECUの応答負担 |
+| CAN総bit予算シミュレーション、遅延時の速度優先・緩和・STOP | CANの通常負荷対増分負荷、車載通信/他診断への影響 |
+| SmartRing V2 BLE帯域比較、2 Central、MTU23/247、8h USB/BLE soak | 走行状態別の車速実観測分布、SOC/POWERの物理意味/TTL |
+| 権限・登録・lease・NVS・旧wireの非破壊テスト | 実車によるルート許可・安全合否、iOS SOC/POWER LIVE別承認 |
+
+**注:** 実機M5Dial/SmartRingへのFW再書込み、実車CAN送信、CAN TX有効化はこの追補によって許可されない。ベンチ合格を実車合格へ昇格させない。
+
+## B.7 V2-2（CAN取得を検討する段階）の受入・計測計画
+
+詳細な実施ゲートと報告テンプレート：`docs/v2/m5can-v2-2-10hz-acceptance-plan.md`。
+
+1. **Gate 0: CAN TXの別途オーナー承認。** V2-1の安全・2 Central・登録・8h soakに合格し、未承認時はTX=0を維持。車両・実行者・停止方法・負荷予算を独立に承認。
+2. **Gate 1: ECU・PIDを識別。** 5信号の物理ECU、個別応答、マルチPID群の組合せ、ISO-TP長とFCを確認。groupは同一ECUの試験済み集合のみ許可。
+3. **Gate 2: バス/診断予算。** CANオーナー、物理TX+FC、ECU応答、1秒/100msの実bit負荷とエラー率をログ化。負荷・安全制約でのRELAXED/STOPを先に検証。
+4. **Gate 3: 10Hz合否。** 同一車両状態で連続10分・複数条件。完全な新規`010D`応答の単調`ObservedAtUs`の差を集計し、**各60秒窓実効9.5Hz以上、Δt p50=90〜110ms、p95≦120ms、p99≦150ms、最大gap≦300ms**を暫定受入候補とする。これらはPM/オーナーの正式な性能SLA承認待ちで、現時点では実測PASSなし。
+5. **独立判定:** 車速10Hz、5信号全て10Hz、SmartRing BLE削減、iOS LIVE（特にSOC/POWER）は**別のPASS/FAIL**にする。測れない条件はNOT_VERIFIED/INVALID、無理な周期はDelayedで示す。
+
+**追補Bのステータス:** オーナー決定の目標値を記載した設計・受入計画。V2-1性能実証、wire増補、CAN TX許可、車載10Hz達成の宣言ではない。
