@@ -1,5 +1,6 @@
 #include "signal_v2_registry.h"
 #include "signal_v2_session.h"
+#include "signal_v2_sequence.h"
 #include <cassert>
 #include <fstream>
 #include <iostream>
@@ -138,6 +139,121 @@ int main(int argc, char **argv) {
   planner.demand(3001, demand);
   source.tick(3001, demand);
   assert(source.reservations() == 0 && source.acquisitions() == 3);
+
+  // Independent Central sequence acceptance: dropped DATA11 followed by
+  // HEARTBEAT12 MUST require a snapshot; DATA13 cannot clear that fault.
+  assert(acceptsSequential(10, 11, false));
+  assert(!acceptsSequential(10, 12, false));
+  assert(!acceptsSequential(10, 13, true));
+  assert(acceptsSequential(12, 13, false)); // only after validated snapshot
+  assert(!acceptsSequential(0, 1, false));
+  assert(!acceptsSequential(UINT32_MAX, 0, false));
+
+  // The HELLO-advertised 16 is a DESCRIPTOR bound, not a promise that every
+  // combination can fit a 486-byte atomic SNAPSHOT payload.
+  Session multi;
+  multi.connect(0x11223344, 0xa1b2c3d4);
+  multi.control(hello, true, 0, out);
+  assert(out.payload()[16 + 8] == MaxSubscriptions);
+  auto makeMulti = [&](unsigned n) {
+    std::vector<uint8_t> b(8 + 24 * n, 0);
+    w32(b.data(), 1);
+    b[4] = static_cast<uint8_t>(n);
+    for (unsigned i = 0; i < n; ++i) {
+      uint8_t *e = b.data() + 8 + 24 * i;
+      std::copy(profile.payload() + 20, profile.payload() + 44, e);
+      w16(e, static_cast<uint16_t>(i + 1));
+    }
+    return b;
+  };
+  auto nine = makeMulti(9); // 16 + 9*(44+4) = 448 <= 486
+  multi.control(request(2, 0, 2, nine.data(), nine.size()), true, 100, out);
+  assert(out.payload()[5] == Accept && multi.revision() == 1);
+  assert(multi.reservations(100) == 9);
+  assert(multi.produce(100, out) && out.bytes[4] == 0x21); // empty initial
+  assert(multi.produce(101, out) && out.bytes[4] == 0x20 &&
+         out.payload()[0] == 9);
+  Packet multiData = out;
+  for (size_t mtu : {23U, 247U}) {
+    Reassembler reassembled;
+    Packet decoded;
+    uint8_t fragmentBytes[260]{};
+    for (size_t off = 0; off < multiData.size;) {
+      const size_t used =
+          fragment(multiData, 2, 19, off, mtu, fragmentBytes);
+      assert(used >= 17 && used <= mtu - 3);
+      const auto result =
+          reassembled.feed(fragmentBytes, used, 2, 101, decoded);
+      off += used - 16;
+      assert(result == (off == multiData.size ? Error::None : Error::Pending));
+    }
+    assert(decoded.size == multiData.size && decoded.bytes == multiData.bytes);
+  }
+  uint8_t snap9[8]{};
+  w32(snap9 + 4, 1);
+  multi.control(request(3, 1, 7, snap9, 8), true, 102, out);
+  assert(out.payload()[5] == Accept);
+  assert(multi.produce(103, out) && out.bytes[4] == 0x21 &&
+         out.payload()[12] == 9 && out.size <= MaxPdu);
+  Session overflow;
+  overflow.connect(0x11223344, 0xa1b2c3d4);
+  overflow.control(hello, true, 0, out);
+  auto ten = makeMulti(10); // 16 + 10*48 = 496 > 486
+  overflow.control(request(2, 0, 2, ten.data(), ten.size()), true, 100, out);
+  assert(out.payload()[5] == Reject && overflow.revision() == 0 &&
+         !overflow.active(100));
+  auto sixteen = makeMulti(16);
+  overflow.control(request(3, 0, 2, sixteen.data(), sixteen.size()),
+                   true, 101, out);
+  assert(out.payload()[5] == Reject && overflow.revision() == 0);
+  // No partial commit/previous profile destruction on oversized proposal.
+  multi.control(request(4, 1, 2, ten.data(), ten.size()), true, 105, out);
+  assert(out.payload()[5] == Reject && multi.revision() == 1 &&
+         multi.reservations(105) == 9);
+
+  // Once the 3s lease expires, SNAPSHOT_REQ must NOT recycle a VALID cache.
+  Session expired;
+  expired.connect(0x11223344, 0xa1b2c3d4);
+  expired.control(hello, true, 0, out);
+  expired.control(profile, true, 100, out);
+  assert(expired.produce(100, out) && out.bytes[4] == 0x21);
+  assert(expired.produce(101, out) && out.bytes[4] == 0x20);
+  const uint32_t storedSeq = u32(out.payload() + 2 + 38);
+  const uint32_t storedTime = u32(out.payload() + 2 + 26);
+  expired.control(request(3, 1, 7, snap9, 8), true, 3100, out);
+  assert(out.payload()[5] == TxLocked && expired.revision() == 1);
+  assert(expired.produce(3101, out) && out.bytes[4] == 0x22);
+  assert(!expired.active(3101) && expired.reservations(3101) == 0);
+  expired.control(request(4, 1, 7, snap9, 8), true, 3102, out);
+  assert(out.payload()[5] == TxLocked);
+  assert(expired.produce(4102, out) && out.bytes[4] == 0x22);
+  assert(storedSeq != 0 && storedTime != 0);
+
+  // Per-Central leases are independent even when both demand the same PID.
+  Session peerA, peerB;
+  peerA.connect(0x11223344, 0xa1b2c3d4);
+  peerB.connect(0x11223344, 0xa1b2c3d5);
+  peerA.control(hello, true, 0, out);
+  peerB.control(hello, true, 0, out);
+  peerA.control(profile, true, 0, out);
+  auto forB = encode(1, 0x11223344, 0xa1b2c3d5, 2,
+                     profile.payload(), profile.size - Header);
+  peerB.control(forB, true, 0, out);
+  assert(out.payload()[5] == Accept);
+  auto renewB = request(3, 1, 4);
+  renewB = encode(1, 0x11223344, 0xa1b2c3d5, 3, renewB.payload(),
+                  renewB.size - Header);
+  peerB.control(renewB, true, 2500, out);
+  assert(out.payload()[5] == Accept);
+  assert(!peerA.active(3000) && peerB.active(3000));
+  Simulator::Demand onlyB{};
+  peerA.demand(3000, onlyB);
+  peerB.demand(3000, onlyB);
+  Simulator sharedSource;
+  sharedSource.tick(3000, onlyB);
+  assert(sharedSource.reservations() == 1 &&
+         sharedSource.acquisitions() == 1);
+
   // Alternating snapshots: partial writes never supersede a valid generation.
   Registry reg;
   Identity id{0, 1, 2, 3, 4, 5, 6};
