@@ -97,6 +97,18 @@ int main(int argc, char **argv) {
   auto commit = out;
   planner.control(request(3, 0, 3, accept, 8), true, 2, out);
   assert(out.bytes == commit.bytes && planner.revision() == 1);
+  Session speed;
+  speed.connect(0x11223344, 0xa1b2c3d4);
+  speed.control(hello, true, 0, out);
+  uint8_t speed_body[32];
+  std::copy(profile.payload() + 12, profile.payload() + 44, speed_body);
+  w16(speed_body + 12, 0x0d);
+  speed_body[14] = 3;
+  speed.control(request(2, 0, 2, speed_body, 32), true, 1, out);
+  assert(out.payload()[5] == Reject && speed.revision() == 0);
+  speed_body[14] = 0;
+  speed.control(request(3, 0, 2, speed_body, 32), true, 2, out);
+  assert(out.payload()[5] == Accept && speed.revision() == 1);
   Simulator source;
   Simulator::Demand demand{};
   planner.demand(2, demand);

@@ -6,7 +6,7 @@ namespace signal_v2 {
 // touches CAN. Session demand expires synchronously before this scheduler runs.
 class Simulator {
 public:
-  static constexpr uint16_t Pids[5] = {0x0c, 0x0d, 0x05, 0x5b, 0x9a};
+  static constexpr uint16_t Pids[5] = {0x0d, 0x0c, 0x05, 0x5b, 0x9a};
   struct Sample {
     uint32_t observed_ms = 0, sequence = 0, next_ms = 0;
     bool valid = false;
