@@ -94,7 +94,8 @@ int main() {
   }
   // USB OFF wipes stale valid snapshot; subsequent DATA is NOT fake 0rpm.
   s.clearDemoCache(450);
-  source = Simulator{};
+  // OFF makes samples invalid without rewinding SampleSeq.
+  source.tick(450, Simulator::Demand{});
   assert(s.produce(450, out, &source, false) && out.bytes[4] == 0x20);
   off = 2;
   for (int i = 0; i < 5; ++i) {
@@ -103,4 +104,15 @@ int main() {
   }
   Packet decoded;
   assert(decode(out.bytes.data(), out.size, decoded) == Error::None);
+  // Re-enable on the SAME boot/session; sequence must stay monotonic.
+  source.tick(650, demand);
+  s.clearDemoCache(650);
+  assert(s.produce(651, out, &source, true) && out.bytes[4] == 0x20);
+  assert(out.payload()[0] == 5);
+  off = 2;
+  for (int i = 0; i < 5; ++i) {
+    assert(out.payload()[off + 7] <= 1);
+    assert(u32(out.payload() + off + 38) >= 3);
+    off += u16(out.payload() + off);
+  }
 }
