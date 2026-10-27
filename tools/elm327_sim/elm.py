@@ -57,13 +57,15 @@ class ELM327Session:
         else:
             lines = self._execute(original)
         result = (self._format_line(typed) if echo else b"")
+        if self.monitoring and original == "ATMA":
+            return result  # monitor stream is not completed by a prompt
         result += b"".join(self._format_line(line) for line in lines if line is not None)
         return result + b">"
 
     def _execute(self, cmd: str) -> list[str]:
         if cmd in ("ATZ", "ATWS"):
             self.reset()
-            return ["ELM327 v2.2"]
+            return ["ELM327 SIMULATOR v0.1"]
         if cmd == "ATD":
             self.reset()
             return ["OK"]
@@ -185,5 +187,16 @@ class ELM327Session:
             if not pdu:
                 continue
             label = (f"{rid:08X}" if extended else f"{rid:03X}") + (" " if self.spaces else "")
-            lines.append((label if self.headers else "") + _print_hex(pdu, self.spaces))
+            if pci == 1:
+                if self.headers:
+                    for f in frames:
+                        lines.append(label + _print_hex(f.data, self.spaces))
+                else:
+                    length_text = f"{len(pdu):03X}"
+                    lines.append(length_text)
+                    blocks = [pdu[:6]] + [pdu[i:i + 7] for i in range(6, len(pdu), 7)]
+                    for index, block in enumerate(blocks):
+                        lines.append(f"{index:X}: " + _print_hex(block, self.spaces))
+            else:
+                lines.append((label if self.headers else "") + _print_hex(pdu, self.spaces))
         return lines or ["NO DATA"]
