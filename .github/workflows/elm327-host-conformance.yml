@@ -1,0 +1,26 @@
+name: ELM327 host-only conformance (no CAN hardware)
+on:
+  pull_request:
+    paths:
+      - "tools/elm327_sim/**"
+      - "tests/elm327_conformance/**"
+      - ".github/workflows/elm327-host-conformance.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  python-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest pyserial
+      - name: Validate host-only ECU, ISO-TP, ELM and CDC
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q tests/elm327_conformance
+      - name: Prove CLI loads without hardware
+        run: python -m tools.elm327_sim --help
