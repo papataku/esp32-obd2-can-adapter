@@ -13,3 +13,6 @@ python3 tests/test_recover_raw_can_log.py
 PYTHONPATH=tools python3 tools/test_protocol.py
 PYTHONPATH=tools python3 tests/test_validate_capture.py
 python3 -m compileall -q tools tests
+
+python3 tests/test_signal_v2_wire.py
+python3 tests/test_signal_v2_session.py

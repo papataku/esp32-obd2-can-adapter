@@ -16,5 +16,5 @@ class Wire(unittest.TestCase):
     chunk=b[off:off+4];parts.append(bytes.fromhex('d7520201')+bytes([(1 if off==0 else 0)|(2 if off+len(chunk)==len(b) else 0),0])+bytes.fromhex('010000003200')+off.to_bytes(2,'little')+bytes([len(chunk),0])+chunk)
    self.assertEqual(len(parts),13);self.assertEqual(parts[0].hex(),f['G10']);self.assertEqual(parts[-1].hex(),f['G10_2'])
    self.assertEqual(b,b''.join(p[16:] for p in parts))
-   for i,p in enumerate(parts):(ROOT/'tests/fixtures'/f'signal_v2_g10_{i+1:02}.hex').write_text(p.hex()+'\n')
+   for i,p in enumerate(parts):self.assertEqual((ROOT/'tests/fixtures'/f'signal_v2_g10_{i+1:02}.hex').read_text().strip(),p.hex())
 if __name__=='__main__':unittest.main()
