@@ -19,6 +19,17 @@ TTM_ISOLATED_BENCH=YES PYTHONPATH=. python3 -m pytest -q tests/elm327_conformanc
   --elm-target=kw905 --elm-port=/dev/cu.EXPLICIT-ISOLATED-PORT --isolated-bench-ack
 ~~~
 
+Optional Mac BLE transport (explicit macOS CoreBluetooth UUID or other Bleak identifier; never scan or select automatically):
+
+~~~sh
+python3 -m pip install bleak
+TTM_ISOLATED_BENCH=YES PYTHONPATH=. python3 -m pytest -q tests/elm327_conformance/test_elm.py \\
+  --elm-target=kw905 --elm-transport=ble --elm-ble-id=EXPLICIT_COREBLUETOOTH_ID \\
+  --isolated-bench-ack
+~~~
+
+The transport profiles are verified against iOS CoreBluetoothDriver.swift: M5CAN NUS RX write / TX notify; KW905 FFF0, FFF2 write-without-response, FFF1 notify. No BLE device IDs are checked into the repository. Physical OBD requests still require a separately approved, **disconnected, isolated ECU test bench**.
+
 Without `--bus-bench-ack`, OBD requests are **NOT_RUN** on external devices. To test those cases, a separately approved, physically isolated ECU bench is required. Selecting `m5dial` instead of `kw905` uses the same adapter/cases; its separate Virtual-only firmware has **not** been implemented in this PR. The external serial adapter uses the target's ELM UART-like transport and does not perform automatic BLE selection or certification; a BLE bridge will be required for BLE-only KW905.
 
 Virtual-only USB CDC mode (future M5Dial FW; **do not run on an unknown device**):
