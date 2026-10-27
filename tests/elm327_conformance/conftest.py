@@ -48,6 +48,8 @@ class SerialELMAdapter:
 def pytest_addoption(parser):
     parser.addoption("--elm-target", action="store", default="sim", choices=("sim", "m5dial", "kw905"))
     parser.addoption("--elm-port", action="store", default="")
+    parser.addoption("--elm-transport", action="store", default="serial", choices=("serial", "ble"))
+    parser.addoption("--elm-ble-id", action="store", default="")
     parser.addoption("--isolated-bench-ack", action="store_true", default=False)
     parser.addoption("--bus-bench-ack", action="store_true", default=False)
 
@@ -57,10 +59,20 @@ def elm(request):
     target = request.config.getoption("--elm-target")
     if target == "sim":
         return InProcessAdapter()
+    transport = request.config.getoption("--elm-transport")
     port = request.config.getoption("--elm-port")
-    if not port:
+    ble_id = request.config.getoption("--elm-ble-id")
+    if transport == "ble" and not ble_id:
+        pytest.skip(f"{target}: NOT_RUN; explicit --elm-ble-id is mandatory")
+    if transport == "serial" and not port:
         pytest.skip(f"{target}: NOT_RUN; explicit --elm-port is mandatory")
-    adapter = SerialELMAdapter(target, port, request.config.getoption("--isolated-bench-ack"))
+    if not request.config.getoption("--isolated-bench-ack") or os.environ.get("TTM_ISOLATED_BENCH") != "YES":
+        raise RuntimeError("external ELM requires explicit isolated non-vehicle bench acknowledgement")
+    if transport == "ble":
+        from tools.elm327_sim.ble_adapter import ExplicitBLEELMAdapter
+        adapter = ExplicitBLEELMAdapter(target, ble_id)
+    else:
+        adapter = SerialELMAdapter(target, port, True)
     request.addfinalizer(adapter.close)
     return adapter
 
