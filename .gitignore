@@ -4,3 +4,6 @@ __pycache__/
 logs/
 .DS_Store
 .vscode/.browse_c_cpp.db*
+
+# Provisioned ONLY on the operator's Mac; never commit real BLE identity.
+test_clients/smartring_signal_v2/signal_v2_target_local.h
