@@ -2,6 +2,14 @@
 // driver.
 #include "signal_v2_codec.h"
 #include "signal_v2_golden.h"
+#include "signal_v2_sequence.h"
+// A real target is supplied only by a gitignored, locally provisioned file.
+#if __has_include("signal_v2_target_local.h")
+#include "signal_v2_target_local.h"
+#endif
+#ifndef SIGNAL_V2_TARGET_ADDRESS
+#define SIGNAL_V2_TARGET_ADDRESS ""
+#endif
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <cstring>
@@ -103,6 +111,8 @@ void setup() {
   ble_hs_cfg.store_status_cb = [](ble_store_status_event *, void *) {
     return BLE_HS_ESTORE_CAP;
   };
+  if (!SIGNAL_V2_TARGET_ADDRESS[0])
+    Serial.println("#RING_SIGNALV2,target=UNCONFIGURED,connections=DISABLED");
   client = NimBLEDevice::createClient();
   client->setConnectTimeout(5);
 }
@@ -124,12 +134,16 @@ void loop() {
     data_rx.reset();
     xQueueReset(received);
     // An existing bond is never erased to "repair" authentication.
+    if (!SIGNAL_V2_TARGET_ADDRESS[0]) {
+      delay(1000); // no implicit target selection or first-device fallback
+      return;
+    }
     auto scan = NimBLEDevice::getScan();
     scan->setActiveScan(true);
     auto results = scan->start(3, false);
     for (int i = 0; i < results.getCount(); ++i) {
       auto d = results.getDevice(i);
-      if (d.getAddress().toString() != "48:ca:43:3a:11:f5")
+      if (d.getAddress().toString() != SIGNAL_V2_TARGET_ADDRESS)
         continue;
       if (!client->connect(&d) || !client->secureConnection()) {
         client->disconnect();
@@ -212,12 +226,21 @@ void loop() {
         continue;
       }
       uint32_t frame = u32(b + 16);
+      // DATA and HEARTBEAT share one frame sequence. A missing DATA must
+      // never be hidden by a later HEARTBEAT updating the sequence.
+      if (b[4] != 0x21 && !acceptsSequential(seq, frame, resync)) {
+        if (!resync)
+          requireSnapshot(now);
+        ++rejected;
+        continue;
+      }
       if (b[4] == 0x21) {
         if (!resync) {
           ++rejected;
           continue;
         }
-        if (u32(p + 8) != revision || u32(p) != frame + 1) {
+        if (u32(p + 8) != revision || u32(p) != frame + 1 ||
+            u32(p + 4) != 3 || p[12] > 1) {
           ++rejected;
           continue;
         }
@@ -225,7 +248,8 @@ void loop() {
         size_t offset = 16;
         for (unsigned j = 0; j < p[12]; ++j) {
           auto r = p + offset;
-          valid &= r[3] == 2 && u32(r + 10) == revision && u32(r + 14) == 1 &&
+          valid &= r[3] == 2 && r[6] == 1 && r[7] <= 1 &&
+                   u32(r + 10) == revision && u32(r + 14) == 1 &&
                    u32(r + 18) == 1;
           offset += u16(r);
         }
@@ -241,18 +265,16 @@ void loop() {
       } else if (b[4] == 0x20) {
         if (resync)
           continue;
-        if (seq && frame != seq + 1) {
-          requireSnapshot(now);
-          ++rejected;
-          continue;
-        }
-        seq = frame;
+        // This minimal lab Central requests exactly ONE subscription; reject
+        // other record counts rather than silently trusting the first record.
         const auto r = p + 2;
-        if (r[3] != 2 || u32(r + 10) != revision || u32(r + 14) != 1 ||
+        if (p[0] != 1 || r[3] != 2 || r[6] != 1 || r[7] > 1 ||
+            u32(r + 10) != revision || u32(r + 14) != 1 ||
             u32(r + 18) != 1) {
           ++rejected;
           continue;
         }
+        seq = frame; // advance only after validating EVERY adopted record
         ++counts;
         if (counts % 25 == 1)
           Serial.printf("#RING_SIGNALV2,data=%lu,origin=DEMO,rpm=0,rejected=%"
