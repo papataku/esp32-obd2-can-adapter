@@ -28,7 +28,8 @@ class ReviewPolicy(unittest.TestCase):
     def test_heartbeat_cannot_mask_missing_data(self):
         ring = (ROOT / "test_clients/smartring_signal_v2/client.h").read_text()
         self.assertIn("acceptsSequential(seq, frame, resync)", ring)
-        self.assertLess(ring.index("if (b[4] != 0x21 && !acceptsSequential("),\n                        ring.index("} else if (b[4] == 0x22)"))
+        self.assertLess(ring.index("if (b[4] != 0x21 && !acceptsSequential("),
+                        ring.index("} else if (b[4] == 0x22)"))
 
 if __name__ == "__main__":
     unittest.main()
