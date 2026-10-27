@@ -16,6 +16,7 @@ python3 -m compileall -q tools tests
 
 python3 tests/test_signal_v2_wire.py
 python3 tests/test_signal_v2_session.py
+python3 tests/test_signal_v2_review_policy.py
 
 c++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_CAN_TX_HARD_DISABLED=1 \
   -Itests/host_stubs -Iinclude -Isrc tests/test_signal_v2_can_lock.cpp \
