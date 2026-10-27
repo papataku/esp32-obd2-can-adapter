@@ -146,3 +146,13 @@ of the application. Its `--after hard-reset` explicitly clears forced download
 and returns to normal boot. This proved reliable on both specified boards.
 For future app updates prefer this ROM path after a verified full backup and
 app-only gate; it avoids program_esp's internal reset undoing CPU1 isolation.
+
+### Clean CI package installation
+
+The SmartRing platform's esptool URL conflicts with the registry package that
+the M5Dial build already installed under the same tool name: CI failed before
+compilation with missing `package-postinstall.py`. Pin the common official
+registry package `platformio/tool-esptoolpy@2.40900.250804` (esptool 4.9.0) for
+image generation in the Ring env. The board, Arduino 3.1.1, flash/PSRAM/layout
+remain the reference settings. USB ROM recovery uses separately isolated
+venv esptool 5.6.0; its version does not change the firmware toolchain.
