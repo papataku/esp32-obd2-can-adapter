@@ -111,7 +111,6 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         result = Reject;
         break;
       }
-      uint16_t minperiod = 10000;
       bool valid = true, relax = false;
       for (unsigned i = 0; i < b[4]; ++i) {
         const auto e = b + 8 + 24 * i;
@@ -119,7 +118,7 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         valid &= u16(e) != 0 && e[2] == 1 && e[3] == 0 &&
                  (pid == 0x0c || pid == 0x0d || pid == 0x05 || pid == 0x5b ||
                   pid == 0x9a) &&
-                 e[6] == 1 && e[7] <= 3 && u32(e + 12) == 1 &&
+                 e[6] <= 3 && e[7] == 0 && u32(e + 12) == 1 &&
                  u16(e + 16) >= 1 && u16(e + 16) <= 10000 &&
                  u16(e + 18) >= u16(e + 16) && u16(e + 20) >= u16(e + 16) &&
                  e[22] == 0 && e[23] == 0;
@@ -130,7 +129,6 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         for (unsigned j = 0; j < i; ++j)
           if (u16(e) == u16(b + 8 + 24 * j))
             valid = false;
-        minperiod = std::min(minperiod, u16(e + 16));
       }
       if (!valid) {
         result = Reject;
