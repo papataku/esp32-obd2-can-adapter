@@ -2,6 +2,8 @@
 #include "signal_v2_codec.h"
 #include "signal_v2_simulator.h"
 namespace signal_v2 {
+// Wire permits 16 entries; admission separately checks the 486-byte snapshot budget.
+constexpr size_t MaxSubscriptions = 16;
 enum Result : uint8_t {
   Accept,
   Relaxed,
@@ -28,11 +30,11 @@ class Session {
            frame_ = 0, sample_ = 0;
   bool hello_ = false, paused_ = true;
   uint8_t count_ = 0;
-  std::array<uint8_t, 24 * 8> entries_{};
-  std::array<uint8_t, 52 * 8> cache_{};
-  std::array<uint8_t, 8> cache_lengths_{};
-  std::array<uint32_t, 8> due_{};
-  std::array<uint8_t, 200> plan_{};
+  std::array<uint8_t, 24 * MaxSubscriptions> entries_{};
+  std::array<uint8_t, 52 * MaxSubscriptions> cache_{};
+  std::array<uint8_t, MaxSubscriptions> cache_lengths_{};
+  std::array<uint32_t, MaxSubscriptions> due_{};
+  std::array<uint8_t, 8 + 24 * MaxSubscriptions> plan_{};
   size_t plan_size_ = 0;
   uint32_t plan_id_ = 0, plan_deadline_ = 0;
   void apply(const uint8_t *, uint32_t);
