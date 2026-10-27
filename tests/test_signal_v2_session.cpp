@@ -123,6 +123,49 @@ int main(int argc, char **argv) {
   speed_body[14] = 0;
   speed.control(request(3, 0, 2, speed_body, 32), true, 2, out);
   assert(out.payload()[5] == Accept && speed.revision() == 1);
+
+  // N-01: Priority 0 is reserved only for speed PID 010D, regardless of
+  // meter placement. Invalid requests must not change the existing profile.
+  const uint16_t otherPids[] = {0x000c, 0x0005, 0x005b, 0x009a};
+  for (uint16_t pid : otherPids) {
+    Session check;
+    check.connect(0x11223344, 0xa1b2c3d4);
+    check.control(hello, true, 0, out);
+    uint8_t body[32]{};
+    std::copy(profile.payload() + 12, profile.payload() + 44, body);
+    w16(body + 12, pid);
+    body[14] = 0;
+    check.control(request(2, 0, 2, body, sizeof(body)), true, 10, out);
+    assert(out.payload()[5] == Reject && check.revision() == 0 &&
+           check.reservations(10) == 0);
+
+    // A valid main-meter subscription still works after rejection.
+    body[14] = 1;
+    check.control(request(3, 0, 2, body, sizeof(body)), true, 11, out);
+    assert(out.payload()[5] == Accept && check.revision() == 1 &&
+           check.reservations(11) == 1);
+
+    // A rejected replacement must retain the previously accepted profile.
+    body[14] = 0;
+    w32(body, 2);
+    check.control(request(4, 1, 2, body, sizeof(body)), true, 12, out);
+    assert(out.payload()[5] == Reject && check.revision() == 1 &&
+           check.reservations(12) == 1);
+  }
+  for (uint8_t priority = 1; priority <= 3; ++priority) {
+    Session check;
+    check.connect(0x11223344, 0xa1b2c3d4);
+    check.control(hello, true, 0, out);
+    uint8_t body[32]{};
+    std::copy(profile.payload() + 12, profile.payload() + 44, body);
+    w16(body + 12, 0x000d);
+    body[14] = priority;
+    check.control(request(2, 0, 2, body, sizeof(body)), true, 10, out);
+    assert(out.payload()[5] == Reject && check.revision() == 0);
+    body[14] = 0;
+    check.control(request(3, 0, 2, body, sizeof(body)), true, 11, out);
+    assert(out.payload()[5] == Accept && check.revision() == 1);
+  }
   Simulator source;
   Simulator::Demand demand{};
   planner.demand(2, demand);
