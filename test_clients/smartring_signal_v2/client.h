@@ -177,6 +177,13 @@ void loop() {
         continue;
       waiting = 0;
       retries = 0;
+      if (hello && (p[5] == 6 || p[5] == 10 || p[5] == 3)) {
+        // Revocation and generation/revision failures require a fresh HELLO.
+        // Never keep renewing an invalid old session after re-registration.
+        hello = subscribed = false;
+        client->disconnect();
+        return;
+      }
       if (p[5] != 0) {
         Serial.printf("#RING_SIGNALV2,ack=%u,result=%u\n", p[4], p[5]);
         next = now + 1000;

@@ -133,3 +133,16 @@ boot, restore this register to its reset default with `mww 0x600c0000 4`, then
 `reset run`. This is a volatile reset control, not an eFuse/flash modification.
 Never leave CPU1 stalled when evaluating the application. Reopen CDC only after
 USB re-enumerates. This workaround is specific to the observed ESP32-S3 bench.
+
+### Preferred ROM recovery if an application-triggered stub panic recurs
+
+Use the chip's **volatile** forced-download bit, discovered from the pinned
+ESP32-S3 SoC header and esptool's own hard-reset implementation. Via the matched
+JTAG adapter: halt CPU0, write RTC_CNTL_OPTION1 (0x6000812c)=1, then read-modify-write
+RTC_CNTL_OPTIONS0 (0x60008000) with bit31 set. This resets into ROM without any
+flash/eFuse write. esptool 5.6.0 `--before no-reset` then connects and identifies
+chip/MAC/JEDEC flash. `verify-flash` checks app/boot/partition/otadata independently
+of the application. Its `--after hard-reset` explicitly clears forced download
+and returns to normal boot. This proved reliable on both specified boards.
+For future app updates prefer this ROM path after a verified full backup and
+app-only gate; it avoids program_esp's internal reset undoing CPU1 isolation.

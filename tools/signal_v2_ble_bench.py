@@ -89,6 +89,7 @@ async def main(a):
   await send(fixture('G11'));r=await ack(5);assert r[26:]==bytes.fromhex(F['G11_2'])[26:];results['G11']='PASS'
   # CRC-corrupt Control never receives an ACK and never mutates revision.
   corrupt=bytearray(fixture('G11'));corrupt[-1]^=1;await send(bytes(corrupt));await asyncio.sleep(.35)
+  assert acks.empty(),'corrupt control produced an ACK'
   decode(bytes.fromhex(F['G05']))
   try:decode(bytes.fromhex(F['G12']))
   except ValueError:results['G12']='PASS (host receive CRC rejection + on-air corrupt Control ignored)'
