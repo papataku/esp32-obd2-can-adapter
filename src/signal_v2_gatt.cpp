@@ -167,7 +167,7 @@ void manage(const char *cmd, uint32_t now) {
       Identity id;
       Binding bind;
       if (l.active && security(l.handle, id, bind))
-        Serial.printf("#SIGNALV2,usb_verified_candidate=%02X:%02X:%02X:%02X:%"
+        Serial.printf("#SIGNALV2_ADMIN_PRIVATE,usb_verified_candidate=%02X:%02X:%02X:%02X:%"
                       "02X:%02X,registered=%u\n",
                       id[6], id[5], id[4], id[3], id[2], id[1],
                       registry.authorized(id, bind) ? 1 : 0);
@@ -177,11 +177,10 @@ void manage(const char *cmd, uint32_t now) {
   bool approve = !std::strncmp(cmd, "SIGV2 APPROVE ", 14),
        revoke = !std::strncmp(cmd, "SIGV2 REVOKE ", 13);
   if (!approve && !revoke) {
-    Serial.printf("#SIGNALV2,git=%s,target=M5Dial,ble_address=%s,can_tx_"
+    Serial.printf("#SIGNALV2,git=%s,target=M5Dial,can_tx_"
                   "disabled=1,physical_tx=0,registry_"
                   "generation=%lu,heap=%u,stack=%u\n",
                   M5CAN_BUILD_SHA,
-                  NimBLEDevice::getAddress().toString().c_str(),
                   (unsigned long)registry.generation(), ESP.getFreeHeap(),
                   uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t));
     return;
@@ -488,6 +487,13 @@ void poll() {
     if (!auth) {
       p.session.invalidate();
       p.output.size = 0;
+    }
+    // A queued pre-expiry DATA/SNAPSHOT must not be transmitted after lease
+    // expiry, even when a notify fragment was previously backpressured.
+    if (!p.session.active(now) && p.output.size &&
+        (p.output.bytes[4] == 0x20 || p.output.bytes[4] == 0x21)) {
+      p.output.size = 0;
+      p.dataoff = 0;
     }
     if (!p.ack.size && !p.output.size && l.status && l.data && authorized(l) &&
         p.session.produce(now, p.output, &simulator)) {
