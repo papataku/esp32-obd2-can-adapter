@@ -81,7 +81,8 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
     return;
   }
   Result result = Accept;
-  uint8_t reply[256]{};
+  // RELAXED carries the complete 8+24*N proposed profile, up to N=16.
+  uint8_t reply[MaxPdu - Header - 16]{};
   size_t reply_n = 0;
   if (expected != revision_)
     result = BadRevision;
