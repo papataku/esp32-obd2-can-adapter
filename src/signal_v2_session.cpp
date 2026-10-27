@@ -122,7 +122,9 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         valid &= u16(e) != 0 && e[2] == 1 && e[3] == 0 &&
                  (pid == 0x0c || pid == 0x0d || pid == 0x05 || pid == 0x5b ||
                   pid == 0x9a) &&
-                 e[6] <= 3 && e[7] == 0 && (pid != 0x0d || e[6] == 0) &&
+                 e[6] <= 3 && e[7] == 0 &&
+                 // Priority 0 is reserved exclusively for speed (Service 01 PID 0D).
+                 ((pid == 0x0d) == (e[6] == 0)) &&
                  u32(e + 12) == 1 && u16(e + 16) >= 1 && u16(e + 16) <= 10000 &&
                  u16(e + 18) >= u16(e + 16) && u16(e + 20) >= u16(e + 16) &&
                  e[22] == 0 && e[23] == 0;
