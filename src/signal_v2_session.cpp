@@ -348,7 +348,8 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       // Tests without an external source exercise the original active
       // synthetic path. Physical V2 lab always provides a Simulator.
       const bool available = demo_enabled && (!source || shared);
-      const uint32_t sample_sequence = shared ? shared->sequence : ++sample_;
+      const uint32_t sample_sequence = !available ? 0 :
+          (shared ? shared->sequence : ++sample_);
       const size_t actual_len = available
           ? demoPayload(pid, sample_sequence, r + 44) : 0;
       if (available && actual_len != len) return false;
