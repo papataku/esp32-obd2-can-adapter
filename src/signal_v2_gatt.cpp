@@ -158,7 +158,8 @@ void manage(const char *cmd, uint32_t now) {
       const bool desired = !std::strcmp(cmd, "SIGV2 DEMO ON");
       if (demo_enabled != desired) {
         demo_enabled = desired;
-        simulator = Simulator{};
+        // Clear validity but retain per-PID monotonic sequence across toggles.
+        simulator.tick(now, Simulator::Demand{});
         for (auto &peer : peers) {
           peer.session.clearDemoCache(now);
           // Prevent transmitting any queued pre-transition demo observations.
