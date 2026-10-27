@@ -1,6 +1,7 @@
 #if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
 #include "signal_v2_gatt.h"
 #include "nimble/nimble/host/include/host/ble_store.h"
+#include "signal_v2_golden.h"
 #include "signal_v2_registry.h"
 #include "signal_v2_session.h"
 #include <Arduino.h>
@@ -147,6 +148,13 @@ class Callbacks : public NimBLECharacteristicCallbacks {
   }
 };
 void manage(const char *cmd, uint32_t now) {
+  if (!std::strcmp(cmd, "SIGV2 GOLDEN")) {
+    auto result = golden();
+    for (unsigned i = 0; i < 12; ++i)
+      Serial.printf("#SIGNALV2_GOLDEN,G%02u=%s,can_tx_disabled=1\n", i + 1,
+                    result[i] ? "PASS" : "FAIL");
+    return;
+  }
   if (!std::strcmp(cmd, "SIGV2 WINDOW")) {
     window = now + 90000;
     window_open = true;

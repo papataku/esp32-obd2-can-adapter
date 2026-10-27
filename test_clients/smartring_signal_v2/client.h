@@ -1,6 +1,7 @@
 // Independent USB bench Central. No meter assets, vehicle pipeline or CAN
 // driver.
 #include "signal_v2_codec.h"
+#include "signal_v2_golden.h"
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <cstring>
@@ -106,6 +107,12 @@ void setup() {
   client->setConnectTimeout(5);
 }
 void loop() {
+  if (Serial.available() && Serial.read() == 'g') {
+    auto result = golden();
+    for (unsigned i = 0; i < 12; ++i)
+      Serial.printf("#RING_GOLDEN,G%02u=%s\n", i + 1,
+                    result[i] ? "PASS" : "FAIL");
+  }
   uint32_t now = millis();
   if (!client->isConnected()) {
     hello = subscribed = resync = false;

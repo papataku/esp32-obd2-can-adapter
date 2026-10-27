@@ -1,0 +1,22 @@
+name: Signal V2 CAN-disabled lab
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  protocol-and-firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install platformio
+      - run: ./tests/run_all.sh
+      - run: pio pkg install -e m5dial_signal_v2_can_disabled_lab
+      - run: pio run -e m5dial_signal_v2_can_disabled_lab
+      - run: python tools/check_signal_v2_elf.py .pio/build/m5dial_signal_v2_can_disabled_lab/firmware.elf --nm ~/.platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-nm
+      - run: pio run -c platformio_smartring_v2_lab.ini
+      - run: python tools/check_signal_v2_elf.py .pio/build-ring/smartring_signal_v2_client_lab/firmware.elf --nm ~/.platformio/packages/toolchain-xtensa-esp-elf/bin/xtensa-esp32s3-elf-nm
