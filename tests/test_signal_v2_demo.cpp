@@ -1,5 +1,6 @@
 #include "signal_v2_session.h"
 #include "signal_v2_demo.h"
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 using namespace signal_v2;
