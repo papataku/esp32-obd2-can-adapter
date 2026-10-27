@@ -23,3 +23,8 @@ c++ -std=c++17 -Wall -Wextra -Werror -DM5CAN_CAN_TX_HARD_DISABLED=1 \
   src/can_monitor.cpp src/diagnostic_policy.cpp src/diagnostic_transaction.cpp \
   src/isotp_reassembler.cpp tests/host_stubs/stubs.cpp -o /tmp/m5can-signal-v2-can-lock
 /tmp/m5can-signal-v2-can-lock
+
+c++ -std=c++17 -Wall -Wextra -Werror -Iinclude \
+  src/signal_v2_codec.cpp src/signal_v2_session.cpp \
+  tests/test_signal_v2_demo.cpp -o /tmp/m5can-signal-v2-demo5
+/tmp/m5can-signal-v2-demo5

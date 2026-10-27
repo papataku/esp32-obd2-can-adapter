@@ -34,6 +34,8 @@ QueueHandle_t inbox = nullptr, admin = nullptr;
 NimBLECharacteristic *status = nullptr, *data = nullptr;
 Registry registry;
 Simulator simulator;
+// Never inherit legacy V1/NVS DEMO or enable synthetic observations at boot.
+bool demo_enabled = false;
 unsigned active_slot = 0;
 uint32_t boot = 0, window = 0, session_counter = 0;
 bool window_open = false;
@@ -148,6 +150,27 @@ class Callbacks : public NimBLECharacteristicCallbacks {
   }
 };
 void manage(const char *cmd, uint32_t now) {
+  if (!std::strcmp(cmd, "SIGV2 DEMO STATUS") ||
+      !std::strcmp(cmd, "SIGV2 DEMO ON") ||
+      !std::strcmp(cmd, "SIGV2 DEMO OFF")) {
+    if (!std::strcmp(cmd, "SIGV2 DEMO ON") ||
+        !std::strcmp(cmd, "SIGV2 DEMO OFF")) {
+      const bool desired = !std::strcmp(cmd, "SIGV2 DEMO ON");
+      if (demo_enabled != desired) {
+        demo_enabled = desired;
+        // Clear validity but retain per-PID monotonic sequence across toggles.
+        simulator.tick(now, Simulator::Demand{});
+        for (auto &peer : peers) {
+          peer.session.clearDemoCache(now);
+          // Prevent transmitting any queued pre-transition demo observations.
+          peer.output.size = peer.dataoff = 0;
+        }
+      }
+    }
+    Serial.printf("#SIGNALV2,synthetic_demo=%s,usb_only=1,can_tx_disabled=1,volatile=1\n",
+                  demo_enabled ? "ON" : "OFF");
+    return;
+  }
   if (!std::strcmp(cmd, "SIGV2 GOLDEN")) {
     auto result = golden();
     for (unsigned i = 0; i < 12; ++i)
@@ -453,7 +476,7 @@ void poll() {
     if (link.active && link.status && link.data && authorized(link))
       peers[i].session.demand(now, demand);
   }
-  simulator.tick(now, demand);
+  simulator.tick(now, demo_enabled ? demand : Simulator::Demand{});
   for (unsigned i = 0; i < 2; ++i) {
     auto l = snapshot(i);
     auto &p = peers[i];
@@ -496,7 +519,7 @@ void poll() {
       p.dataoff = 0;
     }
     if (!p.ack.size && !p.output.size && l.status && l.data && authorized(l) &&
-        p.session.produce(now, p.output, &simulator)) {
+        p.session.produce(now, p.output, &simulator, demo_enabled)) {
       p.dataoff = 0;
       p.data_transfer = ++p.transfer;
     }
