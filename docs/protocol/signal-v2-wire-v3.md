@@ -1609,7 +1609,7 @@ HELLO ACK（Result=ACCEPT）の16B body：
 | 11 | u8 | Reserved=0 |
 | 12..15 | u32 | SourceGeneration=1（DEMO専用、物理ECU承認ではない） |
 
-G02のHELLO上限16は不変更。
+G02のHELLO上限16は不変更。**MaxSubscriptionDescriptors=16はSET_PROFILEに記述できる構文上限であり、受理可能な同時購読数の保証ではない。** 実際の受理数はSNAPSHOTの486B payload制約と各PIDのRawLengthによりAdmission時に決まる。例えばRPMだけなら9件が受理可能で10件は容量超過REJECT、RawLength3Bの信号だけなら10件が容量上受理可能。HELLOの値だけで16件の受理を前提にせず、SET_PROFILEへのACKで確定する。
 
 ## A.2 SET_PROFILE / 24B Subscription Entry
 
@@ -1621,7 +1621,7 @@ SET_PROFILE bodyは 8+24×N B（0<=N<=16）。0..3 NewRevision:u32（現在+1、
 | 2 | u8 | Service=1（Service 01のみ） |
 | 3 | u8 | Reserved=0 |
 | 4..5 | u16 | PID：000C、000D、0005、005B、009Aのみ |
-| 6 | u8 | Priority=0速度、1主、2補助、3情報。速度PID 000Dは必ず0 |
+| 6 | u8 | Priority=0速度（PID 000D専用）、1主、2補助、3情報。PID 000Dは必ず0、その他のPIDは1..3（0指定はREJECT） |
 | 7 | u8 | Reserved=0 |
 | 8..11 | u32 | ResponseCANID。V2-1はDEMOルート用ヒントでありCAN許可・LIVE証明にならない |
 | 12..15 | u32 | SourceGeneration=1（合成ソース） |
@@ -1681,4 +1681,6 @@ SNAPSHOT Type0x21のPayload先頭16B：
 
 ## A.6 差分の識別と残余Gate
 
-G01〜G12とwire major/minorは変更しない。実装変更は(1)8件→16件の構文上限とSnapshotサイズAdmission、(2)HEARTBEAT共通sequence検査、(3)lease/PAUSE後のSnapshot拒否・保留DATA破棄、(4)追跡対象からの実機BLE識別子排除。いずれも安全・仕様整合のための変更。CAN物理TXは引き続き無効、V1・既存RAWログV2・iOSの250ms/4件を緩めない。独立相互運用のPM承認、物理MTU23/247、2 Central・8時間soak・on-air G01〜G12・故障注入は未完了。
+G01〜G12とwire major/minorは変更しない。実装変更は(1)8件→16件の構文上限とSnapshotサイズAdmission、(2)HEARTBEAT共通sequence検査、(3)lease/PAUSE後のSnapshot拒否・保留DATA破棄、(4)追跡対象からの実機BLE識別子排除。いずれも安全・仕様整合のための変更。CAN物理TXは引き続き無効、V1・既存RAWログV2・iOSの250ms/4件を緩めない。独立相互運用・実機受入のPM最終判定、物理MTU23/247、2 Central・8時間soak・on-air G01〜G12・故障注入は未完了。
+
+承認：PM 2026-10-27、レビュー 20aa3af、オーナー最終承認待ち
