@@ -299,8 +299,15 @@ void send(Peer &p, const Link &l, uint32_t now) {
   if (!n)
     return;
   os_mbuf *mb = ble_hs_mbuf_from_flat(f, n);
-  if (!mb)
+  if (!mb) {
+    // Allocation failure has the same bounded no-progress deadline as API
+    // backpressure; an ACK must not remain pending indefinitely.
+    if (uint32_t(now - p.progress) >= 2000) {
+      p.session.invalidate();
+      NimBLEDevice::getServer()->disconnect(l.handle);
+    }
     return;
+  }
   if (!isack) {
     portENTER_CRITICAL(&mux);
     for (auto &x : links)
