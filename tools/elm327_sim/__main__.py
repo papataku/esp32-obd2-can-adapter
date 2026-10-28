@@ -80,11 +80,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Host-only ELM/Virtual CAN simulator")
     parser.add_argument("--model", required=True, help="strict anonymized ECU model JSON")
     parser.add_argument("--mode", choices=("elm-pty", "virtual-cdc"), default="elm-pty")
+    parser.add_argument("--model-max-bytes", type=int, default=2_000_000,
+                        help="explicit maximum converted JSON bytes; default 2MB, hard cap 128MB")
     parser.add_argument("--port", help="explicit USB CDC device for Virtual-only FW")
     parser.add_argument("--baudrate", type=int, default=115200)
     parser.add_argument("--virtual-only-ack", action="store_true")
     args = parser.parse_args(argv)
-    model = load_model(args.model)
+    model = load_model(args.model, max_bytes=args.model_max_bytes)
     if args.mode == "elm-pty":
         if args.port or args.virtual_only_ack:
             parser.error("elm-pty mode has no physical port")
