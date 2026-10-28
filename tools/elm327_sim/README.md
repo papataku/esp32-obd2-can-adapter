@@ -2,10 +2,10 @@
 
 **NOT hardware or vehicle qualification.** Python code contains no SocketCAN/USB-CAN/TWAI transport and does not write to CAN. The only optional real port is an explicitly selected USB CDC **Virtual-only** interface with a fixed versioned HELLO, tested on a disconnected bench after separate operator acknowledgement.
 
-## Use (Python 3.12)
+## Use (Python 3.9 or 3.12; CI matrix)
 
 ~~~sh
-python3 -m pip install pytest pyserial
+python3 -m pip install pytest==8.3.5 pyserial==3.5
 PYTHONPATH=. python3 -m pytest -q tests/elm327_conformance
 python3 -m tools.elm327_sim --model tests/elm327_conformance/fixtures/synthetic_ecus.json --mode elm-pty
 ~~~
@@ -68,3 +68,23 @@ The PM's **existing** ECU model has not been provided in this conversation, so n
 - Existing FW `main` protocol and safety tests are untouched.
 
 Design: https://github.com/papataku/tacotaco-meter-ios/pull/25
+
+
+## 2026-10-28 PM audit follow-up
+
+**Host CI**: Python 3.9 and 3.12, pinned pytest==8.3.5 and pyserial==3.5. The preceding instructions are not hardware verification.
+
+**Strict host-only regressions** in `tests/elm327_conformance/test_elm_strict.py` compare exact bytes and response ordering, rather than substring matches, for echo E1, LF L0, D resets, synthetic RV, PC, CRA filters in CAN 11/29bit, SH changes *actual* recipient, SP0 virtual CAN-only auto-selection, ST deadlines, approximated AT adaptive deadlines, CAN ERROR / BUFFER FULL fault injection, ISO-TP PCI frame order and BRD virtual baud handshaking. These test synthetic data in-process; external target comparisons remain separate and require an isolated bench. In particular, BRD changes **no real UART baud**. ST uses virtual elapsed ms; AT adaptive timing is a deterministic approximation, not ELM's proprietary exact tuning.
+
+**Specification:** ELM327DSK https://www.elmelectronics.com/wp-content/uploads/2017/01/ELM327DS.pdf . Printed pp.8-10 (serial echo/LF/CR/prompt), pp.12-30 (AT commands/D/SH/CRA/PC/RV/BRD), pp.37-38 (SP0), pp.40-48 (CAN/ISO-TP/CRA), pp.51-53 (BRD, ST/AT), pp.88-90 (CAN ERROR, BUFFER FULL).
+
+**PM model:** Existing ~15.8 MB source JSON has top-level `schema_version` and `sessions`, which are **not directly supported**. PM/Codex will convert it outside the repository to `ttm.ecu-model.v1`, remove identifiers/absolute time, and review it. Nothing from the original or converted real data is committed here.
+
+`load_model(path)` still defaults to **2,000,000 bytes**, with opt-in `load_model(path, max_bytes=20_000_000)` (positive integer <= 128,000,000). Equivalent CLI flag: `--model-max-bytes 20000000`. Larger size does not weaken schema validation. Provenance must be exactly `synthetic` or `anonymized_observation`; a declared provenance is **not independently verified evidence of anonymization**. Unknown fields, raw `schema_version/sessions`, and private fields continue to fail closed. Tests only construct oversized synthetic whitespace JSON in the pytest temporary directory, never in the repo.
+
+~~~sh
+python3 -m tools.elm327_sim --mode elm-pty \
+ --model /PRIVATE/converted_approved_model.json --model-max-bytes 20000000
+~~~
+
+No physical CAN, firmware or device writes in this PR.
