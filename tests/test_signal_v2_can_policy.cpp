@@ -1,9 +1,20 @@
 #include "signal_v2_can_samples.h"
 #include "signal_v2_can_budget.h"
+#include "signal_v2_can_route.h"
 #include <array>
 #include <cassert>
 using namespace signal_v2;
 int main(){
+  const auto stdRoute=EcuRoute::fromResponse(0x7E8U,false);
+  assert(stdRoute.width==CanIdWidth::Standard11);
+  assert(stdRoute.request_id==0x7E0U && !stdRoute.enabledForThisTrial());
+  assert(!stdRoute.matches(EcuRoute::fromResponse(0x18DAF101U,true)));
+  const auto extRoute=EcuRoute::fromResponse(0x18DAF106U,true);
+  assert(extRoute.width==CanIdWidth::Extended29);
+  assert(extRoute.request_id==0x18DA06F1U &&
+         extRoute.enabledForThisTrial());
+  assert(!EcuRoute::fromResponse(0x7E8U,true).enabledForThisTrial());
+
   CanBudget one;
   for(unsigned i=0;i<10;++i)assert(one.reserve(i*100,12));
   assert(!one.reserve(999,12)); // rolling 5% at 500kbps
