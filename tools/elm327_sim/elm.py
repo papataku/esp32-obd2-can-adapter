@@ -231,25 +231,62 @@ class ELM327Session:
         return ["?"]
 
     def _obd(self, request: bytes) -> list[str]:
-        extended = self.protocol not in (6, 8)
+        if self._next_fault is not None:
+            fault, self._next_fault = self._next_fault, None
+            return [fault]
+        if self.protocol == 0 and self.detected_protocol is None:
+            # CAN-only virtual auto-search (NOT nine-protocol vehicle search).
+            candidates = [r for ecu in self.bus.model.ecus for r in ecu.responses
+                          if r.request == request]
+            if any(r.response_id_29 is not None for r in candidates):
+                self.detected_protocol = 7
+            elif any(r.response_id_11 is not None for r in candidates):
+                self.detected_protocol = 6
+            else:
+                return ["UNABLE TO CONNECT"]
+        chosen = self.detected_protocol if self.protocol == 0 else self.protocol
+        extended = chosen not in (6, 8)
         can_id = self.header_29 if extended else self.header_11
-        now = 0
-        raw = self.bus.on_frame(CANFrame(can_id, bytes([len(request)]) + request, extended), now)
-        raw += self.bus.tick(60_000)  # deterministic virtual time, no wall-clock sleep
+        # Virtual clock in milliseconds. ST units are 4ms (ELM327DSK p.53).
+        base_deadline = (self.timeout_4ms or 256) * 4
+        deadline = base_deadline
+        if self.adaptive and self.last_response_delay_ms is not None:
+            # Deterministic approximation ONLY of ATAT; not proprietary algorithm.
+            slack = 8 if self.adaptive == 1 else 4
+            deadline = min(deadline, max(4, self.last_response_delay_ms + slack))
+        raw = self.bus.on_frame(
+            CANFrame(can_id, bytes([len(request)]) + request, extended), 0)
+        due_times = sorted({due for due, _frame, _rest in self.bus._scheduled
+                            if due <= deadline})
+        for due in due_times:
+            raw.extend(self.bus.tick(due))
+        self.bus._scheduled.clear()  # discard late transaction data, no stale bleed
         if not raw:
+            self.bus._outgoing.clear()
             return ["NO DATA"]
         replies: dict[int, list[CANFrame]] = {}
         for frame in raw:
+            if self.rx_filter is not None:
+                label = f"{frame.can_id:08X}" if extended else f"{frame.can_id:03X}"
+                if len(label) != len(self.rx_filter) or any(
+                    want != "X" and want != found
+                    for want, found in zip(self.rx_filter, label)
+                ):
+                    continue
             replies.setdefault(frame.can_id, []).append(frame)
+        if not replies:
+            self.bus._outgoing.clear()
+            return ["NO DATA"]
+        self.last_response_delay_ms = max(due_times) if due_times else 0
         for rid, frames in list(replies.items()):
             first = frames[0]
             if not first.data or first.data[0] >> 4 != 1 or not self.flowcontrol:
                 continue
             tester_id = (0x18DA0000 | ((rid & 255) << 8) | 0xF1) if extended else rid - 8
-            following = self.bus.on_frame(CANFrame(tester_id, b"\x30\x00\x00", extended), 60_000)
+            following = self.bus.on_frame(CANFrame(tester_id, b"\x30\x00\x00", extended), max(due_times) if due_times else 0)
             replies[rid].extend(following)
         lines = []
-        for rid, frames in sorted(replies.items()):
+        for rid, frames in replies.items():
             first = frames[0]
             if not first.data:
                 continue
@@ -285,4 +322,7 @@ class ELM327Session:
                         lines.append(f"{index:X}: " + _print_hex(block, self.spaces))
             else:
                 lines.append((label if self.headers else "") + _print_hex(pdu, self.spaces))
+        self.bus._outgoing.clear()
+        if sum(len(line.encode("ascii")) + 2 for line in lines) > self.max_response_bytes:
+            return ["BUFFER FULL"]
         return lines or ["NO DATA"]
