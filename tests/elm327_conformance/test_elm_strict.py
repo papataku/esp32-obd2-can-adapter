@@ -168,6 +168,8 @@ def test_at0_versus_adaptive_1_changes_virtual_collection_deadline(host):
         b"18DAF101 41 0C 1A F8\r18DAF102 41 0C 01 A8\r>"
     )
     assert host.request("ATAT0") == b"OK\r>"
+    # Isolate timing behavior from ECU02's intentional every-third-response drop.
+    host.bus.attempts.clear()
     assert host.request("010C") == (
         b"18DAF101 41 0C 1A F8\r"
         b"18DAF102 41 0C 01 A8\r"
