@@ -86,8 +86,10 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
     const uint16_t total_len =
         static_cast<uint16_t>(((data[0] & 0x0F) << 8) | data[1]);
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
-    // Exactly 17 decoded bytes for five PIDs; cap FC and bus-cost exposure.
-    if(request_.signal_v2 && request_.length==6 && total_len!=17){
+    // Complete group (17 bytes), or a separate 019A reply (8 bytes).
+    // Every other large response is rejected BEFORE sending Flow Control.
+    if(request_.signal_v2 && request_.length==6 &&
+       total_len!=17 && total_len!=8){
       event.type=IsoTpEventType::Overflow;return event;
     }
 #endif
