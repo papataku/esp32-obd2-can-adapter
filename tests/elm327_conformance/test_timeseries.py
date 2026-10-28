@@ -278,3 +278,60 @@ def test_default_loader_size_limit_unchanged_for_series(tmp_path):
     with pytest.raises(ValueError, match="too large"):
         load_model(path)
     assert load_model(path, max_bytes=3_000_000).ecus[0].responses[0].replay_mode == "loop"
+
+
+def test_virtual_cdc_29bit_uses_timestamp_for_loop_and_silence():
+    """USB CDC packet timestamps drive same ECU simulation without CAN hardware."""
+    from tools.elm327_sim.vcan import (
+        VirtualCDCBridge, VirtualFrame, CAN_TX, CAN_RX, HELLO,
+        HELLO_TOKEN, encode_packet, decode_packet
+    )
+    bridge = VirtualCDCBridge(ECUSimulator(load_model(PATH)))
+    hello = VirtualFrame(HELLO, 1, 0, data=HELLO_TOKEN)
+    assert decode_packet(bridge.handle(encode_packet(hello))[0]).kind == HELLO
+    def tx(seq, t_ms):
+        packet = VirtualFrame(CAN_TX, seq, t_ms * 1000, 0x18DA01F1,
+                              b"\x02\x01\x0C", True)
+        return [decode_packet(b) for b in bridge.handle(encode_packet(packet))]
+    assert tx(2, 0) == []
+    assert bridge.tick(9_000) == []
+    frames = [decode_packet(b) for b in bridge.tick(10_000)]
+    assert len(frames) == 1
+    assert frames[0].kind == CAN_RX and frames[0].can_id == 0x18DAF101
+    assert frames[0].data == b"\x04\x41\x0C\x00\x00"
+    assert tx(3, 100) == []
+    assert bridge.tick(129_000) == []
+    assert [decode_packet(b).data for b in bridge.tick(130_000)] == [
+        b"\x04\x41\x0C\x10\x00"
+    ]
+    assert tx(4, 200) == []
+    assert bridge.tick(299_000) == []
+    assert tx(5, 300) == []
+    assert [decode_packet(b).data for b in bridge.tick(305_000)] == [
+        b"\x04\x41\x0C\x30\x00"
+    ]
+    assert tx(6, 500) == []
+    assert [decode_packet(b).data for b in bridge.tick(510_000)] == [
+        b"\x04\x41\x0C\x00\x00"
+    ]
+
+
+def test_model_rejects_more_than_10000_samples_without_committing_large_fixture():
+    model = raw_model()
+    target = model["ecus"][0]["responses"][0]
+    target["samples"] = [
+        {"at_ms": n, "payload_hex": "410C0000"}
+        for n in range(10_001)
+    ]
+    with pytest.raises(ValueError, match="bounded array"):
+        parse_model(model)
+
+
+def test_loop_exact_period_and_no_data_sample_remain_stable():
+    parsed = load_model(PATH)
+    rpm = parsed.ecus[0].responses[0]
+    assert rpm.loop_period_ms == 500
+    assert rpm.samples[0].at_ms == 0
+    assert rpm.samples[2].payload is None
+    assert rpm.samples[2].delay_ms is None
+    assert parsed.provenance == "synthetic"
