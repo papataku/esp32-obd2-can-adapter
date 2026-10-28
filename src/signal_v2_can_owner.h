@@ -45,11 +45,39 @@ class CanOwner {
       return;
     }
     std::array<CanSamples::Sample,5> parsed{};
-    const bool valid=r.status==m5can::DiagnosticStatus::Ok &&
-        r.response_count==1 && r.completed_at_us!=0 &&
-        r.responses[0].can_id==ecu_.chosenResponse() &&
-        CanSamples::decodeGroup(r.responses[0].data,r.responses[0].length,
-                                !essential_,parsed);
+    bool valid=false;
+    if(r.status==m5can::DiagnosticStatus::Ok && r.completed_at_us &&
+       r.response_count>=1 && ecu_.fixed()){
+      if(r.response_count==1 && r.responses[0].can_id==ecu_.chosenResponse()){
+        valid=CanSamples::decodeGroup(r.responses[0].data,
+                         r.responses[0].length,!essential_,parsed);
+      }
+      // Some ECUs return one positive response per PID, not one combined PDU.
+      // Accept exactly five (or essential two), same ECU, no duplicates,
+      // no missing/extra/negative records. Otherwise fail closed atomically.
+      const unsigned expected=essential_?2U:5U;
+      if(!valid && r.response_count==expected){
+        std::array<bool,5> seen{};
+        valid=true;
+        for(unsigned k=0;k<r.response_count;++k){
+          const auto &m=r.responses[k];
+          bool matched=false;
+          for(unsigned j=0;j<expected;++j){
+            const uint8_t len=CanSamples::Lengths[j];
+            if(!seen[j] && m.can_id==ecu_.chosenResponse() &&
+               m.length==len && m.data[0]==0x41 &&
+               m.data[1]==CanSamples::Pids[j]){
+              seen[j]=true;matched=true;
+              parsed[j].length=len;
+              for(unsigned b=0;b<len;++b)parsed[j].raw[b]=m.data[b];
+              break;
+            }
+          }
+          if(!matched){valid=false;break;}
+        }
+        for(unsigned j=0;j<expected;++j)if(!seen[j])valid=false;
+      }
+    }
     ecu_.observeSingle(valid,r.status);
     if(!valid){
       samples_.invalidate(r.status==m5can::DiagnosticStatus::NoData?3:5);
