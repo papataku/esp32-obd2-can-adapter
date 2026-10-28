@@ -32,3 +32,18 @@ c++ -std=c++17 -Wall -Wextra -Werror -Iinclude \
 c++ -std=c++17 -Wall -Wextra -Werror -Iinclude -Isrc \
   tests/test_signal_v2_can_policy.cpp -o /tmp/m5can-signal-v2-can-policy
 /tmp/m5can-signal-v2-can-policy
+
+# Review-only V2-2 host requirements: 10Hz union, snapshot, split design,
+# explicit CAN provenance and strict V1/11bit/UDS rejection.
+c++ -std=c++17 -Wall -Wextra -Werror \
+  -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 -DM5CAN_SIGNAL_V2_10HZ_LAB=1 \
+  -Iinclude -Isrc src/signal_v2_codec.cpp src/signal_v2_session.cpp \
+  tests/test_signal_v2_can_session.cpp -o /tmp/m5can-v2-can-session
+/tmp/m5can-v2-can-session
+
+c++ -std=c++17 -Wall -Wextra -Werror \
+  -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
+  -Itests/host_stubs -Iinclude -Isrc \
+  tests/test_signal_v2_can_policy_gate.cpp src/diagnostic_policy.cpp \
+  tests/host_stubs/stubs.cpp -o /tmp/m5can-v2-can-policy-gate
+/tmp/m5can-v2-can-policy-gate
