@@ -309,6 +309,16 @@ void manage(const char *cmd, uint32_t now) {
 void send(Peer &p, const Link &l, uint32_t now) {
   if (!live(l))
     return;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(p.output.size && (p.output.bytes[4]==0x20 ||
+                       p.output.bytes[4]==0x21) &&
+     !p.session.canPacketCurrent(now,p.output,owner.samples())){
+    p.output.size=0;
+    p.dataoff=0;
+    p.session.clearDemoCache(now);
+    Serial.println("#SIGNALV2_CAN,queue_drop=STALE_OR_INVALID,quality=INVALID");
+  }
+#endif
   if (p.waiting) {
     int confirmed = 0;
     portENTER_CRITICAL(&mux);
