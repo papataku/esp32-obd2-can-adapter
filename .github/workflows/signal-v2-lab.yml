@@ -50,3 +50,22 @@ jobs:
       - run: python -m pip install pytest
       - run: PYTHONPATH=elm-sim python -m pytest -q elm-sim/tests/elm327_conformance/test_timeseries.py
       - run: python tests/test_signal_v2_virtual_bridge.py elm-sim
+
+  v2-2-smartring-paired:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: papataku/TacoTacoMeter
+          ref: 037ac5b157e0311281ca89bc5eaf624d79bbc984
+          path: ring
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 ring/tools/test_signal_v2_ring.py
+      - run: python3 ring/tools/test_signal_v2_ring_policy.py
+      - run: python3 -m pip install platformio
+      - run: pio run -d ring -e viewe_smartring_lvgl_signal_v2_can_5hz_lab
+      - run: pio run -d ring -e viewe_smartring_lvgl_signal_v2_can_10hz_lab
