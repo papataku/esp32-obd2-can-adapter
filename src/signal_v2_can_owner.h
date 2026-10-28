@@ -4,6 +4,7 @@
 #include "ecu_physical_selector.h"
 #include "signal_v2_can_budget.h"
 #include "signal_v2_can_samples.h"
+#include "signal_v2_can_route.h"
 #include "signal_v2_simulator.h"
 #include <Arduino.h>
 #include <array>
@@ -15,6 +16,7 @@ class CanOwner {
   m5can::EcuPhysicalSelector ecu_{};
   CanBudget budget_{};
   CanSamples samples_{};
+  EcuRoute pinned_{}; // Protocol-aware ECU identity; 11bit future use.
   bool in_flight_=false,physical_=false,essential_=false,stopped_=false;
   uint32_t next_=0,last_log_=0;
   uint64_t prior_11bit_=0,prior_bus_errors_=0;
@@ -37,7 +39,12 @@ class CanOwner {
           if(!c.disqualified&&c.successes)++viable;
         }
         if(viable!=1){stop("Rejected(Ambiguous)",6);return;}
-        samples_.source_id=ecu_.chosenResponse();
+        pinned_=EcuRoute::fromResponse(ecu_.chosenResponse(),true);
+        if(!pinned_.enabledForThisTrial() ||
+           pinned_.request_id!=ecu_.physicalId()){
+          stop("WRONG_CAN_ADDRESSING",6);return;
+        }
+        samples_.source_id=pinned_.response_id;
         Serial.printf("#SIGNALV2_ECU,physical_response=%08lX,probes=%u\n",
           static_cast<unsigned long>(samples_.source_id),
           unsigned(ecu_.probes()));
@@ -47,9 +54,12 @@ class CanOwner {
     std::array<CanSamples::Sample,5> parsed{};
     bool valid=false;
     if(r.status==m5can::DiagnosticStatus::Ok && r.completed_at_us &&
-       r.response_count>=1 && ecu_.fixed()){
+       r.response_count>=1 && ecu_.fixed() &&
+       pinned_.enabledForThisTrial() &&
+       pinned_.request_id==ecu_.physicalId()){
       if(r.response_count==1 && r.responses[0].can_id==ecu_.chosenResponse()){
-        valid=CanSamples::decodeGroup(r.responses[0].data,
+        valid=pinned_.matches(EcuRoute::fromResponse(r.responses[0].can_id,true)) &&
+          CanSamples::decodeGroup(r.responses[0].data,
                          r.responses[0].length,!essential_,parsed);
       }
       // Some ECUs return one positive response per PID, not one combined PDU.
@@ -64,7 +74,8 @@ class CanOwner {
           bool matched=false;
           for(unsigned j=0;j<expected;++j){
             const uint8_t len=CanSamples::Lengths[j];
-            if(!seen[j] && m.can_id==ecu_.chosenResponse() &&
+            if(!seen[j] && pinned_.matches(
+                   EcuRoute::fromResponse(m.can_id,true)) &&
                m.length==len && m.data[0]==0x41 &&
                m.data[1]==CanSamples::Pids[j]){
               seen[j]=true;matched=true;
@@ -87,7 +98,7 @@ class CanOwner {
       if(!ecu_.fixed()&&!ecu_.probing())stop("ECU_PIN_LOST",6);
       return;
     }
-    samples_.source_id=ecu_.chosenResponse();
+    samples_.source_id=pinned_.response_id;
     for(unsigned i=0;i<5;++i){
       auto &s=samples_.values[i];
       if(essential_&&i>=2){
