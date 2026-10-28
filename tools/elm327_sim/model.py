@@ -125,8 +125,21 @@ def parse_model(raw: dict) -> ECUModel:
     return ECUModel(SCHEMA, raw["provenance"], tuple(ecus))
 
 
-def load_model(path: str | Path) -> ECUModel:
+DEFAULT_MAX_MODEL_BYTES = 2_000_000
+MAX_CONFIGURABLE_MODEL_BYTES = 128_000_000
+
+
+def load_model(path: str | Path, *, max_bytes: int = DEFAULT_MAX_MODEL_BYTES) -> ECUModel:
+    """Read a *converted* privacy-minimal model, never the original SQLite.
+
+    Default 2 MB gate retained. The caller must explicitly opt in to larger
+    files; a finite ceiling still protects against accidental unbounded reads.
+    Unknown fields, original schema_version/sessions, identifiers and raw data
+    are rejected by parse_model regardless of size allowance.
+    """
+    if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_CONFIGURABLE_MODEL_BYTES:
+        raise ValueError("max_bytes must be a positive integer <= 128000000")
     path = Path(path)
-    if path.stat().st_size > 2_000_000:
+    if path.stat().st_size > max_bytes:
         raise ValueError("model too large")
     return parse_model(json.loads(path.read_text(encoding="utf-8")))
