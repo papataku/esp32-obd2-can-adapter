@@ -23,7 +23,7 @@ public:
     const uint32_t cost=uint32_t(worst_frames)*200;
     if(a+cost>5000||b+cost>25000){++denied;return false;}
     for(auto &r:journal_)if(!r.used||now-r.at>=1000){
-      r={now,static_cast<uint16_t>(cost),true};
+      r.at=now;r.bits=static_cast<uint16_t>(cost);r.used=true;
       used100=a+cost;used1000=b+cost;
       if(used100>peak100)peak100=used100;
       if(used1000>peak1000)peak1000=used1000;
