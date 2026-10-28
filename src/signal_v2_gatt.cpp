@@ -4,14 +4,21 @@
 #include "signal_v2_golden.h"
 #include "signal_v2_registry.h"
 #include "signal_v2_session.h"
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+#include "signal_v2_can_owner.h"
+#endif
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <cstdio>
 #include <cstring>
 #include <mbedtls/sha256.h>
-#if !defined(M5CAN_CAN_TX_HARD_DISABLED) || !M5CAN_CAN_TX_HARD_DISABLED
-#error "Signal V2 lab MUST compile out physical CAN TX"
+#if !defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && \
+    (!defined(M5CAN_CAN_TX_HARD_DISABLED) || !M5CAN_CAN_TX_HARD_DISABLED)
+#error "CAN-disabled V2-1 requires physical TX lock"
+#endif
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && defined(M5CAN_CAN_TX_HARD_DISABLED)
+#error "V2-2 TX-enabled image conflicts with V2-1 hard-disabled"
 #endif
 namespace signal_v2 {
 namespace {
@@ -34,6 +41,11 @@ QueueHandle_t inbox = nullptr, admin = nullptr;
 NimBLECharacteristic *status = nullptr, *data = nullptr;
 Registry registry;
 Simulator simulator;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+CanOwner owner;
+bool can_armed=false;
+uint32_t armed_until=0;
+#endif
 // Never inherit legacy V1/NVS DEMO or enable synthetic observations at boot.
 bool demo_enabled = false;
 unsigned active_slot = 0;
@@ -150,6 +162,34 @@ class Callbacks : public NimBLECharacteristicCallbacks {
   }
 };
 void manage(const char *cmd, uint32_t now) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(!std::strcmp(cmd,"SIGV2 CAN STOP")) {
+    can_armed=false;owner.invalidate(10);
+    for(auto &p:peers) {
+      p.output.size=p.dataoff=0;
+      p.session.clearDemoCache(now);
+    }
+    Serial.println("#SIGNALV2_CAN,armed=0,reason=OPERATOR_STOP");
+    return;
+  }
+  if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {
+    bool secured=false;
+    for(unsigned i=0;i<2;++i){
+      auto l=snapshot(i);
+      if(l.active&&l.status&&l.data&&authorized(l)&&
+         peers[i].session.active(now)) secured=true;
+    }
+    can_armed=secured && !owner.stopped();
+    armed_until=now+600000;
+    Serial.printf("#SIGNALV2_CAN,armed=%u,reason=%s,ttl_ms=600000\n",
+      can_armed?1U:0U,can_armed?"USB_VERIFIED":"NOT_READY");
+    return;
+  }
+  if(!std::strncmp(cmd,"SIGV2 DEMO ",11)) {
+    Serial.println("#SIGNALV2_CAN,admin=DEMO_UNAVAILABLE");
+    return;
+  }
+#endif
   if (!std::strcmp(cmd, "SIGV2 DEMO STATUS") ||
       !std::strcmp(cmd, "SIGV2 DEMO ON") ||
       !std::strcmp(cmd, "SIGV2 DEMO OFF")) {
@@ -412,11 +452,19 @@ bool begin(NimBLEServer *server) {
   status->setValue(state.bytes.data(),
                    state.size); // Read never leaks another peer's ACK.
   service->start();
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  Serial.printf("#SIGNALV2,boot=%lu,mode=CAN,armed=0,usb_arm_required=1\n",
+                (unsigned long)boot);
+#else
   Serial.printf(
       "#SIGNALV2,boot=%lu,mode=DEMO,can_tx_disabled=1,physical_tx=0\n",
       (unsigned long)boot);
+#endif
   return true;
 }
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+void attachCan(m5can::CanMonitor* m){owner.attach(m);}
+#endif
 void connected(uint16_t handle) {
   portENTER_CRITICAL(&mux);
   for (auto &l : links)
@@ -430,6 +478,10 @@ void connected(uint16_t handle) {
   portEXIT_CRITICAL(&mux);
 }
 void disconnected(uint16_t handle) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  can_armed=false; // New connection requires a new local USB arm.
+  owner.invalidate(10);
+#endif
   portENTER_CRITICAL(&mux);
   for (auto &l : links)
     if (l.active && l.handle == handle) {
@@ -476,7 +528,25 @@ void poll() {
     if (link.active && link.status && link.data && authorized(link))
       peers[i].session.demand(now, demand);
   }
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(can_armed && int32_t(armed_until-now)<=0){
+    can_armed=false;
+    Serial.println("#SIGNALV2_CAN,armed=0,reason=USB_ARM_EXPIRED");
+  }
+  owner.tick(now,demand,can_armed);
+  static bool last_unsafe=false;
+  const bool unsafe=!can_armed || owner.stopped();
+  if(unsafe && !last_unsafe){
+    for(auto &p:peers){
+      p.output.size=p.dataoff=0;
+      p.session.clearDemoCache(now);
+    }
+  }
+  last_unsafe=unsafe;
+  simulator.tick(now,Simulator::Demand{});
+#else
   simulator.tick(now, demo_enabled ? demand : Simulator::Demand{});
+#endif
   for (unsigned i = 0; i < 2; ++i) {
     auto l = snapshot(i);
     auto &p = peers[i];
@@ -519,7 +589,11 @@ void poll() {
       p.dataoff = 0;
     }
     if (!p.ack.size && !p.output.size && l.status && l.data && authorized(l) &&
-        p.session.produce(now, p.output, &simulator, demo_enabled)) {
+        p.session.produce(now, p.output, &simulator, demo_enabled
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+                          , &owner.samples()
+#endif
+                          )) {
       p.dataoff = 0;
       p.data_transfer = ++p.transfer;
     }
