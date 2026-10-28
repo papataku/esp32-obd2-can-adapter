@@ -18,6 +18,7 @@ class CanOwner {
   CanSamples samples_{};
   EcuRoute pinned_{}; // Protocol-aware ECU identity; 11bit future use.
   bool in_flight_=false,physical_=false,essential_=false,stopped_=false;
+  bool previously_armed_=false,had_demand_=false;
   uint32_t next_=0,last_log_=0;
   uint64_t prior_11bit_=0,prior_bus_errors_=0;
   uint16_t period_=200;
@@ -127,7 +128,14 @@ public:
         else samples_.invalidate(10); // Never promote disarmed completion.
       }
     }
-    if(!armed){samples_.invalidate(10);can_->revokeLease();return;}
+    if(!armed){
+      if(previously_armed_)samples_.invalidate(10);
+      previously_armed_=false;
+      had_demand_=false;
+      can_->revokeLease();
+      return;
+    }
+    previously_armed_=true;
     if(stopped_)return;
     const auto s=can_->stats();
     if(s.std_obd_responses>prior_11bit_){
@@ -155,7 +163,13 @@ public:
       has_demand=true;
       if(p<period_)period_=p;
     }
-    if(!has_demand){samples_.invalidate(2);can_->revokeLease();return;}
+    if(!has_demand){
+      if(had_demand_)samples_.invalidate(2);
+      had_demand_=false;
+      can_->revokeLease();
+      return;
+    }
+    had_demand_=true;
 #if defined(M5CAN_SIGNAL_V2_10HZ_LAB)
     if(period_<100)period_=100;
 #else
