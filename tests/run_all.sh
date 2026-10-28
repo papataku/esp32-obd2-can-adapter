@@ -56,3 +56,5 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   src/isotp_reassembler.cpp src/diagnostic_transaction.cpp \
   tests/host_stubs/stubs.cpp -o /tmp/m5can-v2-can-isotp
 /tmp/m5can-v2-can-isotp
+
+python3 tests/test_signal_v2_scan_advertisement_policy.py
