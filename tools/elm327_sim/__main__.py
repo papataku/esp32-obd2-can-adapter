@@ -18,6 +18,7 @@ def elm_pty(model):
     tty.setraw(slave)
     print("ELM PTY available at " + os.ttyname(slave), file=sys.stderr, flush=True)
     session = ELM327Session(model)
+    started_ns = time.monotonic_ns()
     buffer = bytearray()
     while True:
         try:
@@ -28,6 +29,11 @@ def elm_pty(model):
             break
         for byte in data:
             if byte == 13:
+                # Drive replay from a monotonic host clock, not the number
+                # of requests or absolute wall time. The in-process tests
+                # can advance the same virtual clock explicitly.
+                elapsed_ms = (time.monotonic_ns() - started_ns) // 1_000_000
+                session.advance_virtual_time(max(0, elapsed_ms - session.virtual_now_ms))
                 try:
                     response = session.request(buffer.decode("ascii"))
                 except (ValueError, UnicodeDecodeError):
