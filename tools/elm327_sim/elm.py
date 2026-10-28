@@ -277,7 +277,17 @@ class ELM327Session:
         if not replies:
             self.bus._outgoing.clear()
             return ["NO DATA"]
-        self.last_response_delay_ms = max(due_times) if due_times else 0
+        # Adaptive estimate must use *accepted* responder timing; filtered
+        # ECUs cannot extend the learned reply window (DSK p.53).
+        observed_delays = [
+            record.delay_ms
+            for ecu in self.bus.model.ecus for record in ecu.responses
+            if record.request == request and (
+                (record.response_id_29 if extended else record.response_id_11)
+                in replies
+            )
+        ]
+        self.last_response_delay_ms = max(observed_delays) if observed_delays else 0
         for rid, frames in list(replies.items()):
             first = frames[0]
             if not first.data or first.data[0] >> 4 != 1 or not self.flowcontrol:
