@@ -67,5 +67,7 @@ public:
   }
   bool produce(uint32_t now, Packet &, const Simulator *source = nullptr,
                bool demo_enabled = true, const CanSamples *can = nullptr);
+  // Recheck queued CAN DATA/SNAPSHOT immediately before BLE notification.
+  bool canPacketCurrent(uint32_t now,const Packet &,const CanSamples &) const;
 };
 } // namespace signal_v2
