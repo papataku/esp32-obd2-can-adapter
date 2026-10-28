@@ -45,6 +45,14 @@ def _can_id(value, extended):
 
 
 @dataclass(frozen=True)
+class TimedSample:
+    """At model-clock ms, use a diagnostic PDU or emit no response."""
+    at_ms: int
+    payload: bytes | None
+    delay_ms: int | None
+
+
+@dataclass(frozen=True)
 class Response:
     request: bytes
     payload: bytes
@@ -53,6 +61,9 @@ class Response:
     delay_ms: int
     drop_every: int | None
     relative_timestamps_ms: tuple[int, ...]
+    replay_mode: str = "fixed"
+    samples: tuple[TimedSample, ...] = ()
+    loop_period_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -90,7 +101,8 @@ def parse_model(raw: dict) -> ECUModel:
         seen = set()
         for obj in item["responses"]:
             _exact_keys(obj, ("request", "payload_hex", "response_id_11", "response_id_29",
-                              "delay_ms"), ("drop_every", "relative_timestamps_ms"))
+                              "delay_ms"), ("drop_every", "relative_timestamps_ms",
+                                            "replay_mode", "samples", "loop_period_ms"))
             request = _hex(obj["request"], 2, 3)
             if not ((len(request) == 2 and request[0] == 1) or
                     (len(request) == 3 and request[0] == 0x22)):
@@ -120,7 +132,59 @@ def parse_model(raw: dict) -> ECUModel:
                 type(t) is not int or t < 0 for t in times
             ) or times != sorted(times):
                 raise ValueError("relative timestamps must be monotonic nonnegative integers")
-            records.append(Response(request, payload, rid11, rid29, delay, drop, tuple(times)))
+            mode = obj.get("replay_mode", "fixed")
+            if mode not in ("fixed", "sequence", "loop") or type(mode) is not str:
+                raise ValueError("replay_mode must be fixed, sequence or loop")
+            sample_data = obj.get("samples", [])
+            if (not isinstance(sample_data, list) or
+                    len(sample_data) > 10_000):
+                raise ValueError("samples must be a bounded array")
+            if mode == "fixed" and (sample_data or "samples" in obj):
+                raise ValueError("fixed mode must not specify samples")
+            if mode != "fixed" and not sample_data:
+                raise ValueError("time-series replay needs at least one sample")
+            if mode != "fixed" and times:
+                raise ValueError("legacy relative_timestamps_ms conflicts with samples.at_ms")
+            samples = []
+            last_at = -1
+            for sample in sample_data:
+                _exact_keys(sample, ("at_ms",), ("payload_hex", "delay_ms", "no_data"))
+                at = sample["at_ms"]
+                if type(at) is not int or at < 0 or at <= last_at or at > 2**53:
+                    raise ValueError("sample at_ms must increase strictly")
+                if not samples and at != 0:
+                    raise ValueError("first sample must start at model time zero")
+                last_at = at
+                no_data = sample.get("no_data", False)
+                if type(no_data) is not bool:
+                    raise ValueError("no_data must be boolean")
+                if no_data:
+                    if "payload_hex" in sample:
+                        raise ValueError("no_data sample must not carry payload")
+                    sample_payload = None
+                else:
+                    if "payload_hex" not in sample:
+                        raise ValueError("sample needs payload_hex or no_data=true")
+                    sample_payload = _hex(sample["payload_hex"], 2, 4095)
+                    if not (sample_payload.startswith(bytes([request[0] + 0x40]) + request[1:]) or
+                            (len(sample_payload) == 3 and
+                             sample_payload[:2] == bytes([0x7F, request[0]]))):
+                        raise ValueError("sample response service/PID/DID mismatch")
+                sample_delay = sample.get("delay_ms")
+                if sample_delay is not None and (
+                    type(sample_delay) is not int or not 0 <= sample_delay <= 60_000
+                ):
+                    raise ValueError("sample delay_ms out of range")
+                samples.append(TimedSample(at, sample_payload, sample_delay))
+            period = obj.get("loop_period_ms")
+            if mode == "loop":
+                if (type(period) is not int or period <= last_at or
+                        period > 2**53):
+                    raise ValueError("loop period must exceed final sample at_ms")
+            elif "loop_period_ms" in obj:
+                raise ValueError("loop_period_ms only allowed for loop mode")
+            records.append(Response(request, payload, rid11, rid29, delay, drop,
+                                    tuple(times), mode, tuple(samples), period))
         ecus.append(ECU(name, tuple(records)))
     return ECUModel(SCHEMA, raw["provenance"], tuple(ecus))
 
