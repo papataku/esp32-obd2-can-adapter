@@ -115,17 +115,40 @@ class ELM327Session:
             self.reset()
             return ["OK"]
         if cmd == "ATI":
-            return ["ELM327 v2.2"]
+            return ["ELM327 SIMULATOR v0.1"]
+        if cmd == "ATRV":
+            return [self.virtual_voltage]
+        if cmd.startswith("ATBRD") and len(cmd) == 7:
+            try:
+                divisor = int(cmd[5:], 16)
+            except ValueError:
+                return ["?"]
+            if not 1 <= divisor <= 255:
+                return ["?"]
+            self.baud_pending = divisor
+            self.baud_deadline_ms = self.virtual_now_ms + self.baud_timeout_ms
+            return ["OK"]
+        if cmd.startswith("ATBRT") and len(cmd) == 7:
+            try:
+                h = int(cmd[5:], 16)
+            except ValueError:
+                return ["?"]
+            self.baud_timeout_ms = 5 * (h if h else 256)
+            return ["OK"]
         if cmd == "AT@1":
             return ["OBDII to RS232 Interpreter"]
         if cmd == "ATDP":
-            if self.protocol == 0:
-                return ["AUTO, ISO 15765-4 (CAN 29/500)"]
-            size = 11 if self.protocol in (6, 8) else 29
-            rate = 500 if self.protocol in (6, 7) else 250
-            return [f"ISO 15765-4 (CAN {size}/{rate})"]
+            selected = self.detected_protocol if self.protocol == 0 else self.protocol
+            if selected is None:
+                return ["AUTO"]
+            size = 11 if selected in (6, 8) else 29
+            rate = 500 if selected in (6, 7) else 250
+            return [("AUTO, " if self.protocol == 0 else "") +
+                    f"ISO 15765-4 (CAN {size}/{rate})"]
         if cmd == "ATDPN":
-            return ["A7" if self.protocol == 0 else str(self.protocol)]
+            if self.protocol == 0:
+                return [("A" + str(self.detected_protocol)) if self.detected_protocol else "0"]
+            return [str(self.protocol)]
         for prefix, attribute in (
             ("ATE", "echo"), ("ATL", "linefeed"), ("ATS", "spaces"),
             ("ATH", "headers"), ("ATCAF", "autoformat"), ("ATCFC", "flowcontrol"),
@@ -146,6 +169,20 @@ class ELM327Session:
             return ["OK"]
         if cmd in ("ATSP0", "ATSP6", "ATSP7", "ATSP8", "ATSP9"):
             self.protocol = int(cmd[-1])
+            self.detected_protocol = None
+            self.last_response_delay_ms = None
+            return ["OK"]
+        if cmd == "ATCRA":
+            self.rx_filter = None
+            return ["OK"]
+        if cmd.startswith("ATCRA"):
+            import re
+            pattern = cmd[5:]
+            if (len(pattern) not in (3, 8) or
+                    not re.fullmatch(r"[0-9A-FX]+", pattern) or
+                    (len(pattern) == 3 and pattern[0] not in "01234567X")):
+                return ["?"]
+            self.rx_filter = pattern
             return ["OK"]
         if cmd.startswith("ATCP") and len(cmd) == 6:
             try:
@@ -173,7 +210,11 @@ class ELM327Session:
                 return ["OK"]
             return ["?"]
         if cmd == "ATPC":
-            self.protocol = 0
+            # ELM327DSK protocol close; configured ATSP selection persists.
+            self.detected_protocol = None
+            self.last_response_delay_ms = None
+            self.bus._scheduled.clear()
+            self.bus._outgoing.clear()
             return ["OK"]
         if cmd == "ATMA":
             # Nonblocking real-time monitor belongs to a future dedicated tier.
