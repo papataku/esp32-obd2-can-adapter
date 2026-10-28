@@ -535,13 +535,20 @@ void poll() {
   }
   owner.tick(now,demand,can_armed);
   static bool last_unsafe=false;
+  static uint32_t last_acquired=0,last_invalid=0;
   const bool unsafe=!can_armed || owner.stopped();
-  if(unsafe && !last_unsafe){
+  const auto &samples=owner.samples();
+  const bool source_transition=samples.acquired!=last_acquired ||
+                               samples.invalidations!=last_invalid;
+  // Never deliver an older queued CAN PDU after a newer acquisition, timeout,
+  // STOP or source invalidation. Snapshot cannot resurrect pre-error records.
+  if((unsafe && !last_unsafe) || (!unsafe && source_transition)){
     for(auto &p:peers){
       p.output.size=p.dataoff=0;
       p.session.clearDemoCache(now);
     }
   }
+  last_acquired=samples.acquired;last_invalid=samples.invalidations;
   last_unsafe=unsafe;
   simulator.tick(now,Simulator::Demand{});
 #else
