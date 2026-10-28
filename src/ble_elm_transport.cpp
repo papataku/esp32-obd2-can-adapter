@@ -1,4 +1,7 @@
 #include "signal_v2_gatt.h"
+#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+#include "signal_v2_codec.h"
+#endif
 #include "ble_elm_transport.h"
 #include "diagnostic_error_catalog.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
