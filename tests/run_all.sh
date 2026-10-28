@@ -28,3 +28,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -Iinclude \
   src/signal_v2_codec.cpp src/signal_v2_session.cpp \
   tests/test_signal_v2_demo.cpp -o /tmp/m5can-signal-v2-demo5
 /tmp/m5can-signal-v2-demo5
+
+c++ -std=c++17 -Wall -Wextra -Werror -Iinclude -Isrc \
+  tests/test_signal_v2_can_policy.cpp -o /tmp/m5can-signal-v2-can-policy
+/tmp/m5can-signal-v2-can-policy
