@@ -24,6 +24,7 @@ struct CapturedFrame {
 struct CanStats {
   uint64_t rx_frames = 0;
   uint64_t std_frames = 0;
+  uint64_t std_obd_responses = 0;
   uint64_t ext_frames = 0;
   uint64_t rtr_frames = 0;
   uint64_t app_queue_drops = 0;
