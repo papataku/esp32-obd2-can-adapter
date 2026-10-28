@@ -1,6 +1,7 @@
 #pragma once
 #include "signal_v2_codec.h"
 #include "signal_v2_simulator.h"
+#include "signal_v2_can_samples.h"
 namespace signal_v2 {
 // Wire permits 16 entries; admission separately checks the 486-byte snapshot budget.
 constexpr size_t MaxSubscriptions = 16;
@@ -65,6 +66,6 @@ public:
     next_ = now;
   }
   bool produce(uint32_t now, Packet &, const Simulator *source = nullptr,
-               bool demo_enabled = true);
+               bool demo_enabled = true, const CanSamples *can = nullptr);
 };
 } // namespace signal_v2
