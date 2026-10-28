@@ -13,3 +13,7 @@ A two-Central profile union takes the minimum period per PID. Default 200ms (5Hz
 The structural MaxSubscriptions=16 never overrides the complete Snapshot capacity: `16 + Σ(44 + RawLength) <= 486`. Reject overflow with reason `SNAPSHOT_TOO_LARGE=1`, malformed profile `PROFILE_INVALID=2`. No partial or fragmented Snapshot; split Snapshot is a future change.
 
 Branch: stack on #62 rather than #57 because #57 is an independent branch from main. Reuse safety helpers from #56/#57 without enabling hint restoration. Virtual ELM/ISO-TP simulator #61 remains a separate test dependency.
+
+
+## Address-width migration contract (owner decision 2026-10-28 23:50 JST)
+V2-2 has a protocol-neutral `EcuRoute { CanIdWidth, physical_request_id, response_id }` describing either Standard11 (`0x7E0..0x7E7` requests/`0x7E8..0x7EF` replies) or Extended29 (`0x18DAxxF1` physical request/`0x18DAF1xx` response). The *accepted profile and current-boot ECU pin* determine both format and response identity. No 29bit numeric constant is a permanent API invariant. Current hardware trial enables only Extended29; a detected Standard11 reply is logged, all values Invalid and TX halted. A later separately reviewed PR will implement Standard11 TX. Until then 11bit must not be silently remapped to 29bit or accepted as valid source.
