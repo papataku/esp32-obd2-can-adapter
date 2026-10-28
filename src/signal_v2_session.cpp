@@ -318,6 +318,7 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       const uint32_t last_seq=cache_lengths_[i]?
           u32(cache_.data()+52*i+38):0;
       if(!c||c->quality>1||!c->observed_us||
+         uint64_t(now)*1000ULL < c->observed_us||
          last_seq!=c->sequence||
          uint64_t(now)*1000ULL>c->observed_us+
               uint64_t(u16(e+20))*1000ULL)cache_lengths_[i]=0;
@@ -377,6 +378,7 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       const bool available = can
           ? (actual && actual->quality<=1 && actual->length==len &&
              actual->observed_us &&
+             uint64_t(now)*1000ULL >= actual->observed_us &&
              uint64_t(now)*1000ULL <= actual->observed_us +
                   uint64_t(u16(e+20))*1000ULL)
           : demo_enabled && (!source || shared);
@@ -413,5 +415,48 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
     return false;
   out = encode(0x20, boot_, id_, ++frame_, p, pos);
   return true;
+}
+bool Session::canPacketCurrent(uint32_t now,const Packet &packet,
+                               const CanSamples &can) const {
+  if(!active(now) || packet.size<Header+2)return false;
+  const uint8_t type=packet.bytes[4];
+  if(type!=0x20 && type!=0x21)return false;
+  const uint8_t *p=packet.payload();
+  const size_t payload=packet.size-Header;
+  size_t off=type==0x21?16:2;
+  if(payload<off)return false;
+  const unsigned count=type==0x21?p[12]:p[0];
+  if(count>MaxSubscriptions)return false;
+  const uint64_t now_us=uint64_t(now)*1000ULL;
+  for(unsigned i=0;i<count;++i){
+    if(off>payload||payload-off<44)return false;
+    const uint8_t *rec=p+off;
+    const size_t len=u16(rec);
+    if(len<44||len>payload-off)return false;
+    if(rec[7]<=1){
+      const uint16_t pid=u16(rec+8);
+      const auto sample=can.sample(pid);
+      uint16_t deadline=0;
+      for(unsigned j=0;j<count_;++j){
+        const uint8_t *entry=entries_.data()+24*j;
+        if(u16(entry)==u16(rec+4)&&u16(entry+4)==pid){
+          deadline=u16(entry+20);
+          break;
+        }
+      }
+      if(!deadline||!sample||sample->quality>1||!sample->observed_us||
+         sample->length!=rec[42]||len!=44+rec[42]||
+         can.source_id!=u32(rec+22)||
+         sample->sequence!=u32(rec+38)||
+         sample->observed_us!=
+             (uint64_t(u32(rec+30))<<32|u32(rec+26))||
+         now_us<sample->observed_us||
+         now_us>sample->observed_us+uint64_t(deadline)*1000ULL)return false;
+      for(unsigned b=0;b<sample->length;++b)
+        if(rec[44+b]!=sample->raw[b])return false;
+    }
+    off+=len;
+  }
+  return off==payload;
 }
 } // namespace signal_v2
