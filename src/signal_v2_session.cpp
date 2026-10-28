@@ -115,6 +115,7 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
       }
       // All accepted profiles must fit a COMPLETE snapshot, never truncate it.
       size_t snapshot_bytes = 16;
+      uint8_t rejection_reason = 0;
       bool valid = true, relax = false;
       for (unsigned i = 0; i < b[4]; ++i) {
         const auto e = b + 8 + 24 * i;
@@ -126,10 +127,20 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
                  e[6] <= 3 && e[7] == 0 &&
                  // Priority 0 is reserved exclusively for speed (Service 01 PID 0D).
                  ((pid == 0x0d) == (e[6] == 0)) &&
-                 u32(e + 12) == 1 && u16(e + 16) >= 1 && u16(e + 16) <= 10000 &&
+                 u32(e + 12) == 1 &&
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+                 u32(e + 8) == 0 &&
+#endif
+                 u16(e + 16) >= 1 && u16(e + 16) <= 10000 &&
                  u16(e + 18) >= u16(e + 16) && u16(e + 20) >= u16(e + 16) &&
                  e[22] == 0 && e[23] == 0;
-        if (u16(e + 16) < 200) {
+        if (u16(e + 16) <
+#if defined(M5CAN_SIGNAL_V2_10HZ_LAB)
+            100
+#else
+            200
+#endif
+            ) {
           relax = true;
           valid &= u16(e + 18) >= 200 && u16(e + 20) >= 200;
         }
@@ -137,10 +148,14 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
           if (u16(e) == u16(b + 8 + 24 * j))
             valid = false;
       }
-      if (snapshot_bytes > MaxPdu - Header)
+      if (snapshot_bytes > MaxPdu - Header) {
         valid = false;
+        rejection_reason = 1; // SNAPSHOT_TOO_LARGE
+      }
       if (!valid) {
         result = Reject;
+        reply[0] = rejection_reason ? rejection_reason : 2; // PROFILE_INVALID
+        reply_n = 1;
         break;
       }
       if (relax) {
@@ -282,7 +297,7 @@ void Session::apply(const uint8_t *b, uint32_t now) {
   due_.fill(now);
   plan_size_ = 0;
 }
-bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool demo_enabled) {
+bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool demo_enabled, const CanSamples *can) {
   if (!hello_)
     return false;
   // Expiration invalidates pending snapshots as well as demand. Never reissue
@@ -296,6 +311,17 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
   uint8_t p[486]{};
   if (snapshot_) {
     snapshot_ = false;
+    // Snapshot cannot refresh old CAN data. Remove any stale/invalid cache.
+    if(can)for(unsigned i=0;i<count_;++i){
+      const auto e=entries_.data()+24*i;
+      const auto c=can->sample(u16(e+4));
+      const uint32_t last_seq=cache_lengths_[i]?
+          u32(cache_.data()+52*i+38):0;
+      if(!c||c->quality>1||!c->observed_us||
+         last_seq!=c->sequence||
+         uint64_t(now)*1000ULL>c->observed_us+
+              uint64_t(u16(e+20))*1000ULL)cache_lengths_[i]=0;
+    }
     w32(p, frame_ + 2);
     w32(p + 4, 3);
     w32(p + 8, revision_);
@@ -335,7 +361,7 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       std::fill(r, r + 52, 0);
       w16(r, size);
       r[2] = 1;
-      r[3] = 2;
+      r[3] = can ? 1 : 2;
       w16(r + 4, u16(e));
       r[6] = 1;
       r[7] = pid == 0x0c ? 1 : 0;
@@ -343,22 +369,35 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       w32(r + 10, revision_);
       w32(r + 14, 1);
       w32(r + 18, 1);
-      w32(r + 22, u32(e + 8));
+      w32(r + 22, can ? can->source_id : u32(e + 8));
       const auto shared = source ? source->sample(pid) : nullptr;
+      const auto actual = can ? can->sample(pid) : nullptr;
       // Tests without an external source exercise the original active
       // synthetic path. Physical V2 lab always provides a Simulator.
-      const bool available = demo_enabled && (!source || shared);
+      const bool available = can
+          ? (actual && actual->quality<=1 && actual->length==len &&
+             actual->observed_us &&
+             uint64_t(now)*1000ULL <= actual->observed_us +
+                  uint64_t(u16(e+20))*1000ULL)
+          : demo_enabled && (!source || shared);
       const uint32_t sample_sequence = !available ? 0 :
-          (shared ? shared->sequence : ++sample_);
-      const size_t actual_len = available
-          ? demoPayload(pid, sample_sequence, r + 44) : 0;
+          (can ? actual->sequence : (shared ? shared->sequence : ++sample_));
+      size_t actual_len=0;
+      if(available&&can){
+        actual_len=actual->length;
+        std::copy(actual->raw,actual->raw+actual_len,r+44);
+      }else if(available){
+        actual_len=demoPayload(pid,sample_sequence,r+44);
+      }
       if (available && actual_len != len) return false;
       len = static_cast<uint8_t>(actual_len);
       size = 44 + len;
       w16(r, static_cast<uint16_t>(size));
-      r[7] = !available ? 2 : (pid == 0x0d && r[46] == 0 ? 1 : 0);
-      w64(r + 26, available
-          ? uint64_t(shared ? shared->observed_ms : now) * 1000 : 0);
+      r[7] = !available ? (can ? 8 : 2)
+            : (can ? actual->quality : (pid == 0x0d && r[46] == 0 ? 1 : 0));
+      w64(r + 26, available ?
+          (can ? actual->observed_us :
+                 uint64_t(shared ? shared->observed_ms : now)*1000) : 0);
       w32(r + 34, available ? 1000 : 0);
       w32(r + 38, available ? sample_sequence : 0);
       r[42] = len;
