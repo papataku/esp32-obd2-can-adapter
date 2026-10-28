@@ -259,12 +259,20 @@ class ELM327Session:
             # Deterministic approximation ONLY of ATAT; not proprietary algorithm.
             slack = 8 if self.adaptive == 1 else 4
             deadline = min(deadline, max(4, self.last_response_delay_ms + slack))
+        # The model's global virtual clock is independent of command count.
+        # Fixed-payload requests retain the original default at time zero.
+        now_ms = self.virtual_now_ms
         raw = self.bus.on_frame(
-            CANFrame(can_id, bytes([len(request)]) + request, extended), 0)
+            CANFrame(can_id, bytes([len(request)]) + request, extended), now_ms)
+        due_by_can_id = {frame.can_id: now_ms for frame in raw}
         due_times = sorted({due for due, _frame, _rest in self.bus._scheduled
-                            if due <= deadline})
+                            if due <= now_ms + deadline})
         for due in due_times:
-            raw.extend(self.bus.tick(due))
+            arrived = self.bus.tick(due)
+            raw.extend(arrived)
+            for frame in arrived:
+                if frame.can_id not in due_by_can_id:
+                    due_by_can_id[frame.can_id] = due
         self.bus._scheduled.clear()  # discard late transaction data, no stale bleed
         if not raw:
             self.bus._outgoing.clear()
@@ -282,17 +290,12 @@ class ELM327Session:
         if not replies:
             self.bus._outgoing.clear()
             return ["NO DATA"]
-        # Adaptive estimate must use *accepted* responder timing; filtered
-        # ECUs cannot extend the learned reply window (DSK p.53).
-        observed_delays = [
-            record.delay_ms
-            for ecu in self.bus.model.ecus for record in ecu.responses
-            if record.request == request and (
-                (record.response_id_29 if extended else record.response_id_11)
-                in replies
-            )
-        ]
-        self.last_response_delay_ms = max(observed_delays) if observed_delays else 0
+        # Learn only from responses admitted by CRA, using actual arrival
+        # time after time-series delay override; filtered and dropped frames
+        # do not extend the adaptive window.
+        self.last_response_delay_ms = max(
+            (due_by_can_id[rid] - now_ms for rid in replies), default=0
+        )
         for rid, frames in list(replies.items()):
             first = frames[0]
             if not first.data or first.data[0] >> 4 != 1 or not self.flowcontrol:
