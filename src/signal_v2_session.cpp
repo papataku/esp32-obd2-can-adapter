@@ -445,7 +445,7 @@ bool Session::canPacketCurrent(uint32_t now,const Packet &packet,
         }
       }
       if(!deadline||!sample||sample->quality>1||!sample->observed_us||
-         sample->length!=rec[42]||len!=44+rec[42]||
+         sample->length!=rec[42]||len!=size_t(44)+rec[42]||
          can.source_id!=u32(rec+22)||
          sample->sequence!=u32(rec+38)||
          sample->observed_us!=
