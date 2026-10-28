@@ -71,6 +71,30 @@ class ECUSimulator:
                 return response.response_id_29 if extended else response.response_id_11
         return None
 
+    @staticmethod
+    def _value_at(record: Response, now_ms: int) -> tuple[bytes | None, int]:
+        """Sample-and-hold lookup against the caller's monotonic model clock.
+
+        sequence: hold last sample after final timestamp.
+        loop: wrap with the explicitly supplied period, including gap at end.
+        fixed: preserve legacy payload and delay semantics.
+        """
+        if record.replay_mode == "fixed":
+            return record.payload, record.delay_ms
+        t = (now_ms % record.loop_period_ms
+             if record.replay_mode == "loop" else now_ms)
+        series = record.samples
+        lo, hi = 0, len(series)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if series[mid].at_ms <= t:
+                lo = mid + 1
+            else:
+                hi = mid
+        sample = series[lo - 1]  # schema requires first sample at 0
+        delay = record.delay_ms if sample.delay_ms is None else sample.delay_ms
+        return sample.payload, delay
+
     def _queue_pdu(self, ecu: ECU, request: bytes, extended: bool, now_ms: int):
         for record in ecu.responses:
             if record.request != request:
@@ -83,14 +107,18 @@ class ECUSimulator:
             rid = record.response_id_29 if extended else record.response_id_11
             if rid is None:
                 continue
-            payload = record.payload
+            payload, delay_ms = self._value_at(record, now_ms)
+            if payload is None:
+                # A synthetic no_data window is indistinguishable on the wire
+                # from an ECU with no response; callers decide their timeout.
+                continue
             if len(payload) <= 7:
                 frame = CANFrame(rid, bytes([len(payload)]) + payload, extended)
-                self._scheduled.append((now_ms + record.delay_ms, frame, b""))
+                self._scheduled.append((now_ms + delay_ms, frame, b""))
             else:
                 length = len(payload)
                 first = bytes([0x10 | ((length >> 8) & 15), length & 255]) + payload[:6]
-                self._scheduled.append((now_ms + record.delay_ms,
+                self._scheduled.append((now_ms + delay_ms,
                                         CANFrame(rid, first, extended), payload[6:]))
 
     def _deliver_request(self, frame: CANFrame, request: bytes, now_ms: int, ecu: ECU | None = None):
