@@ -1,0 +1,159 @@
+#pragma once
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+#include "can_monitor.h"
+#include "ecu_physical_selector.h"
+#include "signal_v2_can_budget.h"
+#include "signal_v2_can_samples.h"
+#include "signal_v2_simulator.h"
+#include <Arduino.h>
+#include <array>
+namespace signal_v2 {
+// Runs only in BLE application owner task, never inside a NimBLE callback.
+// CAN owner task remains the sole transmitter through CanMonitor::submitQuery.
+class CanOwner {
+  m5can::CanMonitor* can_=nullptr;
+  m5can::EcuPhysicalSelector ecu_{};
+  CanBudget budget_{};
+  CanSamples samples_{};
+  bool in_flight_=false,physical_=false,essential_=false,stopped_=false;
+  uint32_t next_=0,last_log_=0;
+  uint64_t prior_11bit_=0,prior_bus_errors_=0;
+  uint16_t period_=200;
+  void stop(const char* reason,uint8_t quality=10){
+    samples_.invalidate(quality);
+    if(!stopped_)Serial.printf("#SIGNALV2_CAN,stopped=1,reason=%s,invalid=%lu\n",
+      reason,static_cast<unsigned long>(samples_.invalidations));
+    stopped_=true;
+    if(can_)can_->revokeLease();
+  }
+  void result(const m5can::DiagnosticResult& r){
+    if(!physical_){
+      m5can::DiagnosticRawFrame pair[2]{};
+      ecu_.observe(r,false,pair); // #56 RAW-backed bounded selection
+      if(ecu_.fixed()){
+        unsigned viable=0;
+        for(unsigned i=0;i<ecu_.candidates();++i){
+          const auto &c=ecu_.candidate(i);
+          if(!c.disqualified&&c.successes)++viable;
+        }
+        if(viable!=1){stop("Rejected(Ambiguous)",6);return;}
+        samples_.source_id=ecu_.chosenResponse();
+        Serial.printf("#SIGNALV2_ECU,physical_response=%08lX,probes=%u\n",
+          static_cast<unsigned long>(samples_.source_id),
+          unsigned(ecu_.probes()));
+      }else if(ecu_.legacy())stop("NO_VERIFIED_ECU",6);
+      return;
+    }
+    std::array<CanSamples::Sample,5> parsed{};
+    const bool valid=r.status==m5can::DiagnosticStatus::Ok &&
+        r.response_count==1 && r.completed_at_us!=0 &&
+        r.responses[0].can_id==ecu_.chosenResponse() &&
+        CanSamples::decodeGroup(r.responses[0].data,r.responses[0].length,
+                                !essential_,parsed);
+    ecu_.observeSingle(valid,r.status);
+    if(!valid){
+      samples_.invalidate(r.status==m5can::DiagnosticStatus::NoData?3:5);
+      Serial.printf("#SIGNALV2_CAN,quality=INVALID,reason=RESPONSE,"
+                    "status=%u,invalid=%lu\n",unsigned(r.status),
+                    static_cast<unsigned long>(samples_.invalidations));
+      if(!ecu_.fixed()&&!ecu_.probing())stop("ECU_PIN_LOST",6);
+      return;
+    }
+    samples_.source_id=ecu_.chosenResponse();
+    for(unsigned i=0;i<5;++i){
+      auto &s=samples_.values[i];
+      if(essential_&&i>=2){
+        s.length=0;s.quality=8;s.observed_us=0;continue;
+      }
+      s.length=parsed[i].length;
+      for(unsigned j=0;j<s.length;++j)s.raw[j]=parsed[i].raw[j];
+      s.quality=0; // Numeric zero is valid only when actually decoded.
+      s.observed_us=r.completed_at_us;
+      ++s.sequence;
+    }
+    ++samples_.acquired;
+  }
+public:
+  void attach(m5can::CanMonitor* can){can_=can;}
+  const CanSamples &samples()const{return samples_;}
+  bool stopped()const{return stopped_;}
+  void invalidate(uint8_t reason=10){samples_.invalidate(reason);}
+  void tick(uint32_t now,const Simulator::Demand &demand,bool armed){
+    if(!can_)return;
+    if(in_flight_){
+      m5can::DiagnosticResult incoming{};
+      if(can_->pollQueryResult(incoming)){
+        in_flight_=false;
+        if(armed&&!stopped_)result(incoming);
+        else samples_.invalidate(10); // Never promote disarmed completion.
+      }
+    }
+    if(!armed){samples_.invalidate(10);can_->revokeLease();return;}
+    if(stopped_)return;
+    const auto s=can_->stats();
+    if(s.std_obd_responses>prior_11bit_){
+      stop("11BIT_OBD_RESPONSE",6);return;
+    }
+    prior_11bit_=s.std_obd_responses;
+    if(s.driver_bus_error>prior_bus_errors_||
+       s.state==TWAI_STATE_BUS_OFF||can_->faultLocked()){
+      stop("TWAI_BUS_ERROR",10);return;
+    }
+    prior_bus_errors_=s.driver_bus_error;
+    if(uint32_t(now-last_log_)>=1000){
+      last_log_=now;
+      Serial.printf("#SIGNALV2_LOAD,window100_bits=%lu,window1000_bits=%lu,"
+         "limit100=5000,limit1000=25000,denied=%lu,acquired=%lu,"
+         "invalid=%lu,requested_period=%u\n",
+         static_cast<unsigned long>(budget_.used100),
+         static_cast<unsigned long>(budget_.used1000),
+         static_cast<unsigned long>(budget_.denied),
+         static_cast<unsigned long>(samples_.acquired),
+         static_cast<unsigned long>(samples_.invalidations),unsigned(period_));
+    }
+    bool has_demand=false;period_=10000;
+    for(auto p:demand)if(p){
+      has_demand=true;
+      if(p<period_)period_=p;
+    }
+    if(!has_demand){samples_.invalidate(2);can_->revokeLease();return;}
+#if defined(M5CAN_SIGNAL_V2_10HZ_LAB)
+    if(period_<100)period_=100;
+#else
+    if(period_<200)period_=200;
+#endif
+    if(in_flight_||int32_t(now-next_)<0)return;
+    next_=now+period_; // No backlog catch-up burst.
+    const bool discovery=ecu_.probing();
+    if(!discovery&&!ecu_.fixed()){stop("ECU_PIN_LOST",6);return;}
+    m5can::DiagnosticRequest req{};
+    req.signal_v2=true;
+    req.timeout_ms=120;
+    essential_=false;
+    if(discovery){
+      req.can_id=0x18DB33F1U;req.length=3;
+      req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
+    }else{
+      req.can_id=ecu_.physicalId();req.length=6;
+      const uint8_t p[6]={1,0x0D,0x0C,0x05,0x5B,0x9A};
+      for(unsigned i=0;i<6;++i)req.data[i]=p[i];
+    }
+    // 12 conservatively priced extended frames: request + ISO-TP RX + FC,
+    // including bounded multi-ECU discovery responses and bit stuffing.
+    if(!budget_.reserve(now,12)){
+      if(discovery){stop("LOAD_BUDGET_DISCOVERY");return;}
+      Serial.println("#SIGNALV2_LOAD,over_budget_attempt=1,"
+                     "action=SHED_AUX,priority=SPEED_RPM");
+      essential_=true;req.length=3;
+      req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
+      if(!budget_.reserve(now,4)){stop("LOAD_BUDGET_ESSENTIAL");return;}
+    }
+    if(!can_->acquireLease(550)||!can_->submitQuery(req)){
+      samples_.invalidate(10);return;
+    }
+    physical_=!discovery;
+    in_flight_=true;
+  }
+};
+} // namespace signal_v2
+#endif
