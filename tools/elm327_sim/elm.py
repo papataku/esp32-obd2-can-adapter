@@ -32,6 +32,37 @@ class ELM327Session:
         self.header_11 = 0x7DF
         self.header_29 = 0x18DB33F1
         self.monitoring = False
+        self.rx_filter = None
+        self.detected_protocol = None
+        self.last_response_delay_ms = None
+        self.max_response_bytes = 8192
+        self._next_fault = None
+        self.virtual_voltage = "12.6V"  # synthetic voltage, not hardware telemetry
+        self.virtual_now_ms = 0
+        self.baud_divisor = None
+        self.baud_pending = None
+        self.baud_timeout_ms = 75
+        self.baud_deadline_ms = None
+
+    def inject_fault_once(self, code: str):
+        """Synthetic fault, not a public AT command or physical bus operation."""
+        if code not in ("CAN ERROR", "BUFFER FULL"):
+            raise ValueError("invalid fault injection")
+        self._next_fault = code
+
+    def advance_virtual_time(self, elapsed_ms: int):
+        if type(elapsed_ms) is not int or elapsed_ms < 0:
+            raise ValueError("time must be monotonic")
+        self.virtual_now_ms += elapsed_ms
+        if self.baud_pending is not None and self.virtual_now_ms > self.baud_deadline_ms:
+            self.baud_pending = None
+            self.baud_deadline_ms = None
+
+    def baud_test_identity(self):
+        """Synthetic BRD test banner. Not an actual UART speed change."""
+        if self.baud_pending is None:
+            raise ValueError("no pending BRD")
+        return b"ELM327 SIMULATOR v0.1\r"
 
     @staticmethod
     def _normalized(command: str):
