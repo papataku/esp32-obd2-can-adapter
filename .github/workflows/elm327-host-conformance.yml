@@ -12,12 +12,20 @@ jobs:
   python-host:
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    name: Host Python ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: python -m pip install pytest pyserial
+          python-version: "${{ matrix.python-version }}"
+      - name: Install pinned test dependencies
+        run: python -m pip install pytest==8.3.5 pyserial==3.5
+      - name: Confirm interpreter version and installed dependencies
+        run: python -c "import sys,pytest,serial; print(sys.version); print('pytest',pytest.__version__,'pyserial',serial.VERSION)"
       - name: Validate host-only ECU, ISO-TP, ELM and CDC
         env:
           PYTHONPATH: .
