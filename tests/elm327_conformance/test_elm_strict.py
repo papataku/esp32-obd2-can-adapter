@@ -271,3 +271,17 @@ def test_brt_changes_virtual_brd_timeout(host):
     assert host.request("ATBRD45") == b"ATBRD45\rOK\r"
     host.advance_virtual_time(11)
     assert host.baud_pending is None
+
+
+def test_brd_rate_survives_d_and_ws_but_not_z(host):
+    # ELM327DSK pp.51-52: BRD is temporary until hardware reset; ATD and
+    # warm start keep the rate; ATZ resets serial rate.
+    assert host.request("ATBRD45") == b"ATBRD45\rOK\r"
+    assert host.request("") == b"\r>"
+    assert host.baud_divisor == 0x45
+    assert host.request("ATD") == b"ATD\rOK\r>"
+    assert host.baud_divisor == 0x45
+    assert host.request("ATWS") == b"ATWS\rELM327 SIMULATOR v0.1\r>"
+    assert host.baud_divisor == 0x45
+    assert host.request("ATZ") == b"ATZ\rELM327 SIMULATOR v0.1\r>"
+    assert host.baud_divisor is None
