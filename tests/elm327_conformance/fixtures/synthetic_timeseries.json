@@ -1,0 +1,110 @@
+{
+  "schema": "ttm.ecu-model.v1",
+  "provenance": "synthetic",
+  "ecus": [
+    {
+      "id": "ECU01",
+      "responses": [
+        {
+          "request": "010C",
+          "payload_hex": "410C0000",
+          "response_id_11": "7E8",
+          "response_id_29": "18DAF101",
+          "delay_ms": 10,
+          "replay_mode": "loop",
+          "loop_period_ms": 500,
+          "samples": [
+            {
+              "at_ms": 0,
+              "payload_hex": "410C0000"
+            },
+            {
+              "at_ms": 100,
+              "payload_hex": "410C1000",
+              "delay_ms": 30
+            },
+            {
+              "at_ms": 200,
+              "no_data": true
+            },
+            {
+              "at_ms": 300,
+              "payload_hex": "410C3000",
+              "delay_ms": 5
+            },
+            {
+              "at_ms": 400,
+              "payload_hex": "410C4000",
+              "delay_ms": 0
+            }
+          ]
+        },
+        {
+          "request": "010D",
+          "payload_hex": "410D0A",
+          "response_id_11": "7E8",
+          "response_id_29": "18DAF101",
+          "delay_ms": 10,
+          "drop_every": 3,
+          "replay_mode": "sequence",
+          "samples": [
+            {
+              "at_ms": 0,
+              "payload_hex": "410D0A"
+            },
+            {
+              "at_ms": 100,
+              "payload_hex": "410D14",
+              "delay_ms": 40
+            },
+            {
+              "at_ms": 200,
+              "no_data": true
+            },
+            {
+              "at_ms": 300,
+              "payload_hex": "410D1E",
+              "delay_ms": 1
+            }
+          ]
+        },
+        {
+          "request": "0105",
+          "payload_hex": "410550",
+          "response_id_11": "7E8",
+          "response_id_29": "18DAF101",
+          "delay_ms": 2
+        }
+      ]
+    },
+    {
+      "id": "ECU02",
+      "responses": [
+        {
+          "request": "010C",
+          "payload_hex": "410C0050",
+          "response_id_11": "7EA",
+          "response_id_29": "18DAF102",
+          "delay_ms": 15,
+          "replay_mode": "sequence",
+          "samples": [
+            {
+              "at_ms": 0,
+              "payload_hex": "410C0050",
+              "delay_ms": 15
+            },
+            {
+              "at_ms": 120,
+              "no_data": true
+            },
+            {
+              "at_ms": 240,
+              "payload_hex": "410C00F0",
+              "delay_ms": 40
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
