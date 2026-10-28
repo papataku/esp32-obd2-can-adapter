@@ -47,3 +47,12 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   tests/test_signal_v2_can_policy_gate.cpp src/diagnostic_policy.cpp \
   tests/host_stubs/stubs.cpp -o /tmp/m5can-v2-can-policy-gate
 /tmp/m5can-v2-can-policy-gate
+
+c++ -std=c++17 -Wall -Wextra -Werror \
+  -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 \
+  -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
+  -Itests/host_stubs -Iinclude -Isrc \
+  tests/test_signal_v2_can_isotp.cpp src/diagnostic_policy.cpp \
+  src/isotp_reassembler.cpp src/diagnostic_transaction.cpp \
+  tests/host_stubs/stubs.cpp -o /tmp/m5can-v2-can-isotp
+/tmp/m5can-v2-can-isotp
