@@ -109,10 +109,15 @@ class ELM327Session:
 
     def _execute(self, cmd: str) -> list[str]:
         if cmd in ("ATZ", "ATWS"):
+            baud = self.baud_divisor
             self.reset()
+            if cmd == "ATWS":
+                self.baud_divisor = baud  # warm start preserves negotiated rate
             return ["ELM327 SIMULATOR v0.1"]
         if cmd == "ATD":
+            baud = self.baud_divisor
             self.reset()
+            self.baud_divisor = baud  # D restores settings, not serial hardware rate
             return ["OK"]
         if cmd == "ATI":
             return ["ELM327 SIMULATOR v0.1"]
