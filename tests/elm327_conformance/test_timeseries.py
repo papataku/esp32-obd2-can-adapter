@@ -172,10 +172,10 @@ def test_direct_can_frame_replay_on_virtual_clock():
     f = CANFrame(0x18DA01F1, b"\x02\x01\x0c", True)
     assert bus.on_frame(f, 0) == []
     assert bus.tick(9) == []
-    assert bus.tick(10) == [CANFrame(0x18DAF101, b"\x05\x41\x0c\x00\x00", True)]
+    assert bus.tick(10) == [CANFrame(0x18DAF101, b"\x04\x41\x0c\x00\x00", True)]
     assert bus.on_frame(f, 100) == []
     assert bus.tick(129) == []
-    assert bus.tick(130) == [CANFrame(0x18DAF101, b"\x05\x41\x0c\x10\x00", True)]
+    assert bus.tick(130) == [CANFrame(0x18DAF101, b"\x04\x41\x0c\x10\x00", True)]
     assert bus.on_frame(f, 200) == []
     assert bus.tick(1000) == []
 
