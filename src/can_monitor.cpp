@@ -1,4 +1,4 @@
-#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL) && (!defined(M5CAN_CAN_TX_HARD_DISABLED) || !M5CAN_CAN_TX_HARD_DISABLED)
+#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL) && !defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && (!defined(M5CAN_CAN_TX_HARD_DISABLED) || !M5CAN_CAN_TX_HARD_DISABLED)
 #error "Signal V2 requires CAN TX hard disabled"
 #endif
 #if defined(M5CAN_CAN_TX_HARD_DISABLED) && (defined(M5CAN_VEHICLE_TRIAL) || defined(M5CAN_CAN_TX_ENABLED))
@@ -152,6 +152,10 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   if (frame.extended) ++stats_.ext_frames;
   else ++stats_.std_frames;
   if (frame.rtr) ++stats_.rtr_frames;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(!frame.extended && !frame.rtr && frame.identifier>=0x7E8 &&
+      frame.identifier<=0x7EF)++stats_.std_obd_responses;
+#endif
   portEXIT_CRITICAL(&stats_mux_);
 
   // Independent from GUI/USB frame_queue_ consumption. The CAN owner is
@@ -193,6 +197,7 @@ void CanMonitor::rxTask() {
               request, static_cast<uint64_t>(esp_timer_get_time()), result);
       if (!from_cache) {
         performQuery(request,result);
+        DiagnosticPolicy::observeFunctionalPairs(request,result);
         if(!result.completed_at_us)
           result.completed_at_us=static_cast<uint64_t>(esp_timer_get_time());
         result_cache_.remember(request,result,result.completed_at_us);
@@ -629,6 +634,9 @@ void CanMonitor::performQuery(
 }
 
 bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(!request.signal_v2)return false; // USB/V1 BLE cannot transmit in this image.
+#endif
   if (!query_queue_ || !result_queue_) return false;
   // Reserve the single in-flight slot atomically across USB and BLE callers.
   // IMPORTANT: never call FreeRTOS queues while holding an ESP spinlock.
