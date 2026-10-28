@@ -50,6 +50,8 @@ int main(){
   assert(a.produce(100,data,nullptr,false,&can)&&data.bytes[4]==0x21);
   assert(a.produce(101,data,nullptr,false,&can)&&data.bytes[4]==0x20);
   assert(data.payload()[0]==5);
+  assert(a.canPacketCurrent(101,data,can));
+  assert(!a.canPacketCurrent(702,data,can)); // delayed BLE queue cannot be Fresh
   size_t offset=2;
   for(unsigned i=0;i<5;++i){
     auto r=data.payload()+offset;
@@ -67,6 +69,7 @@ int main(){
   assert(a.produce(111,data,nullptr,false,&can)&&data.bytes[4]==0x21);
   assert(data.payload()[12]==5);
   assert(u32(data.payload()+16+38)==1); // snapshot never reobserves
+  assert(a.canPacketCurrent(111,data,can));
   assert(a.produce(702,data,nullptr,false,&can)&&data.bytes[4]==0x20);
   assert(data.payload()[2+7]==8 && data.payload()[2+42]==0);
   can.invalidate(3);
