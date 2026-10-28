@@ -77,6 +77,17 @@ class ELM327Session:
             raise ValueError("bounded ASCII command required")
         typed = command.rstrip("\r\n")
         original = self._normalized(typed)
+        if self.baud_pending is not None:
+            # ELM327DSK pp.51-52: BRD waits for the host's CR at the
+            # candidate rate. This models the handshake, never UART hardware.
+            if not original:
+                self.baud_divisor = self.baud_pending
+                self.baud_pending = None
+                self.baud_deadline_ms = None
+                return b"\r>"
+            self.baud_pending = None
+            self.baud_deadline_ms = None
+            return b"?\r>"
         if not original:
             original = self.last
         else:
@@ -88,6 +99,9 @@ class ELM327Session:
         else:
             lines = self._execute(original)
         result = (self._format_line(typed) if echo else b"")
+        if self.baud_pending is not None and original.startswith("ATBRD"):
+            # Initial OK, then rate change and test banner; NO final prompt.
+            return result + b"OK\r"
         if self.monitoring and original == "ATMA":
             return result  # monitor stream is not completed by a prompt
         result += b"".join(self._format_line(line) for line in lines if line is not None)
