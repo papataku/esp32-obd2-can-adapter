@@ -125,6 +125,10 @@ bool DiagnosticPolicy::responseMatches(const DiagnosticRequest& request,
                                        size_t payload_len) {
   if (!payload || !payload_len || !allowedReadRequest(request)) return false;
   const uint8_t service = request.data[0];
+  // A negative response is valid transport evidence, but never a meter value.
+  // Accepting its NRC is required to distinguish NO DATA and ISO-TP error.
+  if (payload[0] == 0x7F)
+    return payload_len >= 2 && payload[1] == service;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(request.signal_v2 && request.length==6) {
     if(payload_len<2 || payload[0]!=0x41)return false;
@@ -134,9 +138,6 @@ bool DiagnosticPolicy::responseMatches(const DiagnosticRequest& request,
   }
 #endif
 
-  if (payload[0] == 0x7F) {
-    return payload_len >= 2 && payload[1] == service;
-  }
 #if defined(M5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL)
   if (service == 0x01 && request.length == 3 &&
       (request.can_id == 0x18DB33F1U || observedPhysicalEcu(request.can_id)) &&
