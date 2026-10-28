@@ -88,3 +88,49 @@ python3 -m tools.elm327_sim --mode elm-pty \
 ~~~
 
 No physical CAN, firmware or device writes in this PR.
+
+
+## Synthetic time-series replay contract (optional extension to `ttm.ecu-model.v1`)
+
+Existing fixed `payload_hex`, `delay_ms`, `drop_every`, and strict top-level `schema` / `provenance` / `ecus` validation are unchanged. A response **without** replay fields has `replay_mode="fixed"` and returns its legacy `payload_hex` at every request. The original fixed representative `payload_hex` remains mandatory for schema backward compatibility even when an optional series is present.
+
+For a PID that changes over model time, select `replay_mode: "sequence"` or `"loop"` and provide nonempty `samples`. Each sample contains `at_ms` (integer relative to the model clock, starting **exactly at 0** and strictly increasing), either `payload_hex` (complete diagnostic PDU, uppercase, validated against requested Service/PID/DID) **or** `no_data: true`, and optional `delay_ms` (0 to 60000, overriding the response's fallback delay for that sample). Other fields, absolute dates/times and identifiers are rejected.
+
+`sequence` uses sample-and-hold: the newest sample with `at_ms <= current model clock` is selected; **after the final sample, its payload/no_data state remains held**. Repeating a request at the same timestamp selects the same sample (subject to existing `drop_every`). `loop` applies `model_clock_ms % loop_period_ms`, then uses the same sample-and-hold selection; `loop_period_ms` is mandatory, a positive integer strictly greater than the last `at_ms`. All clocks use monotonic elapsed milliseconds from the start of the emulator run, **not wall-clock timestamps**. A gap from last sample until the loop boundary holds the last sample.
+
+Every `no_data: true` sample suppresses this ECU's response; if no other ECU responds before the ATST/ATAT deadline, the ELM interface emits `NO DATA`. `drop_every=N` continues to drop every Nth request per ECU/PID independent of sample identity; per-sample `delay_ms` is applied to the outgoing CAN response and may also lead to `NO DATA` if it exceeds the requested response timeout. Injection does not introduce any physical CAN API.
+
+**Synthetic example** (not extracted from RP8 or PM's data):
+
+~~~json
+{
+  "schema": "ttm.ecu-model.v1",
+  "provenance": "synthetic",
+  "ecus": [{
+    "id": "ECU01",
+    "responses": [{
+      "request": "010C",
+      "payload_hex": "410C0000",
+      "response_id_11": "7E8",
+      "response_id_29": "18DAF101",
+      "delay_ms": 10,
+      "drop_every": 7,
+      "replay_mode": "loop",
+      "loop_period_ms": 500,
+      "samples": [
+        {"at_ms": 0, "payload_hex": "410C0000"},
+        {"at_ms": 100, "payload_hex": "410C1000", "delay_ms": 30},
+        {"at_ms": 200, "no_data": true},
+        {"at_ms": 300, "payload_hex": "410C3000", "delay_ms": 5},
+        {"at_ms": 400, "payload_hex": "410C4000", "delay_ms": 0}
+      ]
+    }]
+  }]
+}
+~~~
+
+This produces RPM snapshots at 0/100/300/400ms, silence at 200–299ms, and repeats at 500ms. `relative_timestamps_ms` is a **legacy passive metadata field**; a nonempty copy of it alongside active `samples` is rejected, preventing two conflicting replay clocks. The converter owned by PM/Codex must map actual observation-relative times to `samples[].at_ms`; **no conversion script or real-derived fixture is stored here**.
+
+Validation remains strict: at most 32 ECUs, 256 responses per ECU, 10,000 samples per response, 4095-byte PDU maximum and existing 2,000,000-byte default JSON loader cap (explicit bounded override up to 128MB). The `provenance` value remains exactly `synthetic` or `anonymized_observation` and does not independently prove privacy. Exact timing and payload tests use only `tests/elm327_conformance/fixtures/synthetic_timeseries.json`.
+
+**11-bit response IDs in the owner's converted model are provisional.** They are not evidence of real 11-bit RP8 routing or authorization to transmit to an actual CAN bus.
