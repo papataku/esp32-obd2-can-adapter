@@ -126,8 +126,12 @@ bool DiagnosticPolicy::responseMatches(const DiagnosticRequest& request,
   if (!payload || !payload_len || !allowedReadRequest(request)) return false;
   const uint8_t service = request.data[0];
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
-  if(request.signal_v2 && request.length==6)
-    return payload_len>=2 && payload[0]==0x41 && payload[1]==0x0D;
+  if(request.signal_v2 && request.length==6) {
+    if(payload_len<2 || payload[0]!=0x41)return false;
+    const uint8_t pid=payload[1];
+    return pid==0x0D||pid==0x0C||pid==0x05||
+           pid==0x5B||pid==0x9A;
+  }
 #endif
 
   if (payload[0] == 0x7F) {
