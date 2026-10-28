@@ -192,7 +192,7 @@ void CanMonitor::rxTask() {
       // Both BLE sessions must share one CAN owner. A second identical
       // read-only PID/DID request can reuse a validated <=100ms result,
       // avoiding another CAN TX and expensive TWAI mode transition.
-      const bool from_cache = !fault_locked_ &&
+      const bool from_cache = !fault_locked_ && !request.signal_v2 &&
           result_cache_.lookup(
               request, static_cast<uint64_t>(esp_timer_get_time()), result);
       if (!from_cache) {
@@ -200,7 +200,8 @@ void CanMonitor::rxTask() {
         DiagnosticPolicy::observeFunctionalPairs(request,result);
         if(!result.completed_at_us)
           result.completed_at_us=static_cast<uint64_t>(esp_timer_get_time());
-        result_cache_.remember(request,result,result.completed_at_us);
+        if(!request.signal_v2)
+          result_cache_.remember(request,result,result.completed_at_us);
       }
       // A negative ISO-TP response (7F <service> <NRC>) is still a
       // completed transport transaction, but is NOT a usable meter value.
