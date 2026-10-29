@@ -1,5 +1,6 @@
 #include "signal_v2_gatt.h"
 #include "serial_protocol.h"
+#include "twai_hil.h"
 
 #include <algorithm>
 #include <Preferences.h>
@@ -486,6 +487,9 @@ void SerialProtocol::handleBleDisconnect() {
 }
 
 void SerialProtocol::handleUsbLine(const char* line) {
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  if(hil::usbCommand(line))return;
+#endif
 #if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
   if(signal_v2::usbCommand(line))return;
 #endif

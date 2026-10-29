@@ -58,6 +58,7 @@ c++ -std=c++17 -Wall -Wextra -Werror \
 /tmp/m5can-v2-can-isotp
 
 python3 tests/test_signal_v2_scan_advertisement_policy.py
+python3 tests/test_signal_v2_hil_ecu.py
 
 # Independent PR63 review reproductions: bounded FC/RAW/PDU and arm epochs.
 for fixture in fc owner; do

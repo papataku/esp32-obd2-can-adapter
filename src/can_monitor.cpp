@@ -15,6 +15,11 @@
 
 #include "app_config.h"
 #include "diagnostic_transaction.h"
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+// After <driver/twai.h>: only this file's TWAI calls go to the serial bridge.
+#define M5CAN_TWAI_HIL_REDIRECT 1
+#include "twai_hil.h"
+#endif
 
 namespace m5can {
 namespace {
