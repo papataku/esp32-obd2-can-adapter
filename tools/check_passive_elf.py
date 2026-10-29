@@ -10,7 +10,8 @@ p.add_argument('--nm', required=True)
 a = p.parse_args()
 symbols = subprocess.check_output([a.nm, '--defined-only', '-C', a.elf], text=True)
 for name in ('twai_transmit', 'twai_initiate_recovery', 'CanMonitor::',
-             'signal_v2::', 'NimBLE', 'esp_ble_', 'SerialProtocol::'):
+             'signal_v2::', 'NimBLE', 'esp_ble_', 'SerialProtocol::',
+             'M5GFX::autodetect', 'M5Unified::'):
     if name in symbols:
         raise SystemExit('FORBIDDEN passive ELF symbol: ' + name)
 for name in ('twai_driver_install', 'twai_start', 'twai_stop',

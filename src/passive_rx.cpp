@@ -3,7 +3,8 @@
 // diagnostic parsing are excluded by build_src_filter, not a runtime setting.
 #if defined(M5CAN_PASSIVE_TX_ISOLATED)
 #include <Arduino.h>
-#include <M5Dial.h>
+#include <M5GFX.h>
+#include <lgfx/v1/panel/Panel_GC9A01.hpp>
 #include <atomic>
 #include <cstring>
 #include <driver/gpio.h>
@@ -36,6 +37,31 @@ passive::Latch latch; // Accessed only by setup, then the CAN owner.
 std::atomic<bool> request_fault{false};
 bool installed=false;
 uint32_t last_check=0;
+// Exact Dial schematic pins. Never call M5.begin / display autodetection:
+// cached or failed board detection can probe PORT.A and pulse CAN TXD.
+class DialDisplay : public lgfx::LGFX_Device {
+  lgfx::Bus_SPI bus_;
+  lgfx::Panel_GC9A01 panel_;
+  lgfx::Light_PWM light_;
+ public:
+  DialDisplay() {
+    auto b=bus_.config();
+    b.spi_host=SPI2_HOST; b.spi_mode=0; b.freq_write=40000000;
+    b.freq_read=16000000; b.spi_3wire=true; b.use_lock=true;
+    b.dma_channel=SPI_DMA_CH_AUTO;
+    b.pin_sclk=6; b.pin_mosi=5; b.pin_miso=-1; b.pin_dc=4;
+    bus_.config(b); panel_.setBus(&bus_);
+    auto p=panel_.config();
+    p.pin_cs=7; p.pin_rst=8; p.pin_busy=-1;
+    p.panel_width=240; p.panel_height=240;
+    p.readable=false; p.invert=true; p.rgb_order=false;
+    panel_.config(p);
+    auto l=light_.config(); l.pin_bl=9; l.freq=44100;
+    l.pwm_channel=7; l.invert=false;
+    light_.config(l); panel_.setLight(&light_);
+    setPanel(&panel_);
+  }
+} display;
 
 void holdTxdHigh() {
   // Set the output latch BEFORE enabling the pad. Reset-time high impedance
@@ -76,7 +102,7 @@ passive::Snapshot snapshot(bool running) {
       !(REG_READ(RTC_IO_TOUCH_PAD13_REG) & RTC_IO_TOUCH_PAD13_MUX_SEL);
   const auto input=GPIO.func_in_sel_cfg[TWAI_RX_IDX].val;
   s.rx_route=(input & 0xFFU) == (passive::kRx | (1U<<7));
-  s.controller_listen_only=installed && TWAI.mode_reg.lom && !TWAI.mode_reg.stm;
+  s.controller_listen_only=installed && TWAI.mode_reg.lom && !TWAI.mode_reg.stm && !TWAI.mode_reg.rm;
   s.running=running;
   return s;
 }
@@ -151,17 +177,16 @@ void printStats(const Stats& s, uint32_t fps) {
 } // namespace
 void setup() {
   holdTxdHigh(); // First application action; no TWAI signal has been attached.
-  auto config=M5.config(); config.serial_baudrate=0;
-  config.clear_display=true; config.output_power=true;
-  // PORT.A is CAN, never probe external I2C displays/sensors on GPIO13/15.
-  config.external_display_value=0; config.external_speaker_value=0;
-  config.external_imu=false; config.external_rtc=false;
-  M5Dial.begin(config, true, false);
+  // Dial's HOLD pin keeps power on; display touches only GPIO4..9.
+  gpio_set_level(static_cast<gpio_num_t>(46),1);
+  gpio_set_direction(static_cast<gpio_num_t>(46),GPIO_MODE_OUTPUT);
+  const bool display_ok=display.init();
+  display.setBrightness(128);
   Serial.begin(115200);
   Serial.setTxTimeoutMs(10);
-  // Detect any library initialization altering our pad rather than concealing it.
+  // A display failure or changed TXD must never allow a verified boot.
   auto before=snapshot(true); before.rx_route=true; before.controller_listen_only=true;
-  if (!passive::safe(before)) { failClosed(); return; }
+  if (!display_ok || !passive::safe(before)) { failClosed(); return; }
   twai_general_config_t general=TWAI_GENERAL_CONFIG_DEFAULT(sink, rx, TWAI_MODE_LISTEN_ONLY);
   general.tx_queue_len=0; general.rx_queue_len=128;
   general.alerts_enabled=TWAI_ALERT_BUS_ERROR | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_OFF;
@@ -216,7 +241,7 @@ void loop() {
   }
   if (uint32_t(now-draw_ms)>=100) {
     draw_ms=now;
-    auto& d=M5Dial.Display;
+    auto& d=display;
     d.fillScreen(TFT_BLACK); d.setTextDatum(middle_center);
     d.setTextColor(verified?TFT_GREEN:TFT_RED,TFT_BLACK);
     // Font2 keeps the complete required string inside the round display.

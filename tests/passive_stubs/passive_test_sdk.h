@@ -23,15 +23,16 @@ inline uint32_t GPIO_PIN_MUX_REG[49]{};
 union OutRoute { uint32_t val=0; struct { uint32_t func_sel:9, inv_sel:1, oen_sel:1, oen_inv_sel:1, reserved:20; }; };
 struct Gpio { uint32_t enable=0,out=0; struct { bool pad_driver=false; } pin[49]; OutRoute func_out_sel_cfg[49]; struct { uint32_t val=0; } func_in_sel_cfg[256]; };
 inline Gpio GPIO;
-inline struct { struct { bool lom=false,stm=false; } mode_reg; } TWAI;
+inline struct { struct { bool lom=false,stm=false,rm=false; } mode_reg; } TWAI;
 using gpio_num_t=int;
+#define GPIO_MODE_OUTPUT 2
 #define GPIO_MODE_INPUT 1
 #define GPIO_MODE_INPUT_OUTPUT 3
 #define GPIO_PULLUP_ENABLE 1
 #define GPIO_PULLDOWN_DISABLE 0
 struct gpio_config_t { uint64_t pin_bit_mask=0; int mode=0,pull_up_en=0,pull_down_en=0; };
 inline bool pad_high=true;
-inline int gpio_set_level(int pin,int value) { GPIO.out=(GPIO.out&~(1U<<pin))|(value<<pin); return 0; }
+inline int gpio_set_level(int pin,int value) { if (pin<32) GPIO.out=(GPIO.out&~(1U<<pin))|(value<<pin); return 0; }
 inline int rtc_gpio_deinit(int) { registers[1000]=0; return 0; }
 inline int gpio_config(gpio_config_t*) { GPIO.enable|=1U<<13; registers[13]=(PIN_FUNC_GPIO<<MCU_SEL_S)|FUN_IE; return 0; }
 inline int gpio_get_level(int) { return pad_high; }
@@ -106,15 +107,29 @@ namespace fonts { inline int Font2=0; }
 #define TFT_RED 2
 #define TFT_WHITE 3
 #define middle_center 0
-inline struct FakeM5 {
-  struct Config { int serial_baudrate=0; bool clear_display=false,output_power=false,external_imu=true,external_rtc=true; int external_display_value=1,external_speaker_value=1; };
-  Config config() { return {}; }
-} M5;
-inline struct FakeDial {
-  std::string screen;
-  struct DisplayType {
-    void fillScreen(int) {} void setTextDatum(int) {} void setTextColor(int,int) {}
-    void drawString(const char*,int,int,int*) {}
-  } Display;
-  void begin(const FakeM5::Config& c,bool,bool) { assert(!c.external_display_value && !c.external_speaker_value && !c.external_imu && !c.external_rtc); }
-} M5Dial;
+#define SPI2_HOST 2
+#define SPI_DMA_CH_AUTO 3
+namespace lgfx {
+struct Bus_SPI {
+  struct Config { int spi_host,spi_mode,freq_write,freq_read,dma_channel,pin_sclk,pin_mosi,pin_miso,pin_dc; bool spi_3wire,use_lock; };
+  Config config() { return {}; } void config(Config) {}
+};
+struct Light_PWM {
+  struct Config { int pin_bl,freq,pwm_channel; bool invert; };
+  Config config() { return {}; } void config(Config c) { assert(c.pin_bl==9); }
+};
+struct Panel_GC9A01 {
+  struct Config { int pin_cs,pin_rst,pin_busy,panel_width,panel_height; bool readable,invert,rgb_order; };
+  Config config() { return {}; } void config(Config c) { assert(c.pin_cs==7 && c.pin_rst==8); }
+  void setBus(Bus_SPI*) {} void setLight(Light_PWM*) {}
+};
+inline bool display_ok=true;
+class LGFX_Device {
+ public:
+  void setPanel(Panel_GC9A01*) {}
+  bool init() { return display_ok; }
+  void setBrightness(int) {}
+  void fillScreen(int) {} void setTextDatum(int) {} void setTextColor(int,int) {}
+  void drawString(const char*,int,int,int*) {}
+};
+}

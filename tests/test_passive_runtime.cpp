@@ -6,11 +6,12 @@ int main(int argc,char** argv) {
   assert(argc==2);
   for (unsigned i=0;i<49;++i) GPIO_PIN_MUX_REG[i]=i;
   const std::string fault=argv[1];
+  lgfx::display_ok=fault!="display";
   install_fail=fault=="install"; start_fail=fault=="start"; task_fail=fault=="task";
   setup();
-  if (install_fail || start_fail || task_fail) {
+  if (!lgfx::display_ok || install_fail || start_fail || task_fail) {
     assert(stats.fault && !stats.verified && !installed);
-    if (!install_fail) assert(calls.back()=="uninstall");
+    if (lgfx::display_ok && !install_fail) assert(calls.back()=="uninstall");
     return 0;
   }
   assert(fresh(readStats()) && calls.back()=="task");
@@ -39,6 +40,7 @@ int main(int argc,char** argv) {
   else if (fault=="open_drain") GPIO.pin[13].pad_driver=true;
   else if (fault=="rx") GPIO.func_in_sel_cfg[TWAI_RX_IDX].val^=1;
   else if (fault=="mode") TWAI.mode_reg.lom=false;
+  else if (fault=="reset") TWAI.mode_reg.rm=true;
   else if (fault=="self_test") TWAI.mode_reg.stm=true;
   else if (fault=="state") fake_info.state=TWAI_STATE_STOPPED;
   else if (fault=="status") status_fail=true;
