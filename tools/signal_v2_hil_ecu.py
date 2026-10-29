@@ -4,8 +4,8 @@
 N1 PR-D substitute (owner decision 2026-10-29: no external CAN analyzer).
 The M5Dial runs the production V2-2 CAN stack; its TWAI driver is a USB-serial
 bridge. This script plays the RP8 ECU01 (18DAF101), injects faults, and checks
-the adapter's reaction from its own serial output plus an independent PC-side
-count of every bridged frame (TX reported by the adapter + RX injected here).
+the adapter's reaction using sequenced board timestamps for each virtual TX
+attempt and RX admission, reconciled against host writes in a saved trace.
 
 Prerequisite (operator): a V2 Central (iPhone or SmartRing) is connected,
 secured and demanding signals, so that "SIGV2 CAN ARM" is accepted.
@@ -58,8 +58,6 @@ SCENARIOS = {
     "disconnect": (True, "operator disconnects BLE central during acquisition"),
     "reboot": (False, "operator reboots during acquisition; new boot/fence/epoch"),
 }
-
-TX_RE = re.compile(r"#HIL_TX,t_us=(\d+),id=([0-9A-F]{8}),ext=(\d),dlc=(\d),data=([0-9A-F]*)")
 
 
 def rx_line(can_id, data, ext=True, generation=0):
@@ -241,6 +239,9 @@ def evaluate(scenario, events):
         int(e.get("epoch", 0)) in epochs for e in samples)
     healthy_first = bool(samples and samples[0]["t"] - first_arm <= 3)
     sustained = len(samples) >= 250 and all(b["t"]-a["t"] <= .5 for a,b in zip(samples,samples[1:]) if b.get("epoch") == a.get("epoch") and b.get("boot") == a.get("boot"))
+    if scenario in ("normal","split","rearm"):
+        requests=kind("stop_request")
+        sustained &= bool(requests and samples and 0 <= requests[-1]["t"]-samples[-1]["t"] <= .5)
     if samples:
         sample_ok &= len(fc_txs) >= len(samples)
         for data in (GROUP_FF,*GROUP_CF):
@@ -261,8 +262,17 @@ def evaluate(scenario, events):
             fault_injected = expected[rx_line(ECU_RX, GROUP_CF[0])] >= 2 and len(arms) == 2
         if scenario == "late":
             fault_injected &= bool(rxs and probe_txs and rxs[0]["t"] - probe_txs[0]["t"] > .120)
+    # Exact initial RX forms/counts, not merely the presence of a selected
+    # injection somewhere in a run. Later regular CFs belong to group traffic.
+    probe_limit=group_txs[0]["t"] if group_txs else float("inf")
+    initial_rx=Counter(rx_line(e["id"],e["data"],bool(e["ext"])) for e in rxs if e["t"]<probe_limit)
+    initial_model=VirtualEcu(scenario)
+    required_rx=Counter(line for _,line in initial_model.on_tx(ECU_TX,PROBE) if line.startswith("HIL RX "))
+    exact_initial_rx=initial_rx==required_rx
     stop_ok = bool(faults and reason in FAULT_REASONS.get(scenario, set()) and
                    faults[0]["t"] - first_arm <= 3) if expect_stop else not faults
+    if expect_stop and scenario in ("busoff","buserr","rxmiss","overflow"):
+        stop_ok &= bool(commands and faults and 0 <= faults[0]["t"]-commands[0]["t"] <= .25)
     if scenario == "disconnect":
         stop_ok = bool(kind("disconnect") and stops and stops[-1]["t"]-kind("disconnect")[0]["t"] <= 3)
     if scenario == "noreply":
@@ -319,7 +329,7 @@ def evaluate(scenario, events):
     checks = {
         "transport_complete": complete and not errors and acknowledged,
         "fresh_fenced_epoch": epoch_ok and len(fences) >= 2 and fences[-1].get("nonce") == fences[0].get("nonce", "")+"end" and fences[0]["seq"] < arms[0]["seq"] if arms else False,
-        "scenario_exercised": bool(probe_txs) and fault_injected and (not after_healthy or healthy_first),
+        "scenario_exercised": bool(probe_txs) and fault_injected and exact_initial_rx and (not after_healthy or healthy_first),
         "stop_as_expected": stop_ok,
         "stop_ack_and_quiet": final_quiet,
         "observation_60s": duration >= 60,

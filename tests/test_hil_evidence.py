@@ -81,6 +81,14 @@ class Evidence(unittest.TestCase):
             self.assertFalse(h.evaluate(scenario,renumber(without))['pass'],scenario)
             next(e for e in events if e['kind']=='fault')['t']=3.5
             self.assertFalse(h.evaluate(scenario,events)['checks']['stop_as_expected'],scenario)
+    def test_m2_healthy_must_continue_until_stop(self):
+        events=[e for e in trace() if e.get('t',0)<50 or e['kind'] in ('stop_request','stopped','fence')]
+        self.assertFalse(h.evaluate('normal',renumber(events))['checks']['sustained_cadence'])
+    def test_m2_exact_initial_rx_count(self):
+        e=fault_trace('extra')
+        rx=copy.deepcopy(next(x for x in e if x['kind']=='rx'));rx.update(t=.05,t_us='50000')
+        e.append(rx);e.append(dict(kind='write',text=h.rx_line(rx['id'],rx['data'],True,1),write_t=.049))
+        self.assertFalse(h.evaluate('extra',renumber(e))['checks']['scenario_exercised'])
     def test_healthy_complete_trace(self):
         r=h.evaluate('normal',trace());self.assertTrue(r['pass'],r)
     def test_m2_required_positive_evidence(self):
