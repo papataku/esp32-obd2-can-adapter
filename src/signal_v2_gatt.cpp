@@ -1,3 +1,4 @@
+#include <atomic>
 #if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
 #include "signal_v2_gatt.h"
 #include "nimble/nimble/host/include/host/ble_store.h"
@@ -43,7 +44,8 @@ Registry registry;
 Simulator simulator;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
 CanOwner owner;
-bool can_armed=false;
+std::atomic<bool> can_armed{false};
+std::atomic<uint32_t> can_authorization_epoch{1};
 uint32_t armed_until=0;
 #endif
 // Never inherit legacy V1/NVS DEMO or enable synthetic observations at boot.
@@ -164,12 +166,12 @@ class Callbacks : public NimBLECharacteristicCallbacks {
 void manage(const char *cmd, uint32_t now) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(!std::strcmp(cmd,"SIGV2 CAN STOP")) {
-    can_armed=false;owner.invalidate(10);
+    can_armed=false;++can_authorization_epoch;owner.invalidate(10);
     for(auto &p:peers) {
       p.output.size=p.dataoff=0;
       p.session.clearDemoCache(now);
     }
-    Serial.println("#SIGNALV2_CAN,armed=0,reason=OPERATOR_STOP");
+    Serial.println("#SIGNALV2_CAN,armed=0,reason=OPERATOR_STOP,ack=REQUESTED");
     return;
   }
   if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {
@@ -179,7 +181,8 @@ void manage(const char *cmd, uint32_t now) {
       if(l.active&&l.status&&l.data&&authorized(l)&&
          peers[i].session.active(now)) secured=true;
     }
-    can_armed=secured && !owner.stopped();
+    if(secured && !can_armed)++can_authorization_epoch;
+    can_armed=secured;
     armed_until=now+600000;
     Serial.printf("#SIGNALV2_CAN,armed=%u,reason=%s,ttl_ms=600000\n",
       can_armed?1U:0U,can_armed?"USB_VERIFIED":"NOT_READY");
@@ -490,7 +493,8 @@ void connected(uint16_t handle) {
 void disconnected(uint16_t handle) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   can_armed=false; // New connection requires a new local USB arm.
-  owner.invalidate(10);
+  ++can_authorization_epoch; // Owner task invalidates/drains by epoch.
+  owner.revokeAuthorization(); // Thread-safe lease revoke; no sample/selector mutation.
 #endif
   portENTER_CRITICAL(&mux);
   for (auto &l : links)
@@ -540,10 +544,19 @@ void poll() {
   }
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(can_armed && int32_t(armed_until-now)<=0){
-    can_armed=false;
+    can_armed=false;++can_authorization_epoch;owner.invalidate(10);
     Serial.println("#SIGNALV2_CAN,armed=0,reason=USB_ARM_EXPIRED");
   }
-  owner.tick(now,demand,can_armed);
+  owner.tick(now,demand,can_armed,can_authorization_epoch.load());
+  if(owner.stopped() && can_armed.exchange(false))++can_authorization_epoch;
+  static uint32_t stopped_ack_epoch=0;
+  if(!can_armed && !owner.busy() && stopped_ack_epoch!=can_authorization_epoch.load()){
+    stopped_ack_epoch=can_authorization_epoch.load();
+    Serial.printf("#SIGNALV2_CAN,ack=STOPPED,epoch=%lu,source_generation=%lu,mode_epoch=%lu\n",
+      static_cast<unsigned long>(stopped_ack_epoch),
+      static_cast<unsigned long>(owner.samples().source_generation),
+      static_cast<unsigned long>(owner.samples().mode_epoch));
+  }
   static bool last_unsafe=false;
   static uint32_t last_acquired=0,last_invalid=0;
   const bool unsafe=!can_armed || owner.stopped();

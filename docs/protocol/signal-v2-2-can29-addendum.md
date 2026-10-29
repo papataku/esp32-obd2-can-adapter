@@ -1,6 +1,6 @@
 # Signal V2-2 — 29bit CAN trial amendment (2026-10-28)
 
-Scope: 29bit 500kbps only, five Service01 PIDs `0D/0C/05/5B/9A`. The 11bit Mode01 reply IDs 7E8–7EF are unsupported: reject, invalidate all signals, log and stop. No unsolicited boot CAN TX, UDS, Mode09, >5 PID physical implementation or modification of the default/V2-1 CAN-disabled images.
+Scope: 29bit 500kbps only, five Service01 PIDs `0D/0C/05/5B/9A`. The 11bit Mode01 reply IDs 7E8–7EF are unsupported: reject, invalidate all signals, log and stop. No unsolicited boot CAN TX, UDS, Mode09, >5 PID physical implementation or modification of default legacy ELM behavior or the V2-1 CAN-disabled image.
 
 ECU provenance: reuse #56 bounded (up to eight demand-triggered functional `18DB33F1 01 0C 0D`) discovery and #57 current-boot RAW-backed observed-ECU allowlist, and then exactly one physical `18DAxxF1` request. Saved hint is never permission for TX; this initial V2-2 build deliberately uses fresh discovery rather than NVS hint restoration. Multiple viable responders are Rejected(Ambiguous); no silent switching and no functional fallback after pin loss. Response ID `18DAF1xx` is shared by all five signals, never rewritten to an arbitrary expected ID.
 
@@ -24,3 +24,25 @@ V2-2 has a protocol-neutral `EcuRoute { CanIdWidth, physical_request_id, respons
 - In the V2-2 29bit trial image, a Standard11 Mode01 responder in `0x7E8..0x7EF` triggers `11BIT_OBD_RESPONSE`, invalidates all five signal qualities and revokes CAN TX. No implicit protocol fallback, no substituted 29bit header, no cached value promoted as LIVE. A later separate PR must add Standard11 discovery, CAN-owner send/FC/address binding and host/vehicle safety tests.
 - The V2 profile `ResponseCANID=0` means the adapter's **currently verified pinned ECU**, not a request for any source. After selecting a source, V2 DATA/SNAPSHOT includes the genuine response CAN ID, width inferred only through the strict `EcuRoute` mapping. If an established ECU changes, the entire affected batch is invalid.
 - For Safe SCAN on SmartRing, V2 opt-in images advertise the Signal V2 Service UUID `f9c17d00-2a3e-4e18-89a2-d7c1b539e000` as their one 128-bit advertising service identifier. The legacy V1/default image continues advertising its original ELM service; V1 runtime stays independent. SmartRing must never classify a device by name or old V1 ELM service as V2-compatible. It subsequently verifies encrypted GATT, HELLO authorization, profile and first Snapshot prior to storing the target.
+
+## Independent review corrections (PR63)
+
+Functional discovery's possible induced RX is explicitly 256 source addresses
+times two SF replies, plus request = 513 frames. A full reservation is refused
+before any TX under the rolling caps; the eight-entry selector is not a
+bus-traffic bound. Active first-car acquisition remains NO-GO until a separate
+bounded discovery design is reviewed. Physical requests reserve request,
+10 candidate RX and one FC before transmission (essential pair: no FC, at most
+two RX). Duplicates/overlap/capacity exhaustion latch transaction error and
+clear positive results. Reservations remain charged throughout the response
+interval plus each rolling window; actual candidate RX including late traffic
+is counted at receive time and independently cap-checked. FC is charged before
+TX. External traffic beyond the budget locks out adapter TX; this is not a
+claim that the adapter can silence a faulty ECU.
+
+Pin loss latches STOP. Only a new explicit ARM authorization epoch may reset
+discovery; old completions are drained and rejected before any new submission.
+SourceGeneration/ModeEpoch advance on authorization changes and STOP, and
+queued DATA/Snapshot must match both. Same-trial ARM renewal does not repin.
+A receiver requiring constant generation 1 must be updated and independently
+reviewed before physical acceptance; fail-closed rejection is not LIVE success.

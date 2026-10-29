@@ -158,6 +158,17 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
 #endif
   portEXIT_CRITICAL(&stats_mux_);
 
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(frame.extended && !frame.rtr &&
+     DiagnosticPolicy::allowedResponseId(frame.identifier)) {
+    portENTER_CRITICAL(&stats_mux_);++stats_.signal_v2_rx;portEXIT_CRITICAL(&stats_mux_);
+    // Includes delayed replies after timeout/STOP, not just accepted PDUs.
+    // External faulty senders cannot be silenced by this controller: latch
+    // out our TX as soon as observed traffic cannot fit the rolling cap.
+    if(!recordObservedDiagnostic(static_cast<uint32_t>(timestamp_us/1000)))
+      enterFaultLocked("V2 observed diagnostic RX cap/capacity exceeded");
+  }
+#endif
   // Independent from GUI/USB frame_queue_ consumption. The CAN owner is
   // always the single producer, including inside active ISO-TP transactions.
   RawCanFrame raw{};
@@ -372,6 +383,7 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   (void)wait_ms;
   return ESP_FAIL;
 #else
+  if(!leaseAllowsBudget(wait_ms))return ESP_FAIL;
   portENTER_CRITICAL(&stats_mux_);
   ++stats_.tx_attempts;
   portEXIT_CRITICAL(&stats_mux_);
@@ -484,14 +496,29 @@ void CanMonitor::performQuery(
   }
 
   uint64_t tx_us = 0;
+  if(!terminal_set && request.signal_v2){
+    const uint16_t frames=request.can_id==0x18DB33F1U
+        ? signal_v2::CanBudget::DiscoveryFrames : (request.length==3?4:12);
+    portENTER_CRITICAL(&stats_mux_);
+    const bool observed_admitted=observed_budget_.permits(millis(),frames);
+    portEXIT_CRITICAL(&stats_mux_);
+    // Charge the full expected RX + FC at the real request boundary; mode
+    // switching latency must not age away its future response reservation.
+    if(!observed_admitted || !signal_budget_.reserve(millis(),frames,response_timeout_ms)){
+      terminal=DiagnosticStatus::RateLimited;terminal_set=true;
+    }
+  }
   if (!terminal_set) {
     const twai_message_t tx =
         makeDiagnosticRequestFrame(request);
     tx_us = static_cast<uint64_t>(esp_timer_get_time());
-    if (transmitOwnedFrame(tx, 20) != ESP_OK) {
+    if(request.signal_v2 && !recordObservedDiagnostic(millis())) {
+      terminal=DiagnosticStatus::RateLimited;terminal_set=true;revokeLease();
+    }
+    if (!terminal_set && transmitOwnedFrame(tx, 20) != ESP_OK) {
       terminal = DiagnosticStatus::DriverError;
       terminal_set = true;
-    } else {
+    } else if (!terminal_set) {
       diagnostic_pacer_.noteSuccessfulTx(request, tx_us);
     }
   }
@@ -567,12 +594,19 @@ void CanMonitor::performQuery(
         break;
       }
 
+      if(request.signal_v2 &&
+         (!recordObservedDiagnostic(millis()) || fault_locked_)) {
+        terminal=DiagnosticStatus::RateLimited;terminal_set=true;revokeLease();break;
+      }
       const twai_message_t fc =
           makeFlowControlFrame(step.flow_control_can_id);
       if (transmitOwnedFrame(fc, 20) != ESP_OK) {
         terminal = DiagnosticStatus::DriverError;
         terminal_set = true;
         break;
+      }
+      if(request.signal_v2){
+        portENTER_CRITICAL(&stats_mux_);++stats_.signal_v2_fc;portEXIT_CRITICAL(&stats_mux_);
       }
       quiet_deadline_us = 0;
     } else if (step.event == TransactionEvent::Completed) {
@@ -687,10 +721,22 @@ bool CanMonitor::pop(CapturedFrame& frame, TickType_t wait_ticks) {
          xQueueReceive(frame_queue_, &frame, wait_ticks) == pdTRUE;
 }
 
+bool CanMonitor::recordObservedDiagnostic(uint32_t now) {
+  portENTER_CRITICAL(&stats_mux_);
+  const bool ok=observed_budget_.observe(now);
+  portEXIT_CRITICAL(&stats_mux_);
+  return ok;
+}
+
 CanStats CanMonitor::stats() const {
   CanStats copy{};
   portENTER_CRITICAL(&stats_mux_);
   copy = stats_;
+  observed_budget_.refresh(millis());
+  copy.observed100=observed_budget_.used100;
+  copy.observed1000=observed_budget_.used1000;
+  copy.observed_peak100=observed_budget_.peak100;
+  copy.observed_peak1000=observed_budget_.peak1000;
   portEXIT_CRITICAL(&stats_mux_);
   return copy;
 }

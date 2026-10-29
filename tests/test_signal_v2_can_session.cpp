@@ -70,6 +70,15 @@ int main(){
   assert(data.payload()[12]==5);
   assert(u32(data.payload()+16+38)==1); // snapshot never reobserves
   assert(a.canPacketCurrent(111,data,can));
+  const Packet oldEpoch=data;
+  ++can.source_generation;++can.mode_epoch;
+  assert(!a.canPacketCurrent(111,oldEpoch,can));
+  a.control(command(4,1,7,snapshotReq,8),true,120,data);
+  assert(a.produce(121,data,nullptr,false,&can)&&data.bytes[4]==0x21);
+  assert(data.payload()[12]==0); // old-epoch cached Snapshot cannot survive
+  assert(a.produce(201,data,nullptr,false,&can)&&data.bytes[4]==0x20);
+  assert(u32(data.payload()+2+14)==can.source_generation);
+  assert(u32(data.payload()+2+18)==can.mode_epoch);
   assert(a.produce(702,data,nullptr,false,&can)&&data.bytes[4]==0x20);
   assert(data.payload()[2+7]==8 && data.payload()[2+42]==0);
   can.invalidate(3);

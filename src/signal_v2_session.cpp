@@ -320,6 +320,8 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       if(!c||c->quality>1||!c->observed_us||
          uint64_t(now)*1000ULL < c->observed_us||
          last_seq!=c->sequence||
+         u32(cache_.data()+52*i+14)!=can->source_generation||
+         u32(cache_.data()+52*i+18)!=can->mode_epoch||
          uint64_t(now)*1000ULL>c->observed_us+
               uint64_t(u16(e+20))*1000ULL)cache_lengths_[i]=0;
     }
@@ -368,8 +370,8 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       r[7] = pid == 0x0c ? 1 : 0;
       w16(r + 8, pid);
       w32(r + 10, revision_);
-      w32(r + 14, 1);
-      w32(r + 18, 1);
+      w32(r + 14, can ? can->source_generation : 1);
+      w32(r + 18, can ? can->mode_epoch : 1);
       w32(r + 22, can ? can->source_id : u32(e + 8));
       const auto shared = source ? source->sample(pid) : nullptr;
       const auto actual = can ? can->sample(pid) : nullptr;
@@ -446,6 +448,7 @@ bool Session::canPacketCurrent(uint32_t now,const Packet &packet,
       }
       if(!deadline||!sample||sample->quality>1||!sample->observed_us||
          sample->length!=rec[42]||len!=size_t(44)+rec[42]||
+         can.source_generation!=u32(rec+14)||can.mode_epoch!=u32(rec+18)||
          can.source_id!=u32(rec+22)||
          sample->sequence!=u32(rec+38)||
          sample->observed_us!=

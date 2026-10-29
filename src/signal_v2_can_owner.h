@@ -12,6 +12,7 @@ namespace signal_v2 {
 // Runs only in BLE application owner task, never inside a NimBLE callback.
 // CAN owner task remains the sole transmitter through CanMonitor::submitQuery.
 class CanOwner {
+  friend struct CanOwnerTestAccess; // Host fixture supplies RAW-verified discovery results.
   m5can::CanMonitor* can_=nullptr;
   m5can::EcuPhysicalSelector ecu_{};
   CanBudget budget_{};
@@ -19,13 +20,14 @@ class CanOwner {
   EcuRoute pinned_{}; // Protocol-aware ECU identity; 11bit future use.
   bool in_flight_=false,physical_=false,essential_=false,stopped_=false;
   bool previously_armed_=false,had_demand_=false;
-  uint32_t next_=0,last_log_=0;
+  uint32_t next_=0,last_log_=0,epoch_=0,submitted_epoch_=0;
   uint64_t prior_11bit_=0,prior_bus_errors_=0;
   uint16_t period_=200;
   void stop(const char* reason,uint8_t quality=10){
     samples_.invalidate(quality);
     if(!stopped_)Serial.printf("#SIGNALV2_CAN,stopped=1,reason=%s,invalid=%lu\n",
       reason,static_cast<unsigned long>(samples_.invalidations));
+    if(!stopped_){++samples_.source_generation;++samples_.mode_epoch;}
     stopped_=true;
     if(can_)can_->revokeLease();
   }
@@ -96,7 +98,7 @@ class CanOwner {
       Serial.printf("#SIGNALV2_CAN,quality=INVALID,reason=RESPONSE,"
                     "status=%u,invalid=%lu\n",unsigned(r.status),
                     static_cast<unsigned long>(samples_.invalidations));
-      if(!ecu_.fixed()&&!ecu_.probing())stop("ECU_PIN_LOST",6);
+      if(!ecu_.fixed())stop("ECU_PIN_LOST",6);
       return;
     }
     samples_.source_id=pinned_.response_id;
@@ -117,16 +119,52 @@ public:
   void attach(m5can::CanMonitor* can){can_=can;}
   const CanSamples &samples()const{return samples_;}
   bool stopped()const{return stopped_;}
-  void invalidate(uint8_t reason=10){samples_.invalidate(reason);}
-  void tick(uint32_t now,const Simulator::Demand &demand,bool armed){
+  bool busy()const{return in_flight_;}
+  void revokeAuthorization(){if(can_)can_->revokeLease();}
+  void invalidate(uint8_t reason=10){samples_.invalidate(reason);if(can_)can_->revokeLease();}
+  void tick(uint32_t now,const Simulator::Demand &demand,bool armed,uint32_t epoch=0){
     if(!can_)return;
+    // Optional edge-derived epoch preserves callers outside the GATT boundary.
+    if(!epoch)epoch=epoch_+(armed!=previously_armed_);
+    if(epoch!=epoch_){
+      epoch_=epoch;
+      invalidate(10);
+      ++samples_.source_generation; ++samples_.mode_epoch;
+      samples_.source_id=0;
+      ecu_=m5can::EcuPhysicalSelector{};pinned_=EcuRoute{};
+      if(armed)stopped_=false;
+      had_demand_=false;next_=now;
+    }
     if(in_flight_){
       m5can::DiagnosticResult incoming{};
       if(can_->pollQueryResult(incoming)){
         in_flight_=false;
-        if(armed&&!stopped_)result(incoming);
+        if(armed&&!stopped_&&submitted_epoch_==epoch_)result(incoming);
         else samples_.invalidate(10); // Never promote disarmed completion.
       }
+    }
+    const auto load=can_->stats();
+    budget_.refresh(now);
+    if(uint32_t(now-last_log_)>=1000){
+      last_log_=now;
+      Serial.printf("#SIGNALV2_LOAD,reserved_window100_bits=%lu,reserved_window1000_bits=%lu,"
+         "reserved_peak100=%lu,reserved_peak1000=%lu,actual_candidate_rx_frames=%llu,actual_fc_submissions=%llu,"
+         "charged_traffic_window100_bits=%lu,charged_traffic_window1000_bits=%lu,charged_traffic_peak100=%lu,charged_traffic_peak1000=%lu,"
+         "limit100=5000,limit1000=25000,denied=%lu,acquired=%lu,"
+         "invalid=%lu,requested_period=%u\n",
+         static_cast<unsigned long>(budget_.used100),
+         static_cast<unsigned long>(budget_.used1000),
+         static_cast<unsigned long>(budget_.peak100),
+         static_cast<unsigned long>(budget_.peak1000),
+         static_cast<unsigned long long>(load.signal_v2_rx),
+         static_cast<unsigned long long>(load.signal_v2_fc),
+         static_cast<unsigned long>(load.observed100),
+         static_cast<unsigned long>(load.observed1000),
+         static_cast<unsigned long>(load.observed_peak100),
+         static_cast<unsigned long>(load.observed_peak1000),
+         static_cast<unsigned long>(budget_.denied),
+         static_cast<unsigned long>(samples_.acquired),
+         static_cast<unsigned long>(samples_.invalidations),unsigned(period_));
     }
     if(!armed){
       if(previously_armed_)samples_.invalidate(10);
@@ -147,17 +185,6 @@ public:
       stop("TWAI_BUS_ERROR",10);return;
     }
     prior_bus_errors_=s.driver_bus_error;
-    if(uint32_t(now-last_log_)>=1000){
-      last_log_=now;
-      Serial.printf("#SIGNALV2_LOAD,window100_bits=%lu,window1000_bits=%lu,"
-         "limit100=5000,limit1000=25000,denied=%lu,acquired=%lu,"
-         "invalid=%lu,requested_period=%u\n",
-         static_cast<unsigned long>(budget_.used100),
-         static_cast<unsigned long>(budget_.used1000),
-         static_cast<unsigned long>(budget_.denied),
-         static_cast<unsigned long>(samples_.acquired),
-         static_cast<unsigned long>(samples_.invalidations),unsigned(period_));
-    }
     bool has_demand=false;period_=10000;
     for(auto p:demand)if(p){
       has_demand=true;
@@ -191,20 +218,21 @@ public:
       const uint8_t p[6]={1,0x0D,0x0C,0x05,0x5B,0x9A};
       for(unsigned i=0;i<6;++i)req.data[i]=p[i];
     }
-    // 12 conservatively priced extended frames: request + ISO-TP RX + FC,
-    // including bounded multi-ECU discovery responses and bit stuffing.
-    if(!budget_.reserve(now,12)){
+    // Physical: request + <=10 candidate RX + <=1 FC, prepaid.
+    // Functional: reserve ALL possible responders, never just stored ones.
+    if(!budget_.reserve(now,discovery?CanBudget::DiscoveryFrames:12,120)){
       if(discovery){stop("LOAD_BUDGET_DISCOVERY");return;}
       Serial.println("#SIGNALV2_LOAD,over_budget_attempt=1,"
                      "action=SHED_AUX,priority=SPEED_RPM");
       essential_=true;req.length=3;
       req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
-      if(!budget_.reserve(now,4)){stop("LOAD_BUDGET_ESSENTIAL");return;}
+      if(!budget_.reserve(now,4,120)){stop("LOAD_BUDGET_ESSENTIAL");return;}
     }
     if(!can_->acquireLease(550)||!can_->submitQuery(req)){
       samples_.invalidate(10);return;
     }
     physical_=!discovery;
+    submitted_epoch_=epoch_;
     in_flight_=true;
   }
 };

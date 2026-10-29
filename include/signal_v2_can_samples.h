@@ -16,6 +16,7 @@ struct CanSamples {
   };
   std::array<Sample,5> values{};
   uint32_t source_id=0,acquired=0,invalidations=0;
+  uint32_t source_generation=1,mode_epoch=1;
   const Sample* sample(uint16_t pid) const {
     for(unsigned i=0;i<5;++i)if(Pids[i]==pid)return &values[i];
     return nullptr;

@@ -8,6 +8,7 @@
 #include "diagnostic_result_cache.h"
 #include "diagnostic_transaction.h"
 #include "raw_can_capture.h"
+#include "signal_v2_can_budget.h"
 
 namespace m5can {
 
@@ -22,6 +23,8 @@ struct CapturedFrame {
 };
 
 struct CanStats {
+  uint64_t signal_v2_rx = 0, signal_v2_fc = 0; // Actual candidate RX / successful FC submissions.
+  uint32_t observed100=0,observed1000=0,observed_peak100=0,observed_peak1000=0;
   uint64_t rx_frames = 0;
   uint64_t std_frames = 0;
   uint64_t std_obd_responses = 0;
@@ -103,6 +106,7 @@ class CanMonitor {
   void updateDriverStats();
   void setError(const char* message);
 
+  bool recordObservedDiagnostic(uint32_t now);
   bool leaseAllowsBudget(uint32_t budget_ms) const;
   bool waitForRateLimit(const DiagnosticRequest& request);
   void performQuery(const DiagnosticRequest& request, DiagnosticResult& result);
@@ -136,6 +140,8 @@ class CanMonitor {
   // reuse; avoid multi-kilobyte result/transaction frames around TWAI IPC calls.
   DiagnosticResult owner_result_{};
   DiagnosticTransaction owner_transaction_{};
+  mutable signal_v2::CanBudget observed_budget_{}; // protected by stats_mux_
+  signal_v2::CanBudget signal_budget_{}; // CAN owner task only. Never reset at ARM.
   uint64_t lease_deadline_ms_ = 0;
   char last_error_[96] = "not started";
 };
