@@ -322,3 +322,9 @@ FIFO/peer-transition host regression distinguishes old eight-packet head-of-line
 blocking from the new one-packet bound. That model is not an RF latency proof.
 Physical two-peer full-file CRC/END/SD-vs-USB and RPM-before/during/after gates
 remain required; preserve the failed A2 .part for comparison.
+
+## 2026-10-29 — PR65 bounded discovery contract enforcement
+
+The V2 physical probe now observes the full <=120 ms response window, accepts either order of the two permitted SF PID replies, and rejects unexpected diagnostic source/format before the generic ISO-TP filter can discard it. A probe observation guard remains active during idle/pacing after completion or timeout; late diagnostic replies are charged and latch the monitor fault until recovery. Before reinstalling the driver, stop TWAI and drain its bounded RX queue so a queued query cannot erase late-response evidence. A subsequently admitted regular transaction takes ownership of its response context. Both owner scheduling and actual monitor TX admission enforce >=200 ms spacing around a probe, independently of the regular 10 Hz sample period.
+
+The owner checks loss/fault counters and the absolute discovery deadline before promoting a queued completion. Failed lease/submission and denied reservations latch STOP rather than retrying or shedding to an essential-PID fallback within the epoch. The lower monitor also faults on RX queue loss, nonzero TWAI RX loss/error counters or unavailable status, checking before driver reinstall can reset counters. V2 policy refuses functional discovery, including empty-profile builds. None of these software fixes establishes the physical two-SF ceiling or advances HIL/vehicle gates in the PR-A specification.

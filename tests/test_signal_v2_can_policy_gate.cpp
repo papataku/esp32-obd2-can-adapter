@@ -6,7 +6,7 @@ int main(){
   functional.signal_v2=true;functional.can_id=0x18DB33F1;
   functional.length=3;functional.data[0]=1;
   functional.data[1]=0x0C;functional.data[2]=0x0D;
-  assert(DiagnosticPolicy::allowedReadRequest(functional));
+  assert(!DiagnosticPolicy::allowedReadRequest(functional)); // V2 functional forbidden
   DiagnosticRequest wrong=functional;
   wrong.signal_v2=false;
   assert(!DiagnosticPolicy::allowedReadRequest(wrong)); // V1 TX locked

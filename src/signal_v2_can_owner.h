@@ -57,7 +57,7 @@ class CanOwner {
        r.response_count<1 || r.response_count>2 ||
        r.raw_frame_count!=r.response_count)return false;
     for(unsigned j=0;j<r.raw_frame_count;++j)
-      if(r.raw_frames[j].can_id!=id)return false;
+      if(r.raw_frames[j].can_id!=id || r.raw_rx_offsets_us[j]>120000U)return false;
     bool rpm=false,speed=false;
     for(unsigned i=0;i<r.response_count;++i){
       const auto &m=r.responses[i];
@@ -176,6 +176,16 @@ public:
       if(armed)stopped_=false;
       had_demand_=false;next_=now;
     }
+    if(armed && !stopped_) {
+      const auto health=can_->stats();
+      if(health.driver_rx_missed || health.driver_rx_overrun ||
+         health.app_queue_drops || health.driver_bus_error ||
+         health.state==TWAI_STATE_BUS_OFF || can_->faultLocked())
+        stop("RX_ACCOUNTING_OR_BUS_FAULT",10);
+      if(discovery_running_ && !ecu_.fixed() &&
+         uint32_t(now-discovery_started_)>=kDiscoveryDeadlineMs)
+        stop("DISCOVERY_TIMEOUT",6);
+    }
     if(in_flight_){
       m5can::DiagnosticResult incoming{};
       if(can_->pollQueryResult(incoming)){
@@ -250,7 +260,7 @@ public:
       stop("DISCOVERY_TIMEOUT",6);return;
     }
     if(in_flight_||int32_t(now-next_)<0)return;
-    next_=now+period_; // No backlog catch-up burst; >=200ms between probes.
+    next_=now+(discovery && period_<200?200:period_); // Guard probe -> group too.
     m5can::DiagnosticRequest req{};
     req.signal_v2=true;
     req.timeout_ms=120;
@@ -275,15 +285,10 @@ public:
     // Physical group: request + <=10 candidate RX + <=1 FC, prepaid.
     // Discovery probe: request + <=2 SF + 1 allowance, no FC (PR-A section 2).
     if(!budget_.reserve(now,discovery?CanBudget::ProbeFrames:12,120)){
-      if(discovery){stop("LOAD_BUDGET_DISCOVERY");return;}
-      Serial.println("#SIGNALV2_LOAD,over_budget_attempt=1,"
-                     "action=SHED_AUX,priority=SPEED_RPM");
-      essential_=true;req.length=3;
-      req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
-      if(!budget_.reserve(now,4,120)){stop("LOAD_BUDGET_ESSENTIAL");return;}
+      stop(discovery?"LOAD_BUDGET_DISCOVERY":"LOAD_BUDGET_GROUP");return;
     }
     if(!can_->acquireLease(550)||!can_->submitQuery(req)){
-      samples_.invalidate(10);return;
+      stop("QUERY_ADMISSION_FAILED",10);return;
     }
     physical_=!discovery;
     submitted_epoch_=epoch_;

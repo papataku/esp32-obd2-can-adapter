@@ -86,3 +86,6 @@ c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   src/diagnostic_policy.cpp src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
   tests/host_stubs/stubs.cpp -o /tmp/m5can-review-capacity
 /tmp/m5can-review-capacity
+
+# Independent PR65 safety review: production monitor + owner, policy and C++11 ODR.
+bash tests/run_pr65_regressions.sh

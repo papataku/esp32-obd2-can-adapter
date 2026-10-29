@@ -11,18 +11,19 @@ static TransactionFrame frame(uint32_t id,bool ext,uint8_t dlc,
   return f;
 }
 int main(){
-  DiagnosticRequest functional{};
-  functional.signal_v2=true;functional.can_id=0x18DB33F1;
-  functional.length=3;
-  functional.data[0]=1;functional.data[1]=0x0C;functional.data[2]=0x0D;
+  DiagnosticRequest physical{};
+  physical.signal_v2=true;physical.can_id=0x18DA01F1;
+  physical.length=3;
+  physical.data[0]=1;physical.data[1]=0x0C;physical.data[2]=0x0D;
   DiagnosticTransaction probe;
-  probe.begin(functional,1000,100);
+  probe.begin(physical,1000,100);
   const uint8_t discovery[]={6,0x41,0x0C,0x13,0x88,0x0D,0x28};
   assert(probe.onFrame(frame(0x18DAF101,true,7,discovery,2000)).event==
          TransactionEvent::Completed);
   auto found=probe.result();found.status=DiagnosticStatus::Ok;
-  DiagnosticPolicy::observeFunctionalPairs(functional,found);
-  assert(DiagnosticPolicy::observedPhysicalEcu(0x18DA01F1));
+  assert(found.response_count==1);
+  assert(DiagnosticPolicy::approvedPhysicalEcu(0x18DA01F1));
+  assert(!DiagnosticPolicy::observedPhysicalEcu(0x18DA01F1));
   DiagnosticRequest req{};
   req.signal_v2=true;req.can_id=0x18DA01F1;req.length=6;
   const uint8_t selection[]={1,0x0D,0x0C,0x05,0x5B,0x9A};

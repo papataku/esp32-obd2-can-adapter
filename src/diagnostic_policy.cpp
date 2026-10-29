@@ -79,9 +79,7 @@ bool DiagnosticPolicy::allowedReadRequest(const DiagnosticRequest& request) {
   if (!allowedHeader(request.can_id)) return false;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if (!request.signal_v2) return false; // V1/USB/legacy TX never permitted.
-  if (request.can_id==0x18DB33F1U)
-    return request.length==3 && request.data[0]==1 &&
-           request.data[1]==0x0C && request.data[2]==0x0D;
+  if (request.can_id==0x18DB33F1U) return false;
   // Only an approved profile candidate; a functional sighting or stored
   // hint is never V2 physical-TX authorization (N1 PR-A section 4).
   if(!approvedPhysicalEcu(request.can_id)||request.data[0]!=1)
@@ -148,6 +146,10 @@ bool DiagnosticPolicy::responseMatches(const DiagnosticRequest& request,
   if (payload[0] == 0x7F)
     return payload_len >= 2 && payload[1] == service;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(request.signal_v2 && request.length==3) {
+    return payload_len>=2 && payload[0]==0x41 &&
+           (payload[1]==0x0C || payload[1]==0x0D);
+  }
   if(request.signal_v2 && request.length==6) {
     if(payload_len<2 || payload[0]!=0x41)return false;
     const uint8_t pid=payload[1];

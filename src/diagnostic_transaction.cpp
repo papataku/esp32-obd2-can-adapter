@@ -41,7 +41,7 @@ bool DiagnosticTransaction::appendMessage(const DiagnosticMessage& message) {
 TransactionStep DiagnosticTransaction::onFrame(const TransactionFrame& frame) {
   TransactionStep step{};
   if (failed_) { step.event = TransactionEvent::ProtocolError; return step; }
-  if (frame.timestamp_us < tx_us_ || frame.dlc > 8) return step;
+
   auto fail = [&]() {
     failed_ = true;
     result_.status = DiagnosticStatus::IsoTpError;
@@ -50,6 +50,20 @@ TransactionStep DiagnosticTransaction::onFrame(const TransactionFrame& frame) {
     step.event = TransactionEvent::ProtocolError;
     return step;
   };
+  const bool probe=request_.signal_v2 && request_.length==3 &&
+                   request_.can_id!=0x18DB33F1U;
+  const bool diagnostic=DiagnosticPolicy::allowedResponseId(frame.can_id) ||
+      (!frame.extended && frame.can_id>=0x7E8 && frame.can_id<=0x7EF);
+  if (probe && diagnostic) {
+    // Validate before the assembler can silently filter a contract breach.
+    if (frame.timestamp_us < tx_us_ || frame.dlc>8 || !frame.extended ||
+        frame.rtr || !DiagnosticPolicy::responseBelongsToRequest(request_,frame.can_id) ||
+        frame.dlc<2 || frame.data[0]==0 || frame.data[0]>7 ||
+        frame.data[0]+1U>frame.dlc ||
+        !DiagnosticPolicy::responseMatches(request_,frame.data+1,frame.data[0]))
+      return fail();
+  }
+  if (frame.timestamp_us < tx_us_ || frame.dlc>8) return step;
   // Count every candidate route frame, including malformed/duplicate PDUs.
   // Storage capacity is never permission for more induced bus traffic.
   if (request_.signal_v2 && frame.extended && !frame.rtr &&
@@ -87,7 +101,7 @@ TransactionStep DiagnosticTransaction::onFrame(const TransactionFrame& frame) {
           const uint8_t sizes[] = {2,3,2,2,7};
           unsigned j=0;
           for (; j<5 && m.data[pos]!=pids[j]; ++j) {}
-          if (j==5 || pos+sizes[j]>m.length || (mask & (1U<<j))) return fail();
+          if (j==5 || (probe && j>1) || pos+sizes[j]>m.length || (mask & (1U<<j))) return fail();
           mask |= 1U<<j; pos += sizes[j];
         }
         if (mask & seen_pids_) return fail();

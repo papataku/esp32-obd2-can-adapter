@@ -117,6 +117,20 @@ bool CanMonitor::begin() {
 bool CanMonitor::switchDriverMode(twai_mode_t mode) {
   const esp_err_t stopped = twai_stop();
   if (stopped != ESP_OK && stopped != ESP_ERR_INVALID_STATE) return false;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  // The query queue can win over idle RX. Do not erase queued late probe
+  // evidence on reinstall. With TWAI stopped this drain is bounded.
+  if(probe_guard_) {
+    bool drained=false;
+    for(uint32_t i=0;i<=cfg::kTwaiRxQueueLen;++i) {
+      twai_message_t pending{};
+      if(twai_receive(&pending,0)!=ESP_OK){drained=true;break;}
+      captureMessage(pending,static_cast<uint64_t>(esp_timer_get_time()));
+    }
+    if(!drained)enterFaultLocked("V2 probe RX drain incomplete");
+  }
+  updateDriverStats(); // Preserve loss evidence before counters reset.
+#endif
   if (twai_driver_uninstall() != ESP_OK) return false;
 
   if (!installDriver(mode)) {
@@ -159,7 +173,7 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   portEXIT_CRITICAL(&stats_mux_);
 
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
-  if(frame.extended && !frame.rtr &&
+  if(frame.extended &&
      DiagnosticPolicy::allowedResponseId(frame.identifier)) {
     portENTER_CRITICAL(&stats_mux_);++stats_.signal_v2_rx;portEXIT_CRITICAL(&stats_mux_);
     // Includes delayed replies after timeout/STOP, not just accepted PDUs.
@@ -168,6 +182,11 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
     if(!recordObservedDiagnostic(static_cast<uint32_t>(timestamp_us/1000)))
       enterFaultLocked("V2 observed diagnostic RX cap/capacity exceeded");
   }
+  const bool diagnostic=DiagnosticPolicy::allowedResponseId(frame.identifier) ||
+      (!frame.extended && frame.identifier>=0x7E8 && frame.identifier<=0x7EF);
+  if(probe_guard_ && diagnostic &&
+     (!probe_receiving_ || timestamp_us>probe_tx_us_+120000ULL))
+    enterFaultLocked("V2 late/idle discovery response");
 #endif
   // Independent from GUI/USB frame_queue_ consumption. The CAN owner is
   // always the single producer, including inside active ISO-TP transactions.
@@ -185,6 +204,9 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
     portENTER_CRITICAL(&stats_mux_);
     ++stats_.app_queue_drops;
     portEXIT_CRITICAL(&stats_mux_);
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+    enterFaultLocked("V2 RX queue loss");
+#endif
   }
   return frame;
 }
@@ -300,7 +322,17 @@ void CanMonitor::maybeUpdateDriverStats(uint64_t now_us) {
 
 void CanMonitor::updateDriverStats() {
   twai_status_info_t info{};
-  if (twai_get_status_info(&info) != ESP_OK) return;
+  if (twai_get_status_info(&info) != ESP_OK) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+    enterFaultLocked("V2 driver counters unavailable");
+#endif
+    return;
+  }
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(info.rx_missed_count || info.rx_overrun_count || info.bus_error_count ||
+     info.state==TWAI_STATE_BUS_OFF)
+    enterFaultLocked("V2 driver RX loss/bus fault");
+#endif
 
   portENTER_CRITICAL(&stats_mux_);
   stats_.driver_rx_missed = info.rx_missed_count;
@@ -449,6 +481,9 @@ void CanMonitor::performQuery(
   const uint64_t transaction_start_us =
       static_cast<uint64_t>(esp_timer_get_time());
 
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  updateDriverStats(); // Check before driver reinstall can reset loss counters.
+#endif
   if (fault_locked_) {
     result.status = DiagnosticStatus::ModeError;
     return;
@@ -460,7 +495,8 @@ void CanMonitor::performQuery(
 
   const uint32_t response_timeout_ms =
       std::max<uint32_t>(
-          20, std::min<uint32_t>(request.timeout_ms, 1000));
+          20, std::min<uint32_t>(request.timeout_ms,
+              request.signal_v2 && request.length==3?120:1000));
   const bool allow_response_pending = request.data[0] == 0x22;
   const uint32_t budget_ms =
       DiagnosticPolicy::transactionBudgetMs(
@@ -500,6 +536,13 @@ void CanMonitor::performQuery(
   if(!terminal_set && request.signal_v2 && request.can_id==0x18DB33F1U){
     terminal=DiagnosticStatus::RateLimited;terminal_set=true;
   }
+  if(!terminal_set && request.signal_v2) {
+    const uint64_t now_us=static_cast<uint64_t>(esp_timer_get_time());
+    if(fault_locked_ || (v2_start_seen_ && (probe_guard_ || request.length==3) &&
+        now_us-last_v2_start_us_<200000ULL)) {
+      terminal=DiagnosticStatus::RateLimited;terminal_set=true;
+    }
+  }
   if(!terminal_set && request.signal_v2){
     const uint16_t frames=request.can_id==0x18DB33F1U
         ? signal_v2::CanBudget::DiscoveryFrames : (request.length==3?4:12);
@@ -516,6 +559,11 @@ void CanMonitor::performQuery(
     const twai_message_t tx =
         makeDiagnosticRequestFrame(request);
     tx_us = static_cast<uint64_t>(esp_timer_get_time());
+    if(request.signal_v2) {
+      v2_start_seen_=true;last_v2_start_us_=tx_us;
+      probe_guard_=probe_receiving_=request.length==3;
+      if(probe_guard_)probe_tx_us_=tx_us;
+    }
     if(request.signal_v2 && !recordObservedDiagnostic(millis())) {
       terminal=DiagnosticStatus::RateLimited;terminal_set=true;revokeLease();
     }
@@ -569,7 +617,7 @@ void CanMonitor::performQuery(
     if (receive_result != ESP_OK) {
       updateDriverStats();
       const CanStats snapshot = stats();
-      if (snapshot.state == TWAI_STATE_BUS_OFF) {
+      if (fault_locked_ || snapshot.state == TWAI_STATE_BUS_OFF) {
         terminal = DiagnosticStatus::BusOff;
         terminal_set = true;
         revokeLease();
@@ -585,10 +633,13 @@ void CanMonitor::performQuery(
     frame.can_id = captured.identifier;
     frame.extended = captured.extended;
     frame.rtr = captured.rtr;
-    frame.dlc = captured.dlc;
+    frame.dlc = rx.data_length_code; // Preserve malformed DLC for contract validation.
     frame.timestamp_us = captured.timestamp_us;
     std::memcpy(frame.data, captured.data, captured.dlc);
 
+    if(request.signal_v2 && fault_locked_) {
+      terminal=DiagnosticStatus::IsoTpError;terminal_set=true;break;
+    }
     const TransactionStep step = transaction.onFrame(frame);
 
     if (step.event == TransactionEvent::NeedFlowControl) {
@@ -614,7 +665,7 @@ void CanMonitor::performQuery(
       }
       quiet_deadline_us = 0;
     } else if (step.event == TransactionEvent::Completed) {
-      if (!transaction.hasActiveIsoTp()) {
+      if (!transaction.hasActiveIsoTp() && !(request.signal_v2 && request.length==3)) {
         quiet_deadline_us =
             captured.timestamp_us + cfg::kPostResponseQuietUs;
       }
@@ -658,6 +709,14 @@ void CanMonitor::performQuery(
     result = transaction.result();
   }
 
+  probe_receiving_=false; // Keep idle guard until another admitted TX.
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  updateDriverStats();
+  if(request.signal_v2 && (terminal==DiagnosticStatus::IsoTpError || fault_locked_)) {
+    enterFaultLocked("V2 transaction contract/accounting fault");
+    terminal=DiagnosticStatus::IsoTpError;
+  }
+#endif
   result.status = terminal;
 
   if (!switchDriverMode(TWAI_MODE_LISTEN_ONLY)) {
