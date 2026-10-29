@@ -18,6 +18,7 @@ void Session::connect(uint32_t boot, uint32_t session) {
   cache_size_ = 0;
   period_ = 200;
   snapshot_ = false;
+  snapshot_request_id_ = 0;
   observed_ms_ = 0;
   plan_size_ = 0;
   plan_id_ = 0;
@@ -114,7 +115,11 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         break;
       }
       // All accepted profiles must fit a COMPLETE snapshot, never truncate it.
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+      size_t snapshot_bytes = 20; // correlated CAN Snapshot prefix
+#else
       size_t snapshot_bytes = 16;
+#endif
       uint8_t rejection_reason = 0;
       bool valid = true, relax = false;
       for (unsigned i = 0; i < b[4]; ++i) {
@@ -226,8 +231,10 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         result = BadRevision;
       else if (!active(now))
         result = TxLocked; // expired/paused leases cannot revive valid cache
-      else
+      else {
+        snapshot_request_id_ = rid;
         snapshot_ = true;
+      }
       break;
     case 8:
       if (n)
@@ -291,6 +298,7 @@ void Session::apply(const uint8_t *b, uint32_t now) {
   paused_ = false;
   next_ = now;
   snapshot_ = true;
+  snapshot_request_id_ = 0;
   cache_count_ = 0;
   cache_size_ = 0;
   cache_lengths_.fill(0);
@@ -328,12 +336,19 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
     w32(p, frame_ + 2);
     w32(p + 4, 3);
     w32(p + 8, revision_);
-    size_t pos = 16;
+    size_t pos = can ? 20 : 16;
+    if(can){p[13]=2;w32(p+16,snapshot_request_id_);}
     for (unsigned i = 0; i < count_; ++i)
       if (cache_lengths_[i]) {
         ++p[12];
         std::copy(cache_.data() + 52 * i,
                   cache_.data() + 52 * i + cache_lengths_[i], p + pos);
+        if(can){
+          const uint64_t observed=uint64_t(u32(p+pos+30))<<32|u32(p+pos+26);
+          const uint64_t age=uint64_t(now)*1000ULL-observed;
+          p[pos+2]=2;
+          w32(p+pos+34,age>UINT32_MAX?UINT32_MAX:static_cast<uint32_t>(age));
+        }
         pos += cache_lengths_[i];
       }
     out = encode(0x21, boot_, id_, ++frame_, p, pos);
@@ -363,7 +378,7 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       size_t size = 44 + len;
       std::fill(r, r + 52, 0);
       w16(r, size);
-      r[2] = 1;
+      r[2] = can ? 2 : 1;
       r[3] = can ? 1 : 2;
       w16(r + 4, u16(e));
       r[6] = 1;
@@ -402,7 +417,10 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       w64(r + 26, available ?
           (can ? actual->observed_us :
                  uint64_t(shared ? shared->observed_ms : now)*1000) : 0);
-      w32(r + 34, available ? 1000 : 0);
+      // CAN v2 record: acquisition age at this PDU's encoding time. DEMO
+      // retains its legacy uncertainty field and wire fixtures unchanged.
+      w32(r + 34, available ? (can ? static_cast<uint32_t>(
+          uint64_t(now)*1000ULL-actual->observed_us) : 1000) : 0);
       w32(r + 38, available ? sample_sequence : 0);
       r[42] = len;
       cache_lengths_[i] = size;
@@ -425,7 +443,9 @@ bool Session::canPacketCurrent(uint32_t now,const Packet &packet,
   if(type!=0x20 && type!=0x21)return false;
   const uint8_t *p=packet.payload();
   const size_t payload=packet.size-Header;
-  size_t off=type==0x21?16:2;
+  size_t off=type==0x21?20:2;
+  if(type==0x21 && (payload<20 || p[13]!=2 || u16(p+14)!=0 ||
+                   u32(p+16)!=snapshot_request_id_))return false;
   if(payload<off)return false;
   const unsigned count=type==0x21?p[12]:p[0];
   if(count>MaxSubscriptions)return false;
@@ -434,7 +454,7 @@ bool Session::canPacketCurrent(uint32_t now,const Packet &packet,
     if(off>payload||payload-off<44)return false;
     const uint8_t *rec=p+off;
     const size_t len=u16(rec);
-    if(len<44||len>payload-off)return false;
+    if(len<44||len>payload-off||rec[2]!=2)return false;
     if(rec[7]<=1){
       const uint16_t pid=u16(rec+8);
       const auto sample=can.sample(pid);

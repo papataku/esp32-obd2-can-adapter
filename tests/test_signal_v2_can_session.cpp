@@ -55,7 +55,8 @@ int main(){
   size_t offset=2;
   for(unsigned i=0;i<5;++i){
     auto r=data.payload()+offset;
-    assert(r[3]==1 && r[7]==0);
+    assert(r[2]==2 && r[3]==1 && r[7]==0);
+    assert(u32(r+34)==1000);
     assert(u32(r+22)==0x18DAF106 && u32(r+38)==1);
     assert(u16(r+8)==CanSamples::Pids[i]);
     assert(r[42]==CanSamples::Lengths[i] && r[44]==0x41);
@@ -68,14 +69,26 @@ int main(){
   assert(data.payload()[5]==Accept);
   assert(a.produce(111,data,nullptr,false,&can)&&data.bytes[4]==0x21);
   assert(data.payload()[12]==5);
-  assert(u32(data.payload()+16+38)==1); // snapshot never reobserves
+  assert(data.payload()[13]==2 && u32(data.payload()+16)==3);
+  assert(u32(data.payload()+20+34)==11000);
+  assert(u32(data.payload()+20+38)==1); // snapshot never reobserves
   assert(a.canPacketCurrent(111,data,can));
+  const Packet oldRequest=data;
+  a.control(command(4,1,7,snapshotReq,8),true,120,data);
+  assert(a.produce(121,data,nullptr,false,&can)&&data.bytes[4]==0x21);
+  assert(data.payload()[12]==5 && u32(data.payload()+16)==4);
+  assert(u32(data.payload()+20+34)==21000);
+  assert(u32(data.payload()+20+38)==1); // recompute age without re-observing
+  assert(!a.canPacketCurrent(121,oldRequest,can)); // same epoch, different request
+  assert(a.canPacketCurrent(121,data,can));
   const Packet oldEpoch=data;
   ++can.source_generation;++can.mode_epoch;
   assert(!a.canPacketCurrent(111,oldEpoch,can));
-  a.control(command(4,1,7,snapshotReq,8),true,120,data);
-  assert(a.produce(121,data,nullptr,false,&can)&&data.bytes[4]==0x21);
+  a.control(command(5,1,7,snapshotReq,8),true,130,data);
+  assert(a.produce(131,data,nullptr,false,&can)&&data.bytes[4]==0x21);
   assert(data.payload()[12]==0); // old-epoch cached Snapshot cannot survive
+  assert(data.payload()[13]==2 && u32(data.payload()+16)==5);
+  assert(!a.canPacketCurrent(121,oldEpoch,can)); // old request echo is stale
   assert(a.produce(201,data,nullptr,false,&can)&&data.bytes[4]==0x20);
   assert(u32(data.payload()+2+14)==can.source_generation);
   assert(u32(data.payload()+2+18)==can.mode_epoch);
@@ -95,6 +108,10 @@ int main(){
     w16(e+16,200);w16(e+18,400);w16(e+20,600);
   }
   oversize.control(command(2,0,2,tooLarge,sizeof(tooLarge)),true,100,reply);
+  assert(reply.payload()[5]==Reject && reply.payload()[16]==1);
+  // Ten speed records fit legacy prefix16 exactly but not correlated prefix20.
+  for(unsigned i=0;i<10;++i){auto e=tooLarge+8+i*24;w16(e+4,0x0D);e[6]=0;}
+  oversize.control(command(3,0,2,tooLarge,sizeof(tooLarge)),true,110,reply);
   assert(reply.payload()[5]==Reject && reply.payload()[16]==1);
   const uint16_t future[7]={0x0D,0x0C,0x05,0x5B,0x9A,0x10,0x11};
   const GroupPlan split=planSplit(future,7);

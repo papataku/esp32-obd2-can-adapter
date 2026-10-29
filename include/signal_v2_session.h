@@ -43,6 +43,7 @@ class Session {
   size_t cache_size_ = 0;
   uint16_t period_ = 200;
   bool snapshot_ = false;
+  uint32_t snapshot_request_id_ = 0;
   uint32_t observed_ms_ = 0, heartbeat_ = 0;
   void ack(const Packet &, Result, const uint8_t *, size_t, Packet &);
 

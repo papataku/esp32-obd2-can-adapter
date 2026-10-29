@@ -10,7 +10,7 @@ A two-Central profile union takes the minimum period per PID. Default 200ms (5Hz
 
 **Future design only — >6 PIDs:** round-robin slots `[0D,0C,A,B,C,D]`, `[0D,0C,E,F,G,H]` etc, up to four extras per request; speed/RPM appear in every slot. If K slots cycle at one-request interval T, auxiliary PIDs recur at best K*T; all per-PID maximum intervals/deadlines must be re-admitted or RELAXED/REJECT. No physical split implementation in V2-2.
 
-The structural MaxSubscriptions=16 never overrides the complete Snapshot capacity: `16 + Σ(44 + RawLength) <= 486`. Reject overflow with reason `SNAPSHOT_TOO_LARGE=1`, malformed profile `PROFILE_INVALID=2`. No partial or fragmented Snapshot; split Snapshot is a future change.
+The structural MaxSubscriptions=16 never overrides the complete Snapshot capacity: `20 + Σ(44 + RawLength) <= 486` for CAN (legacy DEMO prefix16). Reject overflow with reason `SNAPSHOT_TOO_LARGE=1`, malformed profile `PROFILE_INVALID=2`. No partial or fragmented Snapshot; split Snapshot is a future change.
 
 Branch: stack on #62 rather than #57 because #57 is an independent branch from main. Reuse safety helpers from #56/#57 without enabling hint restoration. Virtual ELM/ISO-TP simulator #61 remains a separate test dependency.
 
@@ -46,3 +46,22 @@ SourceGeneration/ModeEpoch advance on authorization changes and STOP, and
 queued DATA/Snapshot must match both. Same-trial ARM renewal does not repin.
 A receiver requiring constant generation 1 must be updated and independently
 reviewed before physical acceptance; fail-closed rejection is not LIVE success.
+
+## Paired Ring B2 wire coordination — REQUIRED before matched acceptance
+
+Companion Ring PR #139 head `b01fb383fa95526b5a960361e44cc3f058dbdd39`
+now requires the age/correlation extension in
+[the paired wire contract](signal-v2-2-ring-age-contract.md). CAN SignalRecord
+uses RecordType=2, unchanged length/layout, offset34=`AgeAtEncodeUs` instead
+of uncertainty. Preserve ObservedAtUs/SampleSeq across cache/Snapshot; recompute
+age on encoding each PDU. CAN Snapshot uses p[13]=2, p[14..15]=0,
+p[16..19]=Snapshot Control RequestId echo, records at20. DEMO remains legacy.
+Snapshot RTT supplies a receiver-side transport-age bound including delayed
+FIRST/fragments/queues; later DATA maps ObservedAtUs through that bound.
+SourceGeneration/ModeGeneration must both advance across STOP/ARM.
+
+This adapter implements the CAN type2 / acquisition-age and correlated
+Snapshot prefix20 extension. DEMO remains type1/prefix16. Host tests verify
+the exact echo, recalculated age, queue rejection and generation changes.
+The software contract still requires independent paired hardware acceptance;
+it does not override the functional-discovery NO-GO gate above.
