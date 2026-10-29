@@ -5,9 +5,11 @@
 #include "signal_v2_can_budget.h"
 #include "signal_v2_can_samples.h"
 #include "signal_v2_can_route.h"
+#include "signal_v2_discovery_profile.h"
 #include "signal_v2_simulator.h"
 #include <Arduino.h>
 #include <array>
+#include <cstring>
 namespace signal_v2 {
 // Runs only in BLE application owner task, never inside a NimBLE callback.
 // CAN owner task remains the sole transmitter through CanMonitor::submitQuery.
@@ -23,6 +25,12 @@ class CanOwner {
   uint32_t next_=0,last_log_=0,epoch_=0,submitted_epoch_=0;
   uint64_t prior_11bit_=0,prior_bus_errors_=0;
   uint16_t period_=200;
+  // N1 bounded physical discovery state; reset at every epoch.
+  static constexpr uint32_t kDiscoveryDeadlineMs=3000;
+  std::array<uint32_t,DiscoveryProfile::kMaxCandidates> verified_{};
+  uint32_t probe_target_=0,discovery_started_=0;
+  uint8_t probe_index_=0,verified_count_=0;
+  bool discovery_running_=false;
   void stop(const char* reason,uint8_t quality=10){
     samples_.invalidate(quality);
     if(!stopped_)Serial.printf("#SIGNALV2_CAN,stopped=1,reason=%s,invalid=%lu\n",
@@ -31,29 +39,60 @@ class CanOwner {
     stopped_=true;
     if(can_)can_->revokeLease();
   }
-  void result(const m5can::DiagnosticResult& r){
-    if(!physical_){
-      m5can::DiagnosticRawFrame pair[2]{};
-      ecu_.observe(r,false,pair); // #56 RAW-backed bounded selection
-      if(ecu_.fixed()){
-        unsigned viable=0;
-        for(unsigned i=0;i<ecu_.candidates();++i){
-          const auto &c=ecu_.candidate(i);
-          if(!c.disqualified&&c.successes)++viable;
-        }
-        if(viable!=1){stop("Rejected(Ambiguous)",6);return;}
-        pinned_=EcuRoute::fromResponse(ecu_.chosenResponse(),true);
-        if(!pinned_.enabledForThisTrial() ||
-           pinned_.request_id!=ecu_.physicalId()){
-          stop("WRONG_CAN_ADDRESSING",6);return;
-        }
-        samples_.source_id=pinned_.response_id;
-        Serial.printf("#SIGNALV2_ECU,physical_response=%08lX,probes=%u\n",
-          static_cast<unsigned long>(samples_.source_id),
-          unsigned(ecu_.probes()));
-      }else if(ecu_.legacy())stop("NO_VERIFIED_ECU",6);
-      return;
+  void pin(uint32_t response_id){
+    if(!ecu_.pinBoundedPhysical(response_id)){stop("WRONG_CAN_ADDRESSING",6);return;}
+    pinned_=EcuRoute::fromResponse(ecu_.chosenResponse(),true);
+    if(!pinned_.enabledForThisTrial() ||
+       pinned_.request_id!=ecu_.physicalId()){
+      stop("WRONG_CAN_ADDRESSING",6);return;
     }
+    samples_.source_id=pinned_.response_id;
+    Serial.printf("#SIGNALV2_ECU,physical_response=%08lX,probes=%u\n",
+      static_cast<unsigned long>(samples_.source_id),unsigned(probe_index_));
+  }
+  // Exactly the probed candidate, Single Frames only, each RAW-backed, and
+  // 0C plus 0D once each (one combined PDU or two per-PID PDUs).
+  static bool validProbe(const m5can::DiagnosticResult& r,uint32_t id){
+    if(r.status!=m5can::DiagnosticStatus::Ok || !r.completed_at_us ||
+       r.response_count<1 || r.response_count>2 ||
+       r.raw_frame_count!=r.response_count)return false;
+    for(unsigned j=0;j<r.raw_frame_count;++j)
+      if(r.raw_frames[j].can_id!=id || r.raw_rx_offsets_us[j]>120000U)return false;
+    bool rpm=false,speed=false;
+    for(unsigned i=0;i<r.response_count;++i){
+      const auto &m=r.responses[i];
+      if(m.can_id!=id || m.length<3 || m.length>7 || m.data[0]!=0x41)return false;
+      bool raw=false;
+      for(unsigned j=0;j<r.raw_frame_count;++j){
+        const auto &f=r.raw_frames[j];
+        if(f.dlc>=m.length+1U && f.data[0]==m.length &&
+           std::memcmp(&f.data[1],m.data,m.length)==0)raw=true;
+      }
+      if(!raw)return false;
+      for(unsigned pos=1;pos<m.length;){
+        if(m.data[pos]==0x0C && !rpm && pos+3U<=m.length){rpm=true;pos+=3;}
+        else if(m.data[pos]==0x0D && !speed && pos+2U<=m.length){speed=true;pos+=2;}
+        else return false;
+      }
+    }
+    return rpm && speed;
+  }
+  // No response only means "not this candidate". Anything else that is not
+  // the exact contract (FF/CF, extra, duplicate, negative, wrong source,
+  // driver/budget error) latches STOP; never assemble a partial success.
+  void probeResult(const m5can::DiagnosticResult& r){
+    if(r.status==m5can::DiagnosticStatus::NoData &&
+       !r.response_count && !r.raw_frame_count){
+    }else if(validProbe(r,probe_target_)){
+      verified_[verified_count_++]=probe_target_;
+    }else{stop("DISCOVERY_RESPONSE_CONTRACT",6);return;}
+    if(++probe_index_<DiscoveryProfile::kCount)return;
+    if(verified_count_==0){stop("NO_VERIFIED_ECU",6);return;}
+    if(verified_count_!=1){stop("Rejected(Ambiguous)",6);return;}
+    pin(verified_[0]);
+  }
+  void result(const m5can::DiagnosticResult& r){
+    if(!physical_){probeResult(r);return;}
     std::array<CanSamples::Sample,5> parsed{};
     bool valid=false;
     if(r.status==m5can::DiagnosticStatus::Ok && r.completed_at_us &&
@@ -132,8 +171,20 @@ public:
       ++samples_.source_generation; ++samples_.mode_epoch;
       samples_.source_id=0;
       ecu_=m5can::EcuPhysicalSelector{};pinned_=EcuRoute{};
+      verified_={};probe_target_=0;probe_index_=verified_count_=0;
+      discovery_running_=false;discovery_started_=0;
       if(armed)stopped_=false;
       had_demand_=false;next_=now;
+    }
+    if(armed && !stopped_) {
+      const auto health=can_->stats();
+      if(health.driver_rx_missed || health.driver_rx_overrun ||
+         health.app_queue_drops || health.driver_bus_error ||
+         health.state==TWAI_STATE_BUS_OFF || can_->faultLocked())
+        stop("RX_ACCOUNTING_OR_BUS_FAULT",10);
+      if(discovery_running_ && !ecu_.fixed() &&
+         uint32_t(now-discovery_started_)>=kDiscoveryDeadlineMs)
+        stop("DISCOVERY_TIMEOUT",6);
     }
     if(in_flight_){
       m5can::DiagnosticResult incoming{};
@@ -202,34 +253,51 @@ public:
 #else
     if(period_<200)period_=200;
 #endif
-    if(in_flight_||int32_t(now-next_)<0)return;
-    next_=now+period_; // No backlog catch-up burst.
-    const bool discovery=ecu_.probing();
+    const bool discovery=ecu_.state()==m5can::EcuPhysicalSelector::State::Discover;
     if(!discovery&&!ecu_.fixed()){stop("ECU_PIN_LOST",6);return;}
+    if(discovery&&discovery_running_&&
+       uint32_t(now-discovery_started_)>=kDiscoveryDeadlineMs){
+      stop("DISCOVERY_TIMEOUT",6);return;
+    }
+    if(in_flight_||int32_t(now-next_)<0)return;
+    next_=now+(discovery && period_<200?200:period_); // Guard probe -> group too.
     m5can::DiagnosticRequest req{};
     req.signal_v2=true;
     req.timeout_ms=120;
     essential_=false;
     if(discovery){
-      req.can_id=0x18DB33F1U;req.length=3;
+      // Serial physical probes to approved candidates only; never functional.
+      if(probe_index_>=DiscoveryProfile::kCount){
+        stop(DiscoveryProfile::kCount?"NO_VERIFIED_ECU":"NO_APPROVED_CANDIDATE",6);
+        return;
+      }
+      const EcuRoute route=DiscoveryProfile::kCandidates[probe_index_].route();
+      if(!route.enabledForThisTrial()){stop("WRONG_CAN_ADDRESSING",6);return;}
+      if(!discovery_running_){discovery_running_=true;discovery_started_=now;}
+      probe_target_=route.response_id;
+      req.can_id=route.request_id;req.length=3;
       req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
     }else{
       req.can_id=ecu_.physicalId();req.length=6;
       const uint8_t p[6]={1,0x0D,0x0C,0x05,0x5B,0x9A};
       for(unsigned i=0;i<6;++i)req.data[i]=p[i];
     }
-    // Physical: request + <=10 candidate RX + <=1 FC, prepaid.
-    // Functional: reserve ALL possible responders, never just stored ones.
-    if(!budget_.reserve(now,discovery?CanBudget::DiscoveryFrames:12,120)){
+    // Physical group: request + <=10 candidate RX + <=1 FC, prepaid.
+    // Discovery probe: request + <=2 SF + 1 allowance, no FC (PR-A section 2).
+    // At 100ms cadence, two full 120ms reservations leave no room even
+    // for the next essential read. Keep one essential reservation of
+    // headroom when choosing a full group; 5Hz selection is unchanged.
+    const bool full_headroom=discovery || period_>=200 || budget_.permits(now,16);
+    if(!full_headroom || !budget_.reserve(now,discovery?CanBudget::ProbeFrames:12,120)){
       if(discovery){stop("LOAD_BUDGET_DISCOVERY");return;}
-      Serial.println("#SIGNALV2_LOAD,over_budget_attempt=1,"
-                     "action=SHED_AUX,priority=SPEED_RPM");
-      essential_=true;req.length=3;
+      // Shed only regular auxiliary reads; keep the same pinned ECU and
+      // reserve the entire SF-only essential transaction before submission.
+      essential_=true;req.signal_v2_essential=true;req.length=3;
       req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
       if(!budget_.reserve(now,4,120)){stop("LOAD_BUDGET_ESSENTIAL");return;}
     }
     if(!can_->acquireLease(550)||!can_->submitQuery(req)){
-      samples_.invalidate(10);return;
+      stop("QUERY_ADMISSION_FAILED",10);return;
     }
     physical_=!discovery;
     submitted_epoch_=epoch_;

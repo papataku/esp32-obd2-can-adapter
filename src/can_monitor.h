@@ -144,6 +144,11 @@ class CanMonitor {
   DiagnosticTransaction owner_transaction_{};
   mutable signal_v2::CanBudget observed_budget_{}; // protected by stats_mux_
   signal_v2::CanBudget signal_budget_{}; // CAN owner task only. Never reset at ARM.
+  // RX owner only: retain probe context during idle/pacing, across ARM.
+  // A later admitted regular query explicitly takes over response ownership.
+  bool probe_guard_=false,probe_receiving_=false;
+  uint64_t probe_tx_us_=0,last_v2_start_us_=0;
+  bool v2_start_seen_=false,last_v2_discovery_=false;
   uint64_t lease_deadline_ms_ = 0;
   char last_error_[96] = "not started";
 };

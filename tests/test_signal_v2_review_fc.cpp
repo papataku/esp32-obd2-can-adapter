@@ -9,12 +9,12 @@ static TransactionFrame f(const uint8_t *data, unsigned dlc, uint64_t t) {
   out.dlc=dlc;out.timestamp_us=t;std::memcpy(out.data,data,dlc);return out;
 }
 int main(){
-  DiagnosticRequest probe{};probe.signal_v2=true;probe.can_id=0x18DB33F1;
+  DiagnosticRequest probe{};probe.signal_v2=true;probe.can_id=0x18DA01F1;
   probe.length=3;probe.data[0]=1;probe.data[1]=0x0c;probe.data[2]=0x0d;
   DiagnosticTransaction discovery;discovery.begin(probe,1);
   const uint8_t pair[]={6,0x41,0x0c,0x13,0x88,0x0d,0};
   discovery.onFrame(f(pair,7,2));auto evidence=discovery.result();
-  evidence.status=DiagnosticStatus::Ok;DiagnosticPolicy::observeFunctionalPairs(probe,evidence);
+  assert(evidence.response_count==1); // Profile-approved physical discovery.
   DiagnosticRequest req{};req.signal_v2=true;req.can_id=0x18DA01F1;req.length=6;
   const uint8_t p[]={1,0x0d,0x0c,0x05,0x5b,0x9a};std::memcpy(req.data,p,6);
   DiagnosticTransaction tx;tx.begin(req,1000);

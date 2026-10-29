@@ -50,7 +50,7 @@ c++ -std=c++17 -Wall -Wextra -Werror \
 
 c++ -std=c++17 -Wall -Wextra -Werror \
   -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 \
-  -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
+  -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 -DM5CAN_SIGNAL_V2_RP8_PROFILE=1 \
   -Itests/host_stubs -Iinclude -Isrc \
   tests/test_signal_v2_can_isotp.cpp src/diagnostic_policy.cpp \
   src/isotp_reassembler.cpp src/diagnostic_transaction.cpp \
@@ -64,15 +64,28 @@ for fixture in fc owner; do
   c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
     -Itests/host_stubs -Iinclude -Isrc \
+    $([ "$fixture" = fc ] && echo -DM5CAN_SIGNAL_V2_RP8_PROFILE=1) \
     tests/test_signal_v2_review_${fixture}.cpp src/diagnostic_policy.cpp \
     src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
     $([ "$fixture" = fc ] && echo tests/host_stubs/stubs.cpp) \
     -o /tmp/m5can-v22-review-${fixture}
   /tmp/m5can-v22-review-${fixture}
 done
+# N1 PR-B: approved-candidate physical discovery, no functional broadcast.
+c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 \
+  -DM5CAN_SIGNAL_V2_RP8_PROFILE=1 \
+  -Itests/host_stubs -Iinclude -Isrc \
+  tests/test_signal_v2_bounded_discovery.cpp src/diagnostic_policy.cpp \
+  src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
+  -o /tmp/m5can-v22-bounded-discovery
+/tmp/m5can-v22-bounded-discovery
 python3 tests/test_signal_v2_elf_policy.py
 c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   -Itests/host_stubs -Iinclude -Isrc tests/test_diagnostic_review_capacity.cpp \
   src/diagnostic_policy.cpp src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
   tests/host_stubs/stubs.cpp -o /tmp/m5can-review-capacity
 /tmp/m5can-review-capacity
+
+# Independent PR65 safety review: production monitor + owner, policy and C++11 ODR.
+bash tests/run_pr65_regressions.sh
