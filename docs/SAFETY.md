@@ -218,3 +218,9 @@ measurement, passive versus armed phases and STOP/expiry/no-TX verification.
 Current V2-2 functional discovery is deliberately refused: the maximum
 induced responder traffic cannot fit the admitted budget. This closes the
 unbounded broadcast path but does not qualify active vehicle acquisition.
+
+Dedicated ambient-only candidate: `m5dial_signal_v2_can_29bit_passive` removes
+all controller TX GPIO routes and fixes U179 TXD HIGH. It has no ARM/lease/BLE
+application. Use only its [passive acceptance runbook](qa/m5dial-passive-runbook.md)
+and exact [routing evidence](qa/m5dial-passive-design-review.md); a build alone
+is not a vehicle GO. Existing active profiles still need their own gates.

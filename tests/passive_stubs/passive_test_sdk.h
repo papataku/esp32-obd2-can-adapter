@@ -1,0 +1,120 @@
+#pragma once
+#include <cstdint>
+#include <cstddef>
+#include <cstdio>
+#include <string>
+#include <cassert>
+#include <vector>
+#define CONFIG_IDF_TARGET_ESP32S3 1
+#define SOC_GPIO_PIN_COUNT 49
+#define SIG_GPIO_OUT_IDX 256
+#define TWAI_TX_IDX 116
+#define TWAI_RX_IDX 116
+#define MCU_SEL_S 12
+#define MCU_SEL_V 7
+#define PIN_FUNC_GPIO 1
+#define FUN_IE (1U<<9)
+#define SLP_SEL 2
+#define RTC_IO_TOUCH_PAD13_REG 1000
+#define RTC_IO_TOUCH_PAD13_MUX_SEL (1U<<19)
+#define REG_READ(x) registers[x]
+inline uint32_t registers[1001]{};
+inline uint32_t GPIO_PIN_MUX_REG[49]{};
+union OutRoute { uint32_t val=0; struct { uint32_t func_sel:9, inv_sel:1, oen_sel:1, oen_inv_sel:1, reserved:20; }; };
+struct Gpio { uint32_t enable=0,out=0; struct { bool pad_driver=false; } pin[49]; OutRoute func_out_sel_cfg[49]; struct { uint32_t val=0; } func_in_sel_cfg[256]; };
+inline Gpio GPIO;
+inline struct { struct { bool lom=false,stm=false; } mode_reg; } TWAI;
+using gpio_num_t=int;
+#define GPIO_MODE_INPUT 1
+#define GPIO_MODE_INPUT_OUTPUT 3
+#define GPIO_PULLUP_ENABLE 1
+#define GPIO_PULLDOWN_DISABLE 0
+struct gpio_config_t { uint64_t pin_bit_mask=0; int mode=0,pull_up_en=0,pull_down_en=0; };
+inline bool pad_high=true;
+inline int gpio_set_level(int pin,int value) { GPIO.out=(GPIO.out&~(1U<<pin))|(value<<pin); return 0; }
+inline int rtc_gpio_deinit(int) { registers[1000]=0; return 0; }
+inline int gpio_config(gpio_config_t*) { GPIO.enable|=1U<<13; registers[13]=(PIN_FUNC_GPIO<<MCU_SEL_S)|FUN_IE; return 0; }
+inline int gpio_get_level(int) { return pad_high; }
+inline void esp_rom_gpio_connect_out_signal(unsigned pin,unsigned sig,bool,bool) { GPIO.func_out_sel_cfg[pin].val=sig; }
+inline int gpio_set_direction(int,int) { return 0; }
+using esp_err_t=int;
+#define ESP_OK 0
+#define ESP_ERR_TIMEOUT 1
+#define ESP_FAIL 2
+#define TWAI_STATE_STOPPED 0
+#define TWAI_STATE_RUNNING 1
+#define TWAI_MODE_LISTEN_ONLY 2
+#define TWAI_ALERT_BUS_ERROR 1
+#define TWAI_ALERT_ARB_LOST 2
+#define TWAI_ALERT_BUS_OFF 4
+struct twai_general_config_t { int tx_io,rx_io,mode,tx_queue_len=1,rx_queue_len=1,alerts_enabled=0; };
+#define TWAI_GENERAL_CONFIG_DEFAULT(t,r,m) twai_general_config_t{t,r,m}
+struct twai_timing_config_t { int bitrate; };
+#define TWAI_TIMING_CONFIG_500KBITS() twai_timing_config_t{500000}
+struct twai_filter_config_t { bool accept_all; };
+#define TWAI_FILTER_CONFIG_ACCEPT_ALL() twai_filter_config_t{true}
+struct twai_status_info_t { uint32_t bus_error_count=0,arb_lost_count=0,rx_missed_count=0,rx_overrun_count=0,rx_error_counter=0,tx_error_counter=0; int state=TWAI_STATE_RUNNING; };
+struct twai_message_t { bool extd=false; };
+inline bool install_fail=false,start_fail=false,status_fail=false;
+inline twai_status_info_t fake_info;
+inline std::vector<std::string> calls;
+inline int twai_driver_install(const twai_general_config_t* g,const twai_timing_config_t* t,const twai_filter_config_t* f) {
+  assert(g->tx_io==39 && g->rx_io==15 && g->mode==TWAI_MODE_LISTEN_ONLY);
+  assert(g->tx_queue_len==0 && g->rx_queue_len>0 && t->bitrate==500000 && f->accept_all);
+  assert(GPIO.func_out_sel_cfg[13].func_sel==SIG_GPIO_OUT_IDX);
+  assert(GPIO.out&(1U<<13)); calls.push_back("install");
+  if (install_fail) return ESP_FAIL;
+  GPIO.func_out_sel_cfg[39].func_sel=TWAI_TX_IDX;
+  GPIO.func_in_sel_cfg[TWAI_RX_IDX].val=15|(1U<<7);
+  return ESP_OK;
+}
+inline int twai_start() {
+  for (auto& route:GPIO.func_out_sel_cfg) assert(route.func_sel!=TWAI_TX_IDX);
+  assert(GPIO.out&(1U<<13)); assert(GPIO.enable&(1U<<13));
+  TWAI.mode_reg.lom=true; calls.push_back("start"); return start_fail?ESP_FAIL:ESP_OK;
+}
+inline int twai_stop() { calls.push_back("stop"); return ESP_OK; }
+inline int twai_driver_uninstall() { calls.push_back("uninstall"); return ESP_OK; }
+inline int twai_get_status_info(twai_status_info_t* i) { *i=fake_info; return status_fail?ESP_FAIL:ESP_OK; }
+inline int receive_result=ESP_ERR_TIMEOUT;
+inline bool receive_extended=false;
+inline int twai_receive(twai_message_t* m,int) { m->extd=receive_extended; return receive_result; }
+using portMUX_TYPE=int;
+#define portMUX_INITIALIZER_UNLOCKED 0
+#define portENTER_CRITICAL(x) (void)(x)
+#define portEXIT_CRITICAL(x) (void)(x)
+#define pdMS_TO_TICKS(x) (x)
+#define pdPASS 1
+#define configMAX_PRIORITIES 25
+inline uint32_t fake_ms=0;
+inline uint32_t millis() { return fake_ms; }
+inline void delay(int n) { fake_ms+=n; }
+inline void vTaskDelay(int) {}
+inline bool task_fail=false;
+inline int xTaskCreatePinnedToCore(void(*)(void*),const char*,int,void*,int,void*,int) { calls.push_back("task"); return task_fail?0:pdPASS; }
+inline struct FakeSerial {
+  std::string input,output;
+  void begin(int) {} void setTxTimeoutMs(int) {}
+  int available() { return int(input.size()); }
+  char read() { char c=input[0]; input.erase(0,1); return c; }
+  void println(const char* s) { output+=std::string(s)+"\n"; }
+  template<class... A> void printf(const char* f,A... a) { char b[2048]; std::snprintf(b,sizeof(b),f,a...); output+=b; }
+} Serial;
+namespace fonts { inline int Font2=0; }
+#define TFT_BLACK 0
+#define TFT_GREEN 1
+#define TFT_RED 2
+#define TFT_WHITE 3
+#define middle_center 0
+inline struct FakeM5 {
+  struct Config { int serial_baudrate=0; bool clear_display=false,output_power=false,external_imu=true,external_rtc=true; int external_display_value=1,external_speaker_value=1; };
+  Config config() { return {}; }
+} M5;
+inline struct FakeDial {
+  std::string screen;
+  struct DisplayType {
+    void fillScreen(int) {} void setTextDatum(int) {} void setTextColor(int,int) {}
+    void drawString(const char*,int,int,int*) {}
+  } Display;
+  void begin(const FakeM5::Config& c,bool,bool) { assert(!c.external_display_value && !c.external_speaker_value && !c.external_imu && !c.external_rtc); }
+} M5Dial;

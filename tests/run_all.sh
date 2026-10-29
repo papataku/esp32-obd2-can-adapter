@@ -76,3 +76,10 @@ c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   src/diagnostic_policy.cpp src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
   tests/host_stubs/stubs.cpp -o /tmp/m5can-review-capacity
 /tmp/m5can-review-capacity
+
+# Dedicated physical-TX-isolated receiver safety policy.
+c++ -std=c++17 -Wall -Wextra -Werror -Iinclude tests/test_passive_policy.cpp -o /tmp/m5can-passive-policy
+/tmp/m5can-passive-policy
+python3 tests/test_passive_profile.py
+./tests/run_passive_runtime.sh
+python3 tests/test_passive_flash_check.py
