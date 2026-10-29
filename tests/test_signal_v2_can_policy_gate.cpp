@@ -31,9 +31,11 @@ int main(){
   const uint8_t group[6]={1,0x0D,0x0C,0x05,0x5B,0x9A};
   for(unsigned i=0;i<6;++i)physical.data[i]=group[i];
   assert(DiagnosticPolicy::observedPhysicalEcu(physical.can_id));
-  assert(DiagnosticPolicy::allowedReadRequest(physical));
-  assert(DiagnosticPolicy::responseBelongsToRequest(physical,0x18DAF106));
-  assert(!DiagnosticPolicy::responseBelongsToRequest(physical,0x18DAF107));
+  // N1: a functional sighting is never V2 physical-TX authorization, and
+  // without an approved profile no physical V2 request is admitted at all.
+  assert(!DiagnosticPolicy::allowedReadRequest(physical));
+  physical.can_id=0x18DA01F1;
+  assert(!DiagnosticPolicy::allowedReadRequest(physical));
   assert(!DiagnosticPolicy::responseBelongsToRequest(physical,0x7E8));
   physical.data[5]=0xFF;
   assert(!DiagnosticPolicy::allowedReadRequest(physical)); // unapproved PID

@@ -30,10 +30,12 @@ static void discoveryResult(uint32_t now){
 namespace signal_v2 {
 struct CanOwnerTestAccess {
   static void verifiedPin(CanOwner &owner){
-    // Simulate the reviewer's eight RAW-backed discovery completions directly.
-    // Production broadcast admission is deliberately denied, tested separately.
-    owner.physical_=false;
-    for(unsigned i=1;i<=8;++i){discoveryResult(200+i*200);owner.result(response);}
+    // Simulate one RAW-backed bounded physical probe of an approved candidate.
+    // This build has no approved profile; production discovery stops (below).
+    owner.physical_=false;owner.probe_target_=0x18DAF101;
+    discoveryResult(400);
+    assert(CanOwner::validProbe(response,0x18DAF101));
+    owner.pin(0x18DAF101);
     assert(owner.ecu_.fixed());
   }
 };

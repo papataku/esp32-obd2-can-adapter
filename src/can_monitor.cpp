@@ -496,6 +496,10 @@ void CanMonitor::performQuery(
   }
 
   uint64_t tx_us = 0;
+  // N1: V2 never transmits a functional broadcast, whatever its budget.
+  if(!terminal_set && request.signal_v2 && request.can_id==0x18DB33F1U){
+    terminal=DiagnosticStatus::RateLimited;terminal_set=true;
+  }
   if(!terminal_set && request.signal_v2){
     const uint16_t frames=request.can_id==0x18DB33F1U
         ? signal_v2::CanBudget::DiscoveryFrames : (request.length==3?4:12);

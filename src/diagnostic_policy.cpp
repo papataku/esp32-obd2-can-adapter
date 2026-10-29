@@ -1,4 +1,7 @@
 #include "diagnostic_policy.h"
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+#include "signal_v2_discovery_profile.h"
+#endif
 #include <atomic>
 #include <cstring>
 
@@ -53,11 +56,23 @@ void DiagnosticPolicy::observeFunctionalPairs(const DiagnosticRequest& req,
 #endif
 }
 
+bool DiagnosticPolicy::approvedPhysicalEcu(uint32_t id) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  using signal_v2::DiscoveryProfile;
+  for(uint8_t i=0;i<DiscoveryProfile::kCount;++i){
+    const auto route=DiscoveryProfile::kCandidates[i].route();
+    if(route.enabledForThisTrial() && route.request_id==id)return true;
+  }
+#endif
+  (void)id;return false;
+}
+
 bool DiagnosticPolicy::allowedHeader(uint32_t can_id) {
   // Only the physically observed ECU 01 is enabled in this phase.
   // No arbitrary 18DAxxF1 header or unrestricted diagnostic TX.
   return can_id == 0x18DB33F1U || can_id == 0x18DBEFF1U ||
-         can_id == 0x18DA01F1U || observedPhysicalEcu(can_id);
+         can_id == 0x18DA01F1U || observedPhysicalEcu(can_id) ||
+         approvedPhysicalEcu(can_id);
 }
 
 bool DiagnosticPolicy::allowedReadRequest(const DiagnosticRequest& request) {
@@ -67,7 +82,9 @@ bool DiagnosticPolicy::allowedReadRequest(const DiagnosticRequest& request) {
   if (request.can_id==0x18DB33F1U)
     return request.length==3 && request.data[0]==1 &&
            request.data[1]==0x0C && request.data[2]==0x0D;
-  if(!observedPhysicalEcu(request.can_id)||request.data[0]!=1)
+  // Only an approved profile candidate; a functional sighting or stored
+  // hint is never V2 physical-TX authorization (N1 PR-A section 4).
+  if(!approvedPhysicalEcu(request.can_id)||request.data[0]!=1)
     return false;
   const bool full=request.length==6 && request.data[1]==0x0D &&
       request.data[2]==0x0C && request.data[3]==0x05 &&
@@ -109,7 +126,8 @@ bool DiagnosticPolicy::allowedResponseId(uint32_t can_id) {
 bool DiagnosticPolicy::responseBelongsToRequest(
     const DiagnosticRequest& request, uint32_t response_can_id) {
   if (!allowedResponseId(response_can_id)) return false;
-  if (observedPhysicalEcu(request.can_id) &&
+  if ((observedPhysicalEcu(request.can_id) ||
+       approvedPhysicalEcu(request.can_id)) &&
       request.data[0]==0x01 && allowedReadRequest(request))
     return response_can_id ==
       (0x18DAF100U | ((request.can_id>>8)&0xFFU));
