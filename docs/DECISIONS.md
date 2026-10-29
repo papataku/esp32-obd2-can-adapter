@@ -352,3 +352,22 @@ full 120ms window and enforces 200ms on both sides of its TX; regular essential
 reads can finish after the normal quiet period. Sustained 100ms demand tests
 cover owner scheduling and production monitor admission independently. This is
 host software evidence, not a response latency or physical vehicle qualification.
+
+## 2026-10-30 — PR66 serial HIL evidence is fail-closed
+
+The HIL image is headless so M5GFX board autodetection cannot probe CAN GPIOs.
+Only HIL builds queue board-timed, sequenced TX-attempt/RX-acceptance events;
+USB never runs in the CAN submission call. Evidence loss latches TX off across
+reinstalls. RX admission, installed state, generation and stopped draining share
+one nonblocking critical section, with explicit generation-tagged injections.
+Driver recreation resets driver counters but cannot reset transport loss.
+
+Qualification requires a fresh nonce fence and accepted ARM, actual scenario
+injection, two 800-bit first reservations, positive decoded acquisitions where
+applicable, expected fault category/deadline, acknowledged STOP, quiet time and
+60-second observation. Host arrival/write times cannot stand in for board times.
+STOP/re-ARM/Snapshot, old-CF overlap, deliberate queue overflow, admission and
+operator-driven disconnect/reboot have explicit phases and missing evidence
+fails. The serial model has no electrical ACK/retry/timing authority. Hardware
+stress, central receipt and vehicle gates remain separate; no budget/cap, other
+image behavior or authorization policy is changed. See the serial HIL runbook.

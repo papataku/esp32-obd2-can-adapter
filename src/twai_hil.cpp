@@ -3,155 +3,197 @@
 #include <Arduino.h>
 #include <cstdlib>
 #include <cstring>
+#include <cstdarg>
 #include <esp_timer.h>
-#include <freertos/queue.h>
+#include <esp_system.h>
 
 namespace hil {
 namespace {
-QueueHandle_t rx_queue=nullptr;
+// A single lock linearizes lifecycle, RX admission and evidence publication.
+// No queue, USB, allocation, delay or other blocking API is called under it.
 portMUX_TYPE mux=portMUX_INITIALIZER_UNLOCKED;
-bool installed=false,started=false;
+constexpr unsigned MaxRx=256, MaxEvents=128;
+twai_message_t rx[MaxRx]{};
+unsigned capacity=0,head=0,count=0;
+bool installed=false;
 twai_mode_t mode=TWAI_MODE_LISTEN_ONLY;
-twai_status_info_t injected{};   // fault counters set by the PC
-uint32_t tx_fail_next=0,tx_count=0,rx_injected=0,rx_dropped=0;
+twai_status_info_t state{};
+uint32_t generation=0,tx_fail_next=0,boot_id=0;
+struct Event { uint64_t us; uint32_t seq,gen; char detail[208]; };
+Event events[MaxEvents]{};
+unsigned event_head=0,event_count=0;
+uint32_t sequence=0,lost=0;
+bool transport_fault=false;
 
-int hexNibble(char c){
-  if(c>='0'&&c<='9')return c-'0';
-  if(c>='A'&&c<='F')return c-'A'+10;
-  if(c>='a'&&c<='f')return c-'a'+10;
-  return -1;
-}
-// "HIL RX <id-hex> <ext 0|1> <data-hex up to 16 chars>"
-bool injectRx(const char* args){
-  char* end=nullptr;
-  const unsigned long id=std::strtoul(args,&end,16);
-  if(end==args||*end!=' ')return false;
-  const char* p=end+1;
-  if((*p!='0'&&*p!='1')||p[1]!=' ')return false;
-  const bool ext=*p=='1';p+=2;
-  twai_message_t m{};
-  m.identifier=uint32_t(id);m.extd=ext?1:0;
-  size_t n=0;
-  while(p[0]&&p[1]&&n<8){
-    const int hi=hexNibble(p[0]),lo=hexNibble(p[1]);
-    if(hi<0||lo<0)return false;
-    m.data[n++]=uint8_t(hi<<4|lo);p+=2;
-  }
-  if(*p)return false;
-  if((ext&&id>0x1FFFFFFFUL)||(!ext&&id>0x7FFUL))return false;
-  m.data_length_code=uint8_t(n);
-  if(!rx_queue||!started||xQueueSend(rx_queue,&m,0)!=pdTRUE){
-    portENTER_CRITICAL(&mux);++rx_dropped;++injected.rx_missed_count;portEXIT_CRITICAL(&mux);
-  }else{
-    portENTER_CRITICAL(&mux);++rx_injected;portEXIT_CRITICAL(&mux);
-  }
+bool eventLocked(const char* detail){
+  ++sequence;
+  if(event_count==MaxEvents){++lost;transport_fault=true;++state.rx_missed_count;return false;}
+  auto &e=events[(event_head+event_count++)%MaxEvents];
+  e.us=esp_timer_get_time();e.seq=sequence;e.gen=generation;
+  std::strncpy(e.detail,detail,sizeof(e.detail)-1);
   return true;
 }
-void status(){
-  portENTER_CRITICAL(&mux);
-  const twai_status_info_t s=injected;
-  const uint32_t tx=tx_count,rx=rx_injected,drop=rx_dropped,fail=tx_fail_next;
-  const bool inst=installed,run=started;const twai_mode_t md=mode;
-  portEXIT_CRITICAL(&mux);
-  Serial.printf("#HIL_STATUS,twai_hw=0,installed=%u,started=%u,mode=%s,tx=%lu,"
-    "rx_injected=%lu,rx_dropped=%lu,tx_fail_next=%lu,state=%u,bus_error=%lu,"
-    "rx_missed=%lu,rx_overrun=%lu\n",inst?1U:0U,run?1U:0U,
-    md==TWAI_MODE_NORMAL?"NORMAL":md==TWAI_MODE_NO_ACK?"NO_ACK":"LISTEN_ONLY",
-    (unsigned long)tx,(unsigned long)rx,(unsigned long)drop,(unsigned long)fail,
-    unsigned(s.state),(unsigned long)s.bus_error_count,
-    (unsigned long)s.rx_missed_count,(unsigned long)s.rx_overrun_count);
+bool frameLocked(const char* kind,const twai_message_t& m,bool ok){
+  char hex[17]{},detail[208]{};
+  for(unsigned i=0;i<m.data_length_code && i<8;++i)std::snprintf(hex+2*i,3,"%02X",m.data[i]);
+  std::snprintf(detail,sizeof(detail),"kind=%s,id=%08lX,ext=%u,dlc=%u,data=%s,ok=%u",
+    kind,(unsigned long)m.identifier,unsigned(m.extd),unsigned(m.data_length_code),hex,ok?1U:0U);
+  return eventLocked(detail);
 }
-} // namespace
-
-esp_err_t driver_install(const twai_general_config_t* g,const twai_timing_config_t*,
-                         const twai_filter_config_t*){
-  if(installed||!g)return ESP_ERR_INVALID_STATE;
-  if(!rx_queue){
-    rx_queue=xQueueCreate(32,sizeof(twai_message_t));
-    if(!rx_queue)return ESP_ERR_NO_MEM;
-    Serial.println("#HIL,serial_hil=1,twai_hw=0,can_gpio=UNUSED");
+bool valid(const twai_message_t& m){
+  return m.data_length_code<=8 && m.identifier<=(m.extd?0x1FFFFFFFUL:0x7FFUL);
+}
+// Admission and stop share the same linearization point. No parsed injection
+// can straddle stop/drain/reinstall: it is either in that queue or rejected.
+bool admitLocked(const twai_message_t& m,uint32_t target){
+  const bool running=installed && state.state==TWAI_STATE_RUNNING;
+  const bool accepted=running && target==generation && count<capacity && !transport_fault;
+  if(accepted){rx[(head+count++)%capacity]=m;}
+  else if(running && target==generation && count==capacity){++state.rx_missed_count;}
+  frameLocked("rx",m,accepted);
+  return accepted;
+}
+bool parseRx(const char* a,twai_message_t& m){
+  char *end=nullptr;const unsigned long id=std::strtoul(a,&end,16);
+  if(end==a||*end!=' '||id>0x1FFFFFFFUL)return false;
+  const char *p=end+1;
+  if((p[0]!='0'&&p[0]!='1')||p[1]!=' ')return false;
+  m.identifier=id;m.extd=p[0]=='1';p+=2;
+  unsigned n=0;
+  while(*p){
+    if(!p[1]||n==8)return false;
+    auto nib=[](char c)->int {if(c>='0'&&c<='9')return c-'0';if(c>='A'&&c<='F')return c-'A'+10;if(c>='a'&&c<='f')return c-'a'+10;return -1;};
+    int hi=nib(p[0]),lo=nib(p[1]);if(hi<0||lo<0)return false;
+    m.data[n++]=uint8_t(hi*16+lo);p+=2;
   }
-  xQueueReset(rx_queue);
-  portENTER_CRITICAL(&mux);installed=true;started=false;mode=g->mode;portEXIT_CRITICAL(&mux);
-  return ESP_OK;
+  m.data_length_code=n;return valid(m);
+}
+}
+uint32_t currentGeneration(){
+  portENTER_CRITICAL(&mux);const uint32_t g=generation;portEXIT_CRITICAL(&mux);return g;
+}
+void note(const char* format,...){
+  char detail[208]{};va_list ap;va_start(ap,format);
+  int n=vsnprintf(detail,sizeof(detail),format,ap);va_end(ap);
+  portENTER_CRITICAL(&mux);
+  if(n<0||unsigned(n)>=sizeof(detail)){transport_fault=true;++lost;++state.rx_missed_count;}
+  else eventLocked(detail);
+  portEXIT_CRITICAL(&mux);
+}
+// Only the USB task calls this. Partial writes are retained, never retried as
+// duplicate records. A disconnected/backlogged host cannot block the CAN owner.
+void poll(){
+  static char pending[320]{};static size_t size=0,offset=0;
+  if(!size){
+    Event e{};bool have=false;uint32_t dropped;
+    portENTER_CRITICAL(&mux);
+    dropped=lost;
+    if(event_count){e=events[event_head];event_head=(event_head+1)%MaxEvents;--event_count;have=true;}
+    portEXIT_CRITICAL(&mux);
+    if(!have)return;
+    size=std::snprintf(pending,sizeof(pending),"#HIL_EVENT,seq=%lu,t_us=%llu,gen=%lu,lost=%lu,boot=%08lX,%s\n",
+      (unsigned long)e.seq,(unsigned long long)e.us,(unsigned long)e.gen,(unsigned long)dropped,(unsigned long)boot_id,e.detail);
+  }
+  const int room=Serial.availableForWrite();
+  if(room<=0)return;
+  const size_t n=Serial.write(reinterpret_cast<const uint8_t*>(pending)+offset,
+    size-offset<size_t(room)?size-offset:size_t(room));
+  offset+=n;
+  if(offset==size){size=offset=0;}
+}
+esp_err_t driver_install(const twai_general_config_t* g,const twai_timing_config_t* t,const twai_filter_config_t* f){
+  if(!g||!t||!f||!g->rx_queue_len||g->rx_queue_len>MaxRx||
+     (g->mode!=TWAI_MODE_NORMAL&&g->mode!=TWAI_MODE_NO_ACK&&g->mode!=TWAI_MODE_LISTEN_ONLY))return ESP_ERR_INVALID_ARG;
+  portENTER_CRITICAL(&mux);
+  if(installed){portEXIT_CRITICAL(&mux);return ESP_ERR_INVALID_STATE;}
+  if(!boot_id)boot_id=esp_random();
+  capacity=g->rx_queue_len;head=count=0;installed=true;mode=g->mode;
+  state=twai_status_info_t{};state.state=TWAI_STATE_STOPPED;++generation;
+  eventLocked("kind=install");portEXIT_CRITICAL(&mux);return ESP_OK;
 }
 esp_err_t driver_uninstall(){
-  if(!installed||started)return ESP_ERR_INVALID_STATE;
-  portENTER_CRITICAL(&mux);installed=false;portEXIT_CRITICAL(&mux);
-  return ESP_OK;
+  portENTER_CRITICAL(&mux);
+  if(!installed||(state.state!=TWAI_STATE_STOPPED&&state.state!=TWAI_STATE_BUS_OFF)){portEXIT_CRITICAL(&mux);return ESP_ERR_INVALID_STATE;}
+  installed=false;head=count=0;eventLocked("kind=uninstall");
+  portEXIT_CRITICAL(&mux);return ESP_OK;
 }
 esp_err_t start(){
-  if(!installed||started)return ESP_ERR_INVALID_STATE;
-  portENTER_CRITICAL(&mux);started=true;
-  if(injected.state==TWAI_STATE_STOPPED)injected.state=TWAI_STATE_RUNNING;
-  portEXIT_CRITICAL(&mux);
-  return ESP_OK;
+  portENTER_CRITICAL(&mux);
+  if(!installed||state.state!=TWAI_STATE_STOPPED||transport_fault){portEXIT_CRITICAL(&mux);return ESP_ERR_INVALID_STATE;}
+  head=count=0;state.state=TWAI_STATE_RUNNING;eventLocked("kind=start");
+  portEXIT_CRITICAL(&mux);return ESP_OK;
 }
 esp_err_t stop(){
-  if(!started)return ESP_ERR_INVALID_STATE;
-  portENTER_CRITICAL(&mux);started=false;portEXIT_CRITICAL(&mux);
-  return ESP_OK;
-}
-// Never touches hardware: the frame is only reported to the PC.
-esp_err_t transmit(const twai_message_t* m,TickType_t){
-  if(!m||!started||mode!=TWAI_MODE_NORMAL)return ESP_ERR_INVALID_STATE;
   portENTER_CRITICAL(&mux);
+  if(!installed||state.state!=TWAI_STATE_RUNNING){portEXIT_CRITICAL(&mux);return ESP_ERR_INVALID_STATE;}
+  state.state=TWAI_STATE_STOPPED;eventLocked("kind=stop");
+  portEXIT_CRITICAL(&mux);return ESP_OK;
+}
+esp_err_t transmit(const twai_message_t* m,TickType_t){
+  if(!m||!valid(*m))return ESP_ERR_INVALID_ARG;
+  portENTER_CRITICAL(&mux);
+  if(!installed||state.state!=TWAI_STATE_RUNNING||mode==TWAI_MODE_LISTEN_ONLY||transport_fault){portEXIT_CRITICAL(&mux);return ESP_ERR_INVALID_STATE;}
   const bool fail=tx_fail_next>0;
-  if(fail){--tx_fail_next;++injected.tx_failed_count;}else ++tx_count;
+  if(fail){--tx_fail_next;++state.tx_failed_count;}
+  const bool recorded=frameLocked("tx",*m,!fail);
   portEXIT_CRITICAL(&mux);
-  if(fail)return ESP_FAIL;
-  char hex[17]{};
-  const unsigned n=m->data_length_code<=8?m->data_length_code:8;
-  for(unsigned i=0;i<n;++i)std::snprintf(hex+2*i,3,"%02X",m->data[i]);
-  Serial.printf("#HIL_TX,t_us=%llu,id=%08lX,ext=%u,dlc=%u,data=%s\n",
-    (unsigned long long)esp_timer_get_time(),(unsigned long)m->identifier,
-    unsigned(m->extd),unsigned(m->data_length_code),hex);
-  return ESP_OK;
+  return fail||!recorded?ESP_FAIL:ESP_OK;
 }
 esp_err_t receive(twai_message_t* m,TickType_t ticks){
-  if(!m||!installed||!rx_queue)return ESP_ERR_INVALID_STATE;
-  if(!started){vTaskDelay(ticks?ticks:1);return ESP_ERR_TIMEOUT;}
-  return xQueueReceive(rx_queue,m,ticks)==pdTRUE?ESP_OK:ESP_ERR_TIMEOUT;
+  if(!m)return ESP_ERR_INVALID_ARG;
+  // Stopped queues remain readable, including a zero-tick late-response drain.
+  for(TickType_t elapsed=0;;++elapsed){
+    portENTER_CRITICAL(&mux);
+    if(!installed){portEXIT_CRITICAL(&mux);return ESP_ERR_INVALID_STATE;}
+    if(count){*m=rx[head];head=(head+1)%capacity;--count;portEXIT_CRITICAL(&mux);return ESP_OK;}
+    portEXIT_CRITICAL(&mux);
+    if(elapsed>=ticks)return ESP_ERR_TIMEOUT;
+    vTaskDelay(1);
+  }
 }
 esp_err_t get_status_info(twai_status_info_t* info){
-  if(!info||!installed)return ESP_ERR_INVALID_STATE;
+  if(!info)return ESP_ERR_INVALID_ARG;
   portENTER_CRITICAL(&mux);
-  *info=injected;
-  if(!started)info->state=TWAI_STATE_STOPPED;
-  info->msgs_to_rx=rx_queue?uint32_t(uxQueueMessagesWaiting(rx_queue)):0;
-  portEXIT_CRITICAL(&mux);
-  return ESP_OK;
+  if(!installed){portEXIT_CRITICAL(&mux);return ESP_ERR_INVALID_STATE;}
+  *info=state;info->msgs_to_rx=count;
+  if(transport_fault)++info->rx_missed_count;
+  portEXIT_CRITICAL(&mux);return ESP_OK;
 }
-
 bool usbCommand(const char* line){
   if(std::strncmp(line,"HIL",3)||(line[3]&&line[3]!=' '))return false;
   const char* a=line[3]?line+4:"";
   if(!std::strncmp(a,"RX ",3)){
-    // Silent on success: per-frame status lines would distort timing.
-    if(!injectRx(a+3))Serial.println("#HIL_ERR,BAD_RX");
-    return true;
+    twai_message_t m{};char* end=nullptr;
+    const unsigned long target=std::strtoul(a+3,&end,10);
+    if(end==a+3||*end!=' '||!target||!parseRx(end+1,m)){note("kind=error,reason=BAD_RX");return true;}
+#if defined(M5CAN_HIL_HOST_TEST)
+    admissionHook(); // Controlled parse/admission interleaving in host regression.
+#endif
+    portENTER_CRITICAL(&mux);admitLocked(m,uint32_t(target));portEXIT_CRITICAL(&mux);return true;
   }
-  if(!std::strncmp(a,"TXFAIL ",7)){
-    portENTER_CRITICAL(&mux);tx_fail_next=std::strtoul(a+7,nullptr,10);portEXIT_CRITICAL(&mux);
-  }else if(!std::strncmp(a,"BUSERR ",7)){
-    portENTER_CRITICAL(&mux);injected.bus_error_count+=std::strtoul(a+7,nullptr,10);portEXIT_CRITICAL(&mux);
-  }else if(!std::strncmp(a,"RXMISS ",7)){
-    portENTER_CRITICAL(&mux);injected.rx_missed_count+=std::strtoul(a+7,nullptr,10);portEXIT_CRITICAL(&mux);
-  }else if(!std::strcmp(a,"BUSOFF")){
-    portENTER_CRITICAL(&mux);injected.state=TWAI_STATE_BUS_OFF;portEXIT_CRITICAL(&mux);
-  }else if(!std::strcmp(a,"RESET")){
-    // Clears injected faults only. CanMonitor's latched fault stays latched
-    // (production behavior); a reboot is required to recover, as on a car.
-    portENTER_CRITICAL(&mux);
-    injected=twai_status_info_t{};injected.state=started?TWAI_STATE_RUNNING:TWAI_STATE_STOPPED;
-    tx_fail_next=0;
-    portEXIT_CRITICAL(&mux);
-    if(rx_queue)xQueueReset(rx_queue);
-  }else if(std::strcmp(a,"STATUS")&&*a){
-    Serial.println("#HIL_ERR,UNKNOWN");return true;
+  // FENCE echoes a fresh host nonce after all preceding commands have been
+  // parsed. It cannot reset a latched transport fault or driver evidence.
+  if(!std::strncmp(a,"FENCE ",6)){note("kind=fence,nonce=%.64s",a+6);return true;}
+  portENTER_CRITICAL(&mux);
+  if(!std::strncmp(a,"TXFAIL ",7))tx_fail_next=std::strtoul(a+7,nullptr,10);
+  else if(!std::strncmp(a,"BUSERR ",7))state.bus_error_count+=std::strtoul(a+7,nullptr,10);
+  else if(!std::strncmp(a,"RXMISS ",7))state.rx_missed_count+=std::strtoul(a+7,nullptr,10);
+  else if(!std::strcmp(a,"BUSOFF"))state.state=TWAI_STATE_BUS_OFF;
+  else if(!std::strcmp(a,"OVERFLOW")){
+    // Deterministic queue overflow while holding the lifecycle lock; the owner
+    // cannot drain between injections. Every admitted/rejected frame is traced.
+    twai_message_t m{};m.identifier=0x18DAF101;m.extd=1;
+    const unsigned admitted=installed && state.state==TWAI_STATE_RUNNING?capacity-count:0;
+    for(unsigned i=0;i<admitted;++i)rx[(head+count++)%capacity]=m;
+    if(admitted)++state.rx_missed_count;
+    char summary[80]{};std::snprintf(summary,sizeof(summary),"kind=overflow,accepted=%u,rejected=1",admitted);
+    eventLocked(summary);
+  }else if(std::strcmp(a,"STATUS")){
+    eventLocked("kind=error,reason=UNKNOWN_OR_UNSAFE_RESET");portEXIT_CRITICAL(&mux);return true;
   }
-  status();
-  return true;
+  char detail[208]{};
+  std::snprintf(detail,sizeof(detail),"kind=command,command=%s,state=%u,pending=%u,missed=%lu",a,unsigned(state.state),count,(unsigned long)state.rx_missed_count);
+  eventLocked(detail);portEXIT_CRITICAL(&mux);return true;
 }
-} // namespace hil
+}
 #endif

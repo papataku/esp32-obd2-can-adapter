@@ -17,6 +17,8 @@ import json
 import re
 import sys
 import time
+import secrets
+from collections import Counter
 
 ECU_RX = 0x18DAF101          # ECU01 response ID (RP8 evidence)
 ECU_TX = 0x18DA01F1          # physical request to ECU01
@@ -45,14 +47,25 @@ SCENARIOS = {
     "negative": (True, "7F 01 11 negative response"),
     "txfail": (True, "driver TX failure on the first probe"),
     "busoff": (True, "BUS_OFF after a healthy pin"),
-    "rxmiss": (True, "RX missed counter after a healthy pin"),
+    "rxmiss": (True, "RX missed counter after a healthy acquisition"),
+    "cf_probe": (True, "unsolicited CF during discovery"),
+    "malformed": (True, "invalid SF length during discovery"),
+    "overflow": (True, "atomic configured RX queue overflow"),
+    "buserr": (True, "bus error after a healthy acquisition"),
+    "rearm": (False, "STOP pending group; delayed old CF; fresh re-ARM"),
+    "overlap": (True, "old CF overlaps a new-epoch probe"),
+    "admission": (False, "finite probe/group admission envelope then quiet soak"),
+    "disconnect": (True, "operator disconnects BLE central during acquisition"),
+    "reboot": (False, "operator reboots during acquisition; new boot/fence/epoch"),
 }
 
 TX_RE = re.compile(r"#HIL_TX,t_us=(\d+),id=([0-9A-F]{8}),ext=(\d),dlc=(\d),data=([0-9A-F]*)")
 
 
-def rx_line(can_id, data, ext=True):
-    return "HIL RX %X %d %s" % (can_id, 1 if ext else 0, data.hex().upper())
+def rx_line(can_id, data, ext=True, generation=0):
+    # generation=0 is a pure scenario template, bound to the observed TX
+    # generation by run(). Firmware rejects unbound or stale injections.
+    return "HIL RX %d %X %d %s" % (generation, can_id, 1 if ext else 0, data.hex().upper())
 
 
 class VirtualEcu:
@@ -82,7 +95,9 @@ class VirtualEcu:
             return [(0.002 * (i + 1), rx_line(ECU_RX, cf)) for i, cf in enumerate(GROUP_CF)]
         if data[:4] == PROBE:                        # discovery probe / essential read
             self.probes += 1
-            if self.probes > 1 or s in ("normal", "busoff", "rxmiss"):
+            if s == "overlap" and self.probes > 1:
+                return [(0.001,rx_line(ECU_RX,GROUP_CF[0])),(0.005,rx_line(ECU_RX,PAIR_SF))]
+            if s in ("normal", "busoff", "rxmiss", "buserr", "overflow", "rearm", "overlap", "admission", "disconnect", "reboot"):
                 return [(0.005, rx_line(ECU_RX, PAIR_SF))]
             if s == "split":
                 return [(0.005, rx_line(ECU_RX, bytes([3, 0x41, 0x0D, 0]))),
@@ -90,6 +105,10 @@ class VirtualEcu:
             if s == "extra":
                 return [(0.005 * (i + 1), rx_line(ECU_RX, PAIR_SF if i == 0 else bytes([3, 0x41, 0x0D, 0])))
                         for i in range(3)]
+            if s == "cf_probe":
+                return [(0.005, rx_line(ECU_RX, GROUP_CF[0]))]
+            if s == "malformed":
+                return [(0.005, rx_line(ECU_RX, bytes([7, 0x41, 0x0C])))]
             if s == "ff_probe":
                 return [(0.005, rx_line(ECU_RX, bytes([0x10, 0x08, 0x41, 0x0C]) + RPM_1000 + bytes([0x0D, 0x00])))]
             if s == "late":
@@ -109,8 +128,8 @@ class VirtualEcu:
             self.pending_cf = True
             if self.groups == 2 and s == "busoff":
                 out.append((0.050, "HIL BUSOFF"))
-            if self.groups == 2 and s == "rxmiss":
-                out.append((0.050, "HIL RXMISS 1"))
+            if self.groups == 2 and s in ("rxmiss", "buserr", "overflow"):
+                out.append((0.050, {"rxmiss":"HIL RXMISS 1", "buserr":"HIL BUSERR 1", "overflow":"HIL OVERFLOW"}[s]))
             return out
         return []
 
@@ -129,90 +148,363 @@ def window_peaks(times_s):
     return peaks
 
 
+def fields(text):
+    return dict(part.split("=", 1) for part in text.split(",") if "=" in part)
+
+
+def parse_event(text):
+    """Board clock is the sole load/deadline clock. Host arrival is separate."""
+    if not text.startswith("#HIL_EVENT,"):
+        return None
+    f = fields(text)
+    e = dict(f, text=text, t=int(f["t_us"]) / 1e6,
+             seq=int(f["seq"]), gen=int(f["gen"]), lost=int(f["lost"]))
+    if e["kind"] in ("tx", "rx"):
+        e.update(id=int(f["id"], 16), ext=int(f["ext"]), dlc=int(f["dlc"]),
+                 data=bytes.fromhex(f["data"]), ok=int(f["ok"]))
+        if len(e["data"]) != e["dlc"] or e["dlc"] > 8:
+            raise ValueError("invalid DLC")
+    return e
+
+
+FAULT_REASONS = {
+    "noreply": {"NO_VERIFIED_ECU", "DISCOVERY_TIMEOUT"},
+    "txfail": {"DISCOVERY_RESPONSE_CONTRACT", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "extra": {"DISCOVERY_RESPONSE_CONTRACT", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "ff_probe": {"DISCOVERY_RESPONSE_CONTRACT", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "cf_probe": {"DISCOVERY_RESPONSE_CONTRACT", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "malformed": {"DISCOVERY_RESPONSE_CONTRACT", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "late": {"NO_VERIFIED_ECU", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "duplicate": {"DISCOVERY_RESPONSE_CONTRACT", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "wrong_src": {"DISCOVERY_RESPONSE_CONTRACT", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "eleven_bit": {"11BIT_OBD_RESPONSE", "DISCOVERY_RESPONSE_CONTRACT", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "negative": {"DISCOVERY_RESPONSE_CONTRACT", "RX_ACCOUNTING_OR_BUS_FAULT"},
+    "busoff": {"RX_ACCOUNTING_OR_BUS_FAULT", "TWAI_BUS_ERROR"},
+    "rxmiss": {"RX_ACCOUNTING_OR_BUS_FAULT", "TWAI_BUS_ERROR"},
+    "buserr": {"RX_ACCOUNTING_OR_BUS_FAULT", "TWAI_BUS_ERROR"},
+    "overflow": {"RX_ACCOUNTING_OR_BUS_FAULT", "TWAI_BUS_ERROR"},
+    "overlap": {"RX_ACCOUNTING_OR_BUS_FAULT", "DISCOVERY_RESPONSE_CONTRACT"},
+}
+
+
 def evaluate(scenario, events):
-    """events: list of dicts {t, kind: tx|rx|line, text}."""
+    """Fail closed on missing prerequisites, unacknowledged injections or loss.
+
+    Only parsed #HIL_EVENT records are timed evidence. Raw serial lines and
+    host writes remain in the artifact but cannot stand in for board events.
+    """
     expect_stop, _ = SCENARIOS[scenario]
-    lines = [e["text"] for e in events if e["kind"] == "line"]
-    stop_idx = next((i for i, e in enumerate(events)
-                     if e["kind"] == "line" and "#SIGNALV2_CAN,stopped=1" in e["text"]), None)
-    tx_after_stop = 0 if stop_idx is None else sum(1 for e in events[stop_idx:] if e["kind"] == "tx")
-    functional = sum(1 for e in events if e["kind"] == "tx" and e["id"] == 0x18DB33F1)
-    fc_in_probe = sum(1 for e in events if e["kind"] == "tx" and e.get("data", b"")[:1] == b"\x30"
-                      and scenario == "ff_probe")
-    pinned = any("#SIGNALV2_ECU,physical_response=18DAF101" in l for l in lines)
-    stopped = stop_idx is not None
-    peaks = window_peaks([e["t"] for e in events if e["kind"] in ("tx", "rx")])
+    board = [e for e in events if "seq" in e]
+    kind = lambda k: [e for e in board if e["kind"] == k]
+    arms = kind("arm")
+    frames = kind("tx") + kind("rx")
+    txs, rxs, faults, stops = kind("tx"), kind("rx"), kind("fault"), kind("stopped")
+    raw_txs = [e for e in events if e["kind"] == "tx"]
+    samples, gates = kind("sample"), kind("gate")
+    fences = kind("fence")
+    reason = faults[0].get("reason") if faults else None
+    # Synthetic host-arrival timestamps cannot qualify as timed evidence.
+    complete = bool(board) and all(e.get("lost") == 0 and "t_us" in e and bool(e.get("boot")) for e in board)
+    complete &= all((b["seq"] == a["seq"] + 1 or (scenario == "reboot" and b.get("boot") != a.get("boot") and b["kind"] == "fence")) and b["t"] >= a["t"]
+                    for a, b in zip(board, board[1:]))
+    lines = [e.get("text", "") for e in events]
+    errors = any("#HIL_ERR" in l or "kind=error" in l or "reason=NOT_READY" in l or
+                 "admin=BUSY" in l or e.get("kind") == "parse_error"
+                 for e, l in zip(events, lines))
+    writes = [e for e in events if e["kind"] == "write" and e["text"].startswith("HIL RX ")]
+    expected = Counter("HIL RX 0 " + " ".join(e["text"].split()[3:]) for e in writes)
+    accepted = Counter(rx_line(e["id"], e["data"], bool(e["ext"])) for e in rxs)
+    acknowledged = expected == accepted and all(e["ok"] for e in rxs)
+    tx_allowed = all(e.get("ext") == 1 and e["id"] == ECU_TX and e.get("dlc") == 8 and
+                     e["data"] in (PROBE.ljust(8, b"\0"), GROUP.ljust(8, b"\0"), b"\x30" + b"\0"*7)
+                     for e in txs)
+    probe_txs = [e for e in txs if e["data"][:4] == PROBE]
+    fc_txs = [e for e in txs if e["data"][:1] == b"\x30"]
+    group_txs = [e for e in txs if e["data"][:7] == GROUP]
+    # An essential read shares the probe bytes; count discovery by gate marker.
+    discovery_gates = [e for e in gates if e.get("discovery") == "1"]
+    epochs = [int(e.get("epoch", 0)) for e in arms]
+    epoch_ok = bool(arms) and all(e.get("ok") == "1" for e in arms) and all(epochs)
+    epoch_ok &= len(set((e.get("boot"), e.get("epoch")) for e in arms)) == len(epochs)
+    tx_after_stop = 0
+    for e in txs:
+        previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault")]
+        if not previous or previous[-1]["kind"] in ("stopped", "stop_request", "fault"):
+            tx_after_stop += 1
+    first_arm = arms[0]["t"] if arms else 0
+    # Every fault run observes 60s, including the post-fault quiet interval.
+    duration = fences[-1]["t"] - (arms[-1]["t"] if scenario == "reboot" and arms else first_arm) if fences else 0
+    final_quiet = bool(stops and fences and fences[-1]["t"] - stops[-1]["t"] >= 1)
+    sample_ok = bool(samples) and all(
+        e.get("quality") == "0" and e.get("speed") == "0" and e.get("rpm") == "1000" and
+        e.get("source") == "18DAF101" and 0 <= e["t"] - int(e.get("observed_us", 0))/1e6 <= .25 and
+        int(e.get("epoch", 0)) in epochs for e in samples)
+    healthy_first = bool(samples and samples[0]["t"] - first_arm <= 3)
+    sustained = len(samples) >= 250 and all(b["t"]-a["t"] <= .5 for a,b in zip(samples,samples[1:]) if b.get("epoch") == a.get("epoch") and b.get("boot") == a.get("boot"))
+    if samples:
+        sample_ok &= len(fc_txs) >= len(samples)
+        for data in (GROUP_FF,*GROUP_CF):
+            sample_ok &= sum(e["id"] == ECU_RX and e["ext"] == 1 and e["data"] == data for e in rxs) >= len(samples)
+    after_healthy = scenario in ("busoff", "rxmiss", "buserr", "overflow", "overlap", "disconnect", "reboot")
+    fault_injected = True
+    if scenario in ("busoff", "rxmiss", "buserr", "overflow", "txfail"):
+        command = {"busoff":"BUSOFF", "rxmiss":"RXMISS 1", "buserr":"BUSERR 1", "overflow":"OVERFLOW", "txfail":"TXFAIL 1"}[scenario]
+        commands = [e for e in kind("command") if e.get("command") == command]
+        fault_injected = len(commands) == 1
+        if after_healthy:
+            fault_injected &= bool(commands and samples and samples[0]["t"] < commands[0]["t"])
+    elif expect_stop and scenario not in ("noreply", "disconnect"):
+        model = VirtualEcu(scenario)
+        required = [line for _, line in model.on_tx(ECU_TX, PROBE) if line.startswith("HIL RX ")]
+        fault_injected = bool(required) and all(expected[l] >= n for l,n in Counter(required).items())
+        if scenario == "overlap":
+            fault_injected = expected[rx_line(ECU_RX, GROUP_CF[0])] >= 2 and len(arms) == 2
+        if scenario == "late":
+            fault_injected &= bool(rxs and probe_txs and rxs[0]["t"] - probe_txs[0]["t"] > .120)
+    stop_ok = bool(faults and reason in FAULT_REASONS.get(scenario, set()) and
+                   faults[0]["t"] - first_arm <= 3) if expect_stop else not faults
+    if scenario == "disconnect":
+        stop_ok = bool(kind("disconnect") and stops and stops[-1]["t"]-kind("disconnect")[0]["t"] <= 3)
+    if scenario == "noreply":
+        fault_injected = not rxs
+    if scenario == "overlap":
+        fault_injected = expected[rx_line(ECU_RX, GROUP_CF[0])] >= 2 and len(arms) == 2
+    retry_ok = len(discovery_gates) == 2*len(arms) and len(probe_txs) >= len(arms)
+    if expect_stop:
+        retry_ok &= len(probe_txs) == (2 if scenario == "overlap" else 1)
+    if scenario == "txfail":
+        retry_ok &= len(txs) == 1 and txs[0]["ok"] == 0
+    for gate in ("owner","monitor"):
+        retry_ok &= len([e for e in gates if e.get("gate") == gate]) == len(txs)-len(fc_txs)
+    gate_ok = all(e.get("cost") in ("800", "2400") and int(e.get("used100", 99999)) <= 5000 and
+                  int(e.get("used1000", 99999)) <= 25000 for e in gates)
+    for boot in {e.get("boot") for e in arms}:
+        for gate in ("owner", "monitor"):
+            first = next((e for e in gates if e.get("gate") == gate and e.get("boot") == boot), {})
+            gate_ok &= first.get("cost") == "800" and first.get("used100") == "800" and first.get("used1000") == "800"
+    if scenario == "admission":
+        gate_ok &= all(int(e["used100"]) <= 4000 and int(e["used1000"]) <= 5600 for e in gates)
+    packet_ok = all(e.get("current") == "1" for e in kind("packet"))
+    for e in samples + [x for x in kind("packet") if int(x.get("fresh", 0))]:
+        previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault")]
+        packet_ok &= bool(previous and previous[-1]["kind"] == "arm")
+    rearm_ok = True
+    if scenario == "overlap":
+        rearm_ok = len(arms)==2 and len(stops)>=2 and epochs[1]>int(stops[0]["epoch"])>epochs[0]
+        rearm_ok &= bool(faults and faults[0]["t"]>arms[-1]["t"])
+    if scenario == "rearm":
+        rearm_ok = len(arms) == 2 and len(stops) >= 2 and epochs[1] > int(stops[0]["epoch"]) > epochs[0]
+        rearm_ok &= any(e["kind"] == "rx" and stops[0]["t"] < e["t"] < arms[-1]["t"] for e in board)
+        # The deliberate stopped-generation RX must be refused, without loss.
+        acknowledged = expected == accepted and all(e["ok"] or stops[0]["t"] < e["t"] < arms[-1]["t"] for e in rxs)
+        rearm_ok &= any(int(e["epoch"]) == epochs[-1] for e in samples)
+        snapshots = [e for e in kind("packet") if e.get("type") == "33"]
+        rearm_ok &= any(e["t"] > stops[0]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)
+        rearm_ok &= any(int(e.get("epoch",0)) == epochs[-1] and int(e.get("fresh",0)) > 0 for e in snapshots)
+        rearm_ok &= all(int(e["epoch"]) == max(int(a["epoch"]) for a in arms if a["t"] <= e["t"]) for e in samples)
+    # Reboot cannot be inferred from an ordinary STOP. A new boot identity and
+    # reconnected secured central are separate evidence supplied by the operator.
+    if scenario == "reboot":
+        rearm_ok = len(arms) == 2 and len(set(e.get("boot") for e in arms)) == 2
+        rearm_ok &= all(any(s.get("boot") == a.get("boot") and 0 <= s["t"]-a["t"] <= 3 for s in samples) for a in arms)
+        rearm_ok &= all(e.get("boot") for e in arms)
+    peaks = {"peak100_bits":0,"peak1000_bits":0}
+    for boot in {e.get("boot") for e in frames}:
+        times=[e["t"] for e in frames if e.get("boot") == boot]
+        for overflow in kind("overflow"):
+            if overflow.get("boot") == boot:
+                times += [overflow["t"]] * (int(overflow.get("accepted",0))+int(overflow.get("rejected",0)))
+        bp=window_peaks(times)
+        for k,v in bp.items():peaks[k]=max(peaks[k],v)
     checks = {
-        "stop_as_expected": stopped == expect_stop,
+        "transport_complete": complete and not errors and acknowledged,
+        "fresh_fenced_epoch": epoch_ok and len(fences) >= 2 and fences[-1].get("nonce") == fences[0].get("nonce", "")+"end" and fences[0]["seq"] < arms[0]["seq"] if arms else False,
+        "scenario_exercised": bool(probe_txs) and fault_injected and (not after_healthy or healthy_first),
+        "stop_as_expected": stop_ok,
+        "stop_ack_and_quiet": final_quiet,
+        "observation_60s": duration >= 60,
         "no_tx_after_stop": tx_after_stop == 0,
-        "no_functional_tx": functional == 0,
-        "no_fc_on_probe_ff": fc_in_probe == 0,
-        "pinned_when_healthy": pinned or expect_stop,
+        "no_functional_tx": not any(e["id"] in (0x7DF, 0x18DB33F1) for e in raw_txs),
+        "tx_allowlist": tx_allowed,
+        "no_fc_on_probe_ff": scenario not in ("ff_probe", "cf_probe", "malformed", "extra", "duplicate", "wrong_src", "eleven_bit", "negative", "late", "noreply") or not fc_txs,
+        "positive_acquisition": (sample_ok and healthy_first and bool(group_txs) and bool(fc_txs)) if not expect_stop or after_healthy else not samples,
+        "sustained_cadence": sustained if scenario in ("normal", "split", "rearm") else True,
+        "both_admission_gates": gate_ok and retry_ok,
+        "epoch_separation": rearm_ok and packet_ok,
         "within_100ms_cap": peaks["peak100_bits"] <= CAP_100MS,
         "within_1s_cap": peaks["peak1000_bits"] <= CAP_1S,
     }
-    reason = None
-    if stopped:
-        m = re.search(r"reason=([^,]+)", events[stop_idx]["text"])
-        reason = m.group(1) if m else None
+    if scenario == "overflow":
+        # This scenario deliberately exceeds the RX envelope. Preserve the high
+        # measured load; qualify only the expected fail-closed reaction.
+        checks["within_100ms_cap"] = peaks["peak100_bits"] > CAP_100MS and stop_ok
+        checks["within_1s_cap"] = peaks["peak1000_bits"] > CAP_1S and stop_ok
+        checks["intentional_rx_overload_stopped"] = stop_ok
+        checks["overflow_observed"] = any(int(e.get("accepted", 0)) == 256 and e.get("rejected") == "1" for e in kind("overflow"))
+    if scenario == "overflow":
+        checks["expected_100ms_rx_overload"] = checks.pop("within_100ms_cap")
+        checks["expected_1s_rx_overload"] = checks.pop("within_1s_cap")
     return {"scenario": scenario, "pass": all(checks.values()), "checks": checks,
-            "stop_reason": reason, "tx_after_stop": tx_after_stop, "pinned": pinned,
+            "stop_reason": reason, "tx_after_stop": tx_after_stop, "pinned": bool(samples),
             "independent_load": peaks,
-            "note": "load counted from bridged frames at 200 bits; not a wire measurement"}
+            "note": "Board-timed virtual events at 200 bits/frame; no electrical/retry proof."}
 
 
-def run(port, scenario, seconds):
-    import serial  # pyserial, operator machine only
+def run(port, scenario, seconds, trace_path):
+    import serial
     ecu = VirtualEcu(scenario)
-    ser = serial.Serial(port, 115200, timeout=0.001)
-    events, scheduled, t0 = [], [], time.monotonic()
-
-    def send(line):
-        ser.write((line + "\n").encode())
-        now = time.monotonic() - t0
-        if line.startswith("HIL RX "):
-            events.append({"t": now, "kind": "rx", "text": line})
-
-    for cmd in ["SIGV2 CAN STOP", "HIL RESET"] + ecu.setup() + ["SIGV2 CAN ARM"]:
-        send(cmd)
-        time.sleep(0.05)
+    ser = serial.Serial(port, 115200, timeout=.001, write_timeout=.1)
+    ser.reset_input_buffer()
+    events, scheduled = [], []
+    nonce = secrets.token_hex(16)
+    start = time.monotonic()
     buf = b""
-    while time.monotonic() - t0 < seconds:
-        now = time.monotonic() - t0
-        due = [s for s in scheduled if s[0] <= now]
-        for s in due:
-            scheduled.remove(s)
-            send(s[1])
-        buf += ser.read(4096)
-        while b"\n" in buf:
-            raw, buf = buf.split(b"\n", 1)
-            text = raw.decode(errors="replace").strip()
-            m = TX_RE.match(text)
-            if m:
-                cid, data = int(m.group(2), 16), bytes.fromhex(m.group(5))
-                events.append({"t": now, "kind": "tx", "id": cid, "data": data, "text": text})
-                for delay, line in ecu.on_tx(cid, data):
-                    scheduled.append((now + delay, line))
-            elif text.startswith("#"):
-                events.append({"t": now, "kind": "line", "text": text})
-    send("SIGV2 CAN STOP")
-    ser.close()
-    result = evaluate(scenario, events)
-    result["fc_seen"] = ecu.fc
-    return result
+    phase, phase_at, stopped_once = "initial_stop", start, False
+    fence_sent, final_sent = False, False
+    arm_host = None
+    race_generation = 0
+    active_boot, time_offset = None, 0.0
+    reboot_seen = False
+    current_generation = 0
+    initial_deadline = start + 5
+
+    def send(line, record=True):
+        if line.startswith("HIL RX 0 "):
+            line = line.replace("HIL RX 0 ", "HIL RX %d " % current_generation, 1)
+        wire = (line + "\n").encode()
+        if ser.write(wire) != len(wire):
+            raise RuntimeError("short serial write")
+        if record:
+            events.append({"kind":"write", "host_t":time.monotonic()-start, "text":line})
+
+    # Bounded state machine: read the STOP ACK before fencing or arming; keep
+    # reading through final STOP and a full quiet second before final fence.
+    try:
+        send("SIGV2 CAN STOP",False)
+        while time.monotonic()-start < seconds+(60 if scenario == "reboot" else 20):
+            now = time.monotonic()
+            if phase in ("initial_stop", "fencing") and now > initial_deadline:
+                events.append({"kind":"parse_error", "text":"handshake timeout"})
+                break
+            if phase == "initial_stop" and now-phase_at > 1:
+                # Reissue STOP: idle firmware may already have acknowledged its
+                # boot epoch before this process opened the port.
+                send("SIGV2 CAN STOP", False); phase_at = now
+            for due,line in list(scheduled):
+                if due <= now:
+                    scheduled.remove((due,line)); send(line)
+            try:
+                buf += ser.read(4096)
+            except serial.SerialException:
+                if scenario != "reboot" or not any(e["kind"] == "sample" for e in events):
+                    raise
+                ser.close()
+                # USB re-enumeration is expected only for this operator-driven
+                # scenario. Reconnect the specified port; never reset hardware.
+                reconnect_until=time.monotonic()+10
+                while True:
+                    try:
+                        ser=serial.Serial(port,115200,timeout=.001,write_timeout=.1)
+                        break
+                    except serial.SerialException:
+                        if time.monotonic()>=reconnect_until:raise
+                        time.sleep(.05)
+                phase="initial_stop";phase_at=time.monotonic();initial_deadline=phase_at+10
+                scheduled.clear();send("SIGV2 CAN STOP",False)
+                continue
+            while b"\n" in buf:
+                raw,buf = buf.split(b"\n",1)
+                text = raw.decode(errors="replace").strip()
+                if not text:
+                    continue
+                if phase == "initial_stop":
+                    if "ack=STOPPED" in text or "kind=stopped" in text:
+                        send("HIL FENCE " + nonce, False);phase="fencing";phase_at=now
+                    continue
+                try:
+                    e = parse_event(text)
+                except (ValueError, KeyError):
+                    e = {"kind":"parse_error", "text":text}
+                if e is None:
+                    e = {"kind":"line", "text":text}
+                e["host_t"] = now-start
+                if "gen" in e: current_generation=e["gen"]
+                if scenario == "reboot" and e.get("boot") and active_boot and e["boot"] != active_boot and phase != "fencing":
+                    if reboot_seen or not any(x["kind"] == "sample" for x in events):
+                        events.append({"kind":"parse_error", "text":"unexpected reboot"});break
+                    reboot_seen=True;phase="initial_stop";phase_at=now;initial_deadline=now+10
+                    scheduled.clear();send("SIGV2 CAN STOP",False)
+                    continue
+                if phase == "fencing":
+                    if e.get("kind") != "fence" or e.get("nonce") != nonce:
+                        continue
+                    phase="running";phase_at=now
+                    if active_boot and e.get("boot") != active_boot:
+                        time_offset=max(x.get("t",0) for x in events)+1-e["t"]
+                    active_boot=e.get("boot")
+                    e["raw_t_us"]=e.get("t_us");e["t"]+=time_offset
+                    events.append(e)
+                    for cmd in ecu.setup(): send(cmd)
+                    send("SIGV2 CAN ARM");arm_host=now
+                    continue
+                if "seq" in e:
+                    e["raw_t_us"]=e.get("t_us");e["t"]+=time_offset
+                    if "observed_us" in e:
+                        e["raw_observed_us"]=e["observed_us"]
+                        e["observed_us"]=str(int(e["observed_us"])+round(time_offset*1e6))
+                events.append(e)
+                k=e["kind"]
+                if k == "tx" and e.get("ok"):
+                    for delay,line in ecu.on_tx(e["id"], e["data"]):
+                        scheduled.append((now+delay,line))
+                    if scenario in ("rearm", "overlap") and ecu.groups == 2 and not stopped_once:
+                        race_generation=e["gen"];scheduled.clear();send("SIGV2 CAN STOP");stopped_once=True;phase="race_stop"
+                if k == "stopped":
+                    phase_at=now
+                    if phase == "race_stop":
+                        # Late completion arrives after the acknowledged stable
+                        # drain boundary, then re-ARM only after its rejection.
+                        if scenario == "rearm":
+                            send(rx_line(ECU_RX,GROUP_CF[0],generation=race_generation));phase="old_completion"
+                        else:
+                            phase="old_quiet"
+                    elif final_sent:
+                        phase="quiet"
+                if phase == "old_completion" and k == "rx":
+                    phase="old_quiet";phase_at=now
+                if scenario == "admission" and k == "sample" and not final_sent:
+                    send("SIGV2 CAN STOP");final_sent=True;phase="final_stop"
+                if fence_sent and k == "fence" and e.get("nonce") == nonce+"end":
+                    return evaluate(scenario,events), events
+            if phase == "old_quiet" and now-phase_at >= 1:
+                send("SIGV2 CAN ARM");phase="running"
+            if arm_host is not None and now-arm_host >= seconds and not final_sent:
+                scheduled.clear();send("SIGV2 CAN STOP");final_sent=True;phase="final_stop";phase_at=now
+            if phase == "quiet" and now-phase_at >= 1 and arm_host is not None and now-arm_host >= seconds and not fence_sent:
+                send("HIL FENCE " + nonce+"end");fence_sent=True
+        events.append({"kind":"parse_error", "text":"phase timeout: "+phase})
+        return evaluate(scenario,events), events
+    finally:
+        ser.close()
+        # Save all records including load lines, host scheduling, rejected RX,
+        # attempts, board sequence/timestamps and partial/malformed evidence.
+        with open(trace_path,"w") as out:
+            for e in events:
+                out.write(json.dumps(e,default=lambda v:v.hex() if isinstance(v,bytes) else str(v))+"\n")
+            if buf: out.write(json.dumps({"kind":"partial","text":buf.decode(errors="replace")})+"\n")
 
 
 def main():
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--port", required=True)
     p.add_argument("--scenario", default="normal", choices=sorted(SCENARIOS))
-    p.add_argument("--seconds", type=float, default=8.0)
+    p.add_argument("--seconds", type=float, default=60.0)
+    p.add_argument("--trace", required=True, help="complete JSONL evidence artifact")
     a = p.parse_args()
-    result = run(a.port, a.scenario, a.seconds)
-    print(json.dumps(result, indent=2))
-    if result["stop_reason"] and SCENARIOS[a.scenario][0]:
-        print("Note: a latched driver fault (busoff/rxmiss) needs a reboot before the next scenario.",
-              file=sys.stderr)
+    if a.seconds < 60:
+        p.error("qualification requires at least 60 seconds")
+    result, _ = run(a.port,a.scenario,a.seconds,a.trace)
+    print(json.dumps(result,indent=2))
     return 0 if result["pass"] else 1
 
 

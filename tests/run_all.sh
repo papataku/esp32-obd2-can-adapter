@@ -90,3 +90,8 @@ c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
 
 # Independent PR65 safety review: production monitor + owner, policy and C++11 ODR.
 bash tests/run_pr65_regressions.sh
+
+# PR66 stopped drain, lifecycle/admission and complete board-timed oracle.
+bash tests/run_hil_regressions.sh
+python3 tests/test_hil_evidence.py
+python3 tests/test_hil_runner.py

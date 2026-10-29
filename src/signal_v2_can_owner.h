@@ -8,6 +8,9 @@
 #include "signal_v2_discovery_profile.h"
 #include "signal_v2_simulator.h"
 #include <Arduino.h>
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+#include "twai_hil.h"
+#endif
 #include <array>
 #include <cstring>
 namespace signal_v2 {
@@ -32,6 +35,9 @@ class CanOwner {
   uint8_t probe_index_=0,verified_count_=0;
   bool discovery_running_=false;
   void stop(const char* reason,uint8_t quality=10){
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    if(!stopped_)hil::note("kind=fault,epoch=%lu,reason=%s",(unsigned long)epoch_,reason);
+#endif
     samples_.invalidate(quality);
     if(!stopped_)Serial.printf("#SIGNALV2_CAN,stopped=1,reason=%s,invalid=%lu\n",
       reason,static_cast<unsigned long>(samples_.invalidations));
@@ -153,6 +159,14 @@ class CanOwner {
       ++s.sequence;
     }
     ++samples_.acquired;
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=sample,epoch=%lu,source=%08lX,observed_us=%llu,speed=%u,rpm=%u,quality=%u,acquired=%lu,source_generation=%lu,mode_epoch=%lu",
+      (unsigned long)epoch_,(unsigned long)samples_.source_id,
+      (unsigned long long)r.completed_at_us,unsigned(samples_.values[0].raw[2]),
+      unsigned((samples_.values[1].raw[2]*256U+samples_.values[1].raw[3])/4U),
+      unsigned(samples_.values[0].quality),(unsigned long)samples_.acquired,
+      (unsigned long)samples_.source_generation,(unsigned long)samples_.mode_epoch);
+#endif
   }
 public:
   void attach(m5can::CanMonitor* can){can_=can;}
@@ -296,6 +310,11 @@ public:
       req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
       if(!budget_.reserve(now,4,120)){stop("LOAD_BUDGET_ESSENTIAL");return;}
     }
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=gate,gate=owner,epoch=%lu,cost=%u,used100=%lu,used1000=%lu,discovery=%u",
+      (unsigned long)epoch_,discovery||essential_?800U:2400U,
+      (unsigned long)budget_.used100,(unsigned long)budget_.used1000,discovery?1U:0U);
+#endif
     if(!can_->acquireLease(550)||!can_->submitQuery(req)){
       stop("QUERY_ADMISSION_FAILED",10);return;
     }

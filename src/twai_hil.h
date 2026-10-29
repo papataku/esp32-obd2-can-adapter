@@ -18,6 +18,12 @@ esp_err_t receive(twai_message_t* message,TickType_t ticks);
 esp_err_t get_status_info(twai_status_info_t* info);
 // USB line handler; true when the line was a HIL command (consumed).
 bool usbCommand(const char* line);
+void poll();
+uint32_t currentGeneration();
+#if defined(M5CAN_HIL_HOST_TEST)
+void admissionHook();
+#endif
+void note(const char* format,...);
 } // namespace hil
 #if defined(M5CAN_TWAI_HIL_REDIRECT)
 #define twai_driver_install hil::driver_install

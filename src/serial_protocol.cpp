@@ -1013,6 +1013,9 @@ void SerialProtocol::processNativeByte(uint8_t byte) {
 }
 
 void SerialProtocol::pollInput() {
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  hil::poll();
+#endif
   handleBleDisconnect();
 
   if (elm_query_pending_) {

@@ -562,6 +562,11 @@ void CanMonitor::performQuery(
       terminal=DiagnosticStatus::RateLimited;terminal_set=true;
     }
   }
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  if(!terminal_set && request.signal_v2)hil::note("kind=gate,gate=monitor,cost=%u,used100=%lu,used1000=%lu,discovery=%u",
+    request.length==3?800U:2400U,(unsigned long)signal_budget_.used100,
+    (unsigned long)signal_budget_.used1000,discovery?1U:0U);
+#endif
   if (!terminal_set) {
     const twai_message_t tx =
         makeDiagnosticRequestFrame(request);
