@@ -24,6 +24,9 @@ ECU_RX = 0x18DAF101          # ECU01 response ID (RP8 evidence)
 ECU_TX = 0x18DA01F1          # physical request to ECU01
 BITS_PER_FRAME = 200         # conservative accounting used by the firmware
 CAP_100MS, CAP_1S = 5000, 25000
+# A fault or disconnect must reach its completed STOP within the same 3s bound
+# used for detection; the final operator STOP is evaluated separately.
+STOP_COMPLETION_S = 3.0
 
 PROBE = bytes([0x03, 0x01, 0x0C, 0x0D])
 GROUP = bytes([0x06, 0x01, 0x0D, 0x0C, 0x05, 0x5B, 0x9A])
@@ -213,6 +216,12 @@ def evaluate(scenario, events):
     expected = Counter("HIL RX 0 " + " ".join(e["text"].split()[3:]) for e in writes)
     accepted = Counter(rx_line(e["id"], e["data"], bool(e["ext"])) for e in rxs)
     acknowledged = expected == accepted and all(e["ok"] for e in rxs)
+    # The generation is part of the injection contract: an admitted RX must
+    # consume a host write bound to the board's generation at admission time.
+    bound = Counter((e["text"].split()[2], " ".join(e["text"].split()[3:])) for e in writes)
+    admitted = Counter((str(e.get("gen")), rx_line(e["id"], e["data"], bool(e["ext"]))[len("HIL RX 0 "):])
+                       for e in rxs if e["ok"])
+    generation_bound = not (admitted - bound)
     tx_allowed = all(e.get("ext") == 1 and e["id"] == ECU_TX and e.get("dlc") == 8 and
                      e["data"] in (PROBE.ljust(8, b"\0"), GROUP.ljust(8, b"\0"), b"\x30" + b"\0"*7)
                      for e in txs)
@@ -269,12 +278,26 @@ def evaluate(scenario, events):
     initial_model=VirtualEcu(scenario)
     required_rx=Counter(line for _,line in initial_model.on_tx(ECU_TX,PROBE) if line.startswith("HIL RX "))
     exact_initial_rx=initial_rx==required_rx
+    def completed_stop(trigger):
+        # First completion after the trigger, before any operator STOP request,
+        # into a later authorization epoch. A final operator ACK cannot stand in.
+        if not trigger:
+            return False
+        later = [x for x in board if x["seq"] > trigger["seq"] and x.get("boot") == trigger.get("boot")
+                 and x["kind"] in ("stopped", "stop_request")]
+        if not later or later[0]["kind"] != "stopped":
+            return False
+        done = later[0]
+        armed = [int(a.get("epoch", 0)) for a in arms if a["seq"] < trigger["seq"] and a.get("boot") == trigger.get("boot")]
+        return bool(armed) and 0 <= done["t"] - trigger["t"] <= STOP_COMPLETION_S and int(done.get("epoch", 0)) > armed[-1]
     stop_ok = bool(faults and reason in FAULT_REASONS.get(scenario, set()) and
-                   faults[0]["t"] - first_arm <= 3) if expect_stop else not faults
+                   faults[0]["t"] - first_arm <= 3 and completed_stop(faults[0])) if expect_stop else not faults
     if expect_stop and scenario in ("busoff","buserr","rxmiss","overflow"):
         stop_ok &= bool(commands and faults and 0 <= faults[0]["t"]-commands[0]["t"] <= .25)
     if scenario == "disconnect":
-        stop_ok = bool(kind("disconnect") and stops and stops[-1]["t"]-kind("disconnect")[0]["t"] <= 3)
+        disconnects = kind("disconnect")
+        stop_ok = bool(disconnects and samples and samples[0]["t"] < disconnects[0]["t"] and
+                       completed_stop(disconnects[0]))
     if scenario == "noreply":
         fault_injected = not rxs
     if scenario == "overlap":
@@ -284,6 +307,8 @@ def evaluate(scenario, events):
         retry_ok &= len(probe_txs) == (2 if scenario == "overlap" else 1)
     if scenario == "txfail":
         retry_ok &= len(txs) == 1 and txs[0]["ok"] == 0
+    else:
+        retry_ok &= all(e["ok"] == 1 for e in txs)
     for gate in ("owner","monitor"):
         retry_ok &= len([e for e in gates if e.get("gate") == gate]) == len(txs)-len(fc_txs)
     gate_ok = all(e.get("cost") in ("800", "2400") and int(e.get("used100", 99999)) <= 5000 and
@@ -295,6 +320,15 @@ def evaluate(scenario, events):
     if scenario == "admission":
         gate_ok &= all(int(e["used100"]) <= 4000 and int(e["used1000"]) <= 5600 for e in gates)
     packet_ok = all(e.get("current") == "1" for e in kind("packet"))
+    for e in kind("packet"):
+        if not int(e.get("fresh", 0)):
+            continue
+        active = [a for a in arms if a["seq"] < e["seq"] and a.get("boot") == e.get("boot")]
+        closed = [x for x in stops if x["seq"] < e["seq"] and x.get("boot") == e.get("boot")]
+        packet_ok &= bool(active) and int(e.get("epoch", 0)) == int(active[-1].get("epoch", -1))
+        if closed:
+            packet_ok &= (int(e.get("source_generation", 0)) > int(closed[-1].get("source_generation", 0)) and
+                          int(e.get("mode_epoch", 0)) > int(closed[-1].get("mode_epoch", 0)))
     for e in samples + [x for x in kind("packet") if int(x.get("fresh", 0))]:
         previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault")]
         packet_ok &= bool(previous and previous[-1]["kind"] == "arm")
@@ -302,6 +336,11 @@ def evaluate(scenario, events):
     if scenario == "overlap":
         rearm_ok = len(arms)==2 and len(stops)>=2 and epochs[1]>int(stops[0]["epoch"])>epochs[0]
         rearm_ok &= bool(faults and faults[0]["t"]>arms[-1]["t"])
+        # Missing Snapshot evidence prevents qualification (runbook): Invalid
+        # across the first STOP before re-ARM, and Invalid after the fault.
+        snapshots = [e for e in kind("packet") if e.get("type") == "33"]
+        rearm_ok &= bool(stops) and any(stops[0]["t"] < e["t"] < arms[-1]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)
+        rearm_ok &= bool(faults) and any(e["t"] > faults[0]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)
     if scenario == "rearm":
         rearm_ok = len(arms) == 2 and len(stops) >= 2 and epochs[1] > int(stops[0]["epoch"]) > epochs[0]
         old_cf=[e for e in rxs if e["id"]==ECU_RX and e["ext"]==1 and e["data"]==GROUP_CF[0]
@@ -331,7 +370,7 @@ def evaluate(scenario, events):
         bp=window_peaks(times)
         for k,v in bp.items():peaks[k]=max(peaks[k],v)
     checks = {
-        "transport_complete": complete and not errors and acknowledged,
+        "transport_complete": complete and not errors and acknowledged and generation_bound,
         "fresh_fenced_epoch": epoch_ok and len(fences) >= 2 and fences[-1].get("nonce") == fences[0].get("nonce", "")+"end" and fences[0]["seq"] < arms[0]["seq"] if arms else False,
         "scenario_exercised": bool(probe_txs) and fault_injected and exact_initial_rx and (not after_healthy or healthy_first),
         "stop_as_expected": stop_ok,

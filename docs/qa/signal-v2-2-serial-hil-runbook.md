@@ -89,6 +89,15 @@ or missing Snapshot evidence prevents qualification. Snapshot telemetry records
 successful notification submission, not receipt by the central; retain the
 central's correlated Snapshot capture as separate end-to-end evidence.
 
+Evaluator correlation (re-review R1-R3): a fault or disconnect qualifies only
+with the **first completed STOP after it**, before any operator STOP request,
+within 3s and into a later authorization epoch; the final operator STOP/quiet
+is checked separately. `overlap` requires an Invalid Snapshot between the first
+STOP and re-ARM and another after the fault; every Fresh Snapshot must carry
+the active ARM epoch and generations newer than the last STOP, independent of
+the board's `current=1`. Admitted RX must match a host write of the same
+generation, and every non-`txfail` TX (including FC) must report `ok=1`.
+
 ## Model boundaries and required evidence
 
 Host regressions exercise the **real shim plus production switchDriverMode**,
