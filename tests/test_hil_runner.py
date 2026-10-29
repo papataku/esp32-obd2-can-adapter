@@ -60,6 +60,16 @@ class Runner(unittest.TestCase):
             self.assertEqual(port.commands[-2],'SIGV2 CAN STOP')
             self.assertTrue(port.commands[-1].endswith('end'))
             self.assertGreaterEqual(clock.now,61)
+    def test_m3_reboot_waits_for_secured_central(self):
+        source=pathlib.Path(h.__file__).read_text()
+        # Reconnect readiness is queried without attempting ARM. A rejected ARM
+        # remains a failure; reconnect cannot be hidden by retrying ARM.
+        phase=source.split('if scenario == "reboot" and reboot_seen:')[1].split('continue')[0]
+        ready=phase.split('else:')[0]
+        self.assertIn('phase="reboot_ready"',ready)
+        self.assertIn('send("SIGV2 CAN READY")',ready)
+        self.assertNotIn('send("SIGV2 CAN ARM")',ready)
+        self.assertIn('phase == "reboot_ready" and k == "ready" and e.get("ok") == "1"',source)
     def test_m4_short_write_rejected(self):
         clock=Clock();port=Port(clock,short=True)
         with tempfile.TemporaryDirectory() as d,patch.object(h,'time',clock),patch.dict(sys.modules,serial=types.SimpleNamespace(Serial=lambda *a,**k:port,SerialException=OSError)):

@@ -59,7 +59,8 @@ All normal traffic and **both** reservation gates retain 200 bits/frame,
 6. For `reboot`, manually reboot during acquisition after its first successful
    sample, within the first ten seconds. The same serial port must reappear
    within ten seconds. Reconnect the secured central with demand promptly;
-   the runner fences the distinct boot, explicitly ARMs again and observes
+   the runner fences the distinct boot, waits up to ten seconds for a read-only
+   `SIGV2 CAN READY` confirmation, explicitly ARMs again and observes
    another 60 seconds. Two samples/identities, new discovery reservations and
    no promotion across the boot boundary are required. Failure to reconnect,
    an unexpected extra reset, or a missing boot identity fails the run.

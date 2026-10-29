@@ -375,6 +375,7 @@ def run(port, scenario, seconds, trace_path):
     race_generation = 0
     active_boot, time_offset = None, 0.0
     reboot_seen = False
+    ready_deadline = 0
     current_generation = 0
     initial_deadline = start + 5
 
@@ -454,8 +455,12 @@ def run(port, scenario, seconds, trace_path):
                     active_boot=e.get("boot")
                     e["raw_t_us"]=e.get("t_us");e["t"]+=time_offset
                     events.append(e)
-                    for cmd in ecu.setup(): send(cmd)
-                    send("SIGV2 CAN ARM");arm_host=now
+                    if scenario == "reboot" and reboot_seen:
+                        phase="reboot_ready";phase_at=now;ready_deadline=now+10
+                        send("SIGV2 CAN READY")
+                    else:
+                        for cmd in ecu.setup(): send(cmd)
+                        send("SIGV2 CAN ARM");arm_host=now
                     continue
                 if "seq" in e:
                     e["raw_t_us"]=e.get("t_us");e["t"]+=time_offset
@@ -464,6 +469,8 @@ def run(port, scenario, seconds, trace_path):
                         e["observed_us"]=str(int(e["observed_us"])+round(time_offset*1e6))
                 events.append(e)
                 k=e["kind"]
+                if phase == "reboot_ready" and k == "ready" and e.get("ok") == "1":
+                    send("SIGV2 CAN ARM");arm_host=now;phase="running"
                 if k == "tx" and e.get("ok"):
                     for delay,line in ecu.on_tx(e["id"], e["data"]):
                         scheduled.append((now+delay,line))
@@ -486,9 +493,13 @@ def run(port, scenario, seconds, trace_path):
                     send("SIGV2 CAN STOP");final_sent=True;phase="final_stop"
                 if fence_sent and k == "fence" and e.get("nonce") == nonce+"end":
                     return evaluate(scenario,events), events
+            if phase == "reboot_ready" and now-phase_at >= .1:
+                if now > ready_deadline:
+                    events.append({"kind":"parse_error","text":"central reconnect timeout"});break
+                send("SIGV2 CAN READY");phase_at=now
             if phase == "old_quiet" and now-phase_at >= 1:
                 send("SIGV2 CAN ARM");phase="running"
-            if arm_host is not None and now-arm_host >= seconds and not final_sent:
+            if phase not in ("initial_stop","fencing","reboot_ready") and arm_host is not None and now-arm_host >= seconds and not final_sent:
                 scheduled.clear();send("SIGV2 CAN STOP");final_sent=True;phase="final_stop";phase_at=now
             if phase == "quiet" and now-phase_at >= 1 and arm_host is not None and now-arm_host >= seconds and not fence_sent:
                 send("HIL FENCE " + nonce+"end");fence_sent=True

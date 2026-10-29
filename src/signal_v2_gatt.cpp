@@ -177,6 +177,17 @@ void manage(const char *cmd, uint32_t now) {
     Serial.println("#SIGNALV2_CAN,armed=0,reason=OPERATOR_STOP,ack=REQUESTED");
     return;
   }
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  if(!std::strcmp(cmd,"SIGV2 CAN READY")) {
+    bool ready=false;
+    for(unsigned i=0;i<2;++i){
+      auto l=snapshot(i);
+      if(l.active&&l.status&&l.data&&authorized(l)&&peers[i].session.active(now))ready=true;
+    }
+    hil::note("kind=ready,ok=%u",ready?1U:0U);
+    return;
+  }
+#endif
   if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {
     bool secured=false;
     for(unsigned i=0;i<2;++i){
