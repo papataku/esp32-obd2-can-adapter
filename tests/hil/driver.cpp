@@ -2,6 +2,9 @@
 #include <iostream>
 #include <thread>
 #include <atomic>
+// Load the stub and its STL dependencies before exposing monitor internals.
+// In particular, GCC libstdc++ mutex access specifiers must stay untouched.
+#include <Arduino.h>
 #define private public
 #include "can_monitor.h"
 #undef private
