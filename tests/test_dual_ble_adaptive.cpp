@@ -150,6 +150,7 @@ uint32_t CanMonitor::leaseRemainingMs() const {
   return lease_deadline_ms_>millis()?lease_deadline_ms_-millis():0;
 }
 CanStats CanMonitor::stats() const {return stats_;}
+void CanMonitor::stats(CanStats& copy) const {copy=stats_;}
 bool CanMonitor::submitQuery(const DiagnosticRequest& r) {
   if(log_checkpoint_active_)return false;
   assert(!query_in_flight_); assert(leaseRemainingMs());

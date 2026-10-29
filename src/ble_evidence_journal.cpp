@@ -57,7 +57,10 @@ void BleEvidenceJournal::begin(uint32_t boot,const char* build) {
   started_=boot!=0;
   dirty_=persisted_=urgent_=false;
   last_attempt_ms_=last_success_ms_=0;
-  last_can_=CanStats{};last_ble_=BleStats{};health_initialized_=false;
+  // CanStats is all-zero initialized. Clear its member storage directly;
+  // aggregate assignment materializes a full snapshot on the task stack.
+  std::memset(static_cast<void*>(&last_can_),0,sizeof(last_can_));
+  last_ble_=BleStats{};health_initialized_=false;
 }
 void BleEvidenceJournal::recordFault(uint16_t code,uint32_t detail,uint32_t at_ms,
                                      uint32_t occurrences) {
@@ -83,7 +86,8 @@ void BleEvidenceJournal::appendError(DiagnosticError code,uint32_t detail,
 void BleEvidenceJournal::observeHealth(const CanStats& can,const BleStats& ble) {
   if(!started_)return;
   if(!health_initialized_) {
-    last_can_=CanStats{};last_ble_=BleStats{};health_initialized_=true;
+    std::memset(static_cast<void*>(&last_can_),0,sizeof(last_can_));
+    last_ble_=BleStats{};health_initialized_=true;
   }
   const uint32_t now=millis();
   auto recordDelta=[&](uint64_t newer,uint64_t old,DiagnosticError code) {

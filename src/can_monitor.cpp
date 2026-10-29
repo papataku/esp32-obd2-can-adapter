@@ -730,6 +730,11 @@ bool CanMonitor::recordObservedDiagnostic(uint32_t now) {
 
 CanStats CanMonitor::stats() const {
   CanStats copy{};
+  stats(copy);
+  return copy;
+}
+
+void CanMonitor::stats(CanStats& copy) const {
   portENTER_CRITICAL(&stats_mux_);
   copy = stats_;
   observed_budget_.refresh(millis());
@@ -738,7 +743,6 @@ CanStats CanMonitor::stats() const {
   copy.observed_peak100=observed_budget_.peak100;
   copy.observed_peak1000=observed_budget_.peak1000;
   portEXIT_CRITICAL(&stats_mux_);
-  return copy;
 }
 
 }  // namespace m5can

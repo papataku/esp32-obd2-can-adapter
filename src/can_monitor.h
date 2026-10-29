@@ -60,6 +60,8 @@ class CanMonitor {
   bool begin();
   bool pop(CapturedFrame& frame, TickType_t wait_ticks = 0);
   CanStats stats() const;
+  // Fill caller-owned storage without a full snapshot temporary on its stack.
+  void stats(CanStats& copy) const;
   RawCanCapture& rawCapture() { return raw_capture_; }
   const RawCanCapture& rawCapture() const { return raw_capture_; }
   bool running() const { return running_; }
