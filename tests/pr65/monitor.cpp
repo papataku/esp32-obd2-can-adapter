@@ -169,4 +169,44 @@ int main(int argc,char** argv) {
    assert(r.status==DiagnosticStatus::Ok&&r.response_count==1&&r.responses[0].length==17);
    assert(sent.size()==n+2&&sent.back().data[0]==0x30);
    std::cout<<"PASS regular group FF+2CF, one FC, 17-byte result\n";}
+  if(test("R1")){
+    CanMonitor m;g_test_millis=12000;q=probe();rx={{12010,good}};
+    assert(run(m,q).status==DiagnosticStatus::Ok);
+    // Preserve discovery -> first regular 200ms guard even for essential.
+    q.signal_v2_essential=true;g_test_millis=12150;rx.clear();
+    const auto before=sent.size();
+    assert(run(m,q).status==DiagnosticStatus::RateLimited && sent.size()==before);
+    unsigned full=0,essential=0;
+    for(uint32_t t=12200;t<=15400;t+=100){
+      g_test_millis=t;q=probe();
+      // Mirror owner admission at this exact boundary, retaining durations.
+      m.signal_budget_.refresh(t);
+      const bool group=m.signal_budget_.used100+3200<=5000 &&
+                       m.signal_budget_.used1000+3200<=25000;
+      if(group){
+        ++full;q.length=6;
+        const uint8_t d[]={1,0x0D,0x0C,5,0x5B,0x9A};std::copy(d,d+6,q.data);
+        rx={{t+10,frame(0x18DAF101,{0x10,17,0x41,0x0D,0,0x0C,0x13,0x88})},
+            {t+20,frame(0x18DAF101,{0x21,5,0x50,0x5B,0x64,0x9A,1,2})},
+            {t+30,frame(0x18DAF101,{0x22,3,4,5,6})}};
+      }else{++essential;q.signal_v2_essential=true;rx={{t+10,good}};}
+      const auto n=sent.size();const auto r=run(m,q);
+      assert(r.status==DiagnosticStatus::Ok && r.response_count==1 && !m.faultLocked());
+      assert(g_test_millis<t+100 && sent.size()==n+(group?2:1));
+      assert(m.signal_budget_.peak100<=5000 && m.signal_budget_.peak1000<=25000);
+    }
+    assert(full && essential && full+essential==33);
+    std::cout<<"PASS R1 monitor sustained 10Hz admission, essential zero FC, M6 guard\n";
+    // Even a marked essential read is indivisible at the lower boundary.
+    CanMonitor blocked;g_test_millis=16000;rx.clear();q=probe();q.signal_v2_essential=true;
+    assert(blocked.signal_budget_.reserve(16000,24,120));const auto n=sent.size();
+    assert(run(blocked,q).status==DiagnosticStatus::RateLimited && sent.size()==n);
+    // Essential keeps the SF contract: FF cannot cause FC.
+    CanMonitor bad;g_test_millis=17000;
+    rx={{17010,frame(0x18DAF101,{0x10,8,0x41,0x0C,0,0,0,0})}};
+    const auto b=sent.size();assert(run(bad,q).status==DiagnosticStatus::IsoTpError);
+    assert(sent.size()==b+1 && bad.faultLocked());
+    std::cout<<"PASS R1 essential lower denial zero TX and FF zero FC\n";
+  }
+
 }

@@ -284,8 +284,17 @@ public:
     }
     // Physical group: request + <=10 candidate RX + <=1 FC, prepaid.
     // Discovery probe: request + <=2 SF + 1 allowance, no FC (PR-A section 2).
-    if(!budget_.reserve(now,discovery?CanBudget::ProbeFrames:12,120)){
-      stop(discovery?"LOAD_BUDGET_DISCOVERY":"LOAD_BUDGET_GROUP");return;
+    // At 100ms cadence, two full 120ms reservations leave no room even
+    // for the next essential read. Keep one essential reservation of
+    // headroom when choosing a full group; 5Hz selection is unchanged.
+    const bool full_headroom=discovery || period_>=200 || budget_.permits(now,16);
+    if(!full_headroom || !budget_.reserve(now,discovery?CanBudget::ProbeFrames:12,120)){
+      if(discovery){stop("LOAD_BUDGET_DISCOVERY");return;}
+      // Shed only regular auxiliary reads; keep the same pinned ECU and
+      // reserve the entire SF-only essential transaction before submission.
+      essential_=true;req.signal_v2_essential=true;req.length=3;
+      req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
+      if(!budget_.reserve(now,4,120)){stop("LOAD_BUDGET_ESSENTIAL");return;}
     }
     if(!can_->acquireLease(550)||!can_->submitQuery(req)){
       stop("QUERY_ADMISSION_FAILED",10);return;

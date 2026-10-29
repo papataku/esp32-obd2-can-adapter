@@ -27,6 +27,9 @@ struct DiagnosticRequest {
   uint8_t data[8]{};
   uint32_t timeout_ms = 200;
   bool signal_v2 = false; // Dedicated V2 internal CAN owner.
+  // Owner-only regular auxiliary shedding; same SF contract as discovery,
+  // but not a new discovery probe (which requires 200ms boundary spacing).
+  bool signal_v2_essential = false;
 };
 
 struct DiagnosticRawFrame {

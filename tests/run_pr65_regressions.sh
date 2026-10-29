@@ -8,7 +8,7 @@ sources=(src/diagnostic_policy.cpp src/diagnostic_transaction.cpp src/isotp_reas
 # Before-fix audit can run all findings separately, without masking later failures.
 failed=0
 c++ "${flags[@]}" -DM5CAN_SIGNAL_V2_RP8_PROFILE=1 tests/pr65/monitor.cpp src/can_monitor.cpp "${sources[@]}" tests/host_stubs/stubs.cpp -o "$build/monitor"
-for finding in M1 M2 M3 M6 M7 m1 controls; do
+for finding in M1 M2 M3 M6 M7 m1 controls R1; do
   "$build/monitor" "$finding" || failed=1
 done
 for profile in empty rp8 rp8-10hz; do
@@ -16,6 +16,10 @@ for profile in empty rp8 rp8-10hz; do
   if [[ "$profile" != empty ]]; then extra+=(-DM5CAN_SIGNAL_V2_RP8_PROFILE=1); fi
   if [[ "$profile" == rp8-10hz ]]; then extra+=(-DM5CAN_SIGNAL_V2_10HZ_LAB=1); fi
   c++ "${flags[@]}" "${extra[@]}" tests/pr65/owner.cpp "${sources[@]}" -o "$build/owner"
+  if [[ "$profile" != empty ]]; then
+    c++ "${flags[@]}" "${extra[@]}" tests/pr65/owner-cadence.cpp "${sources[@]}" -o "$build/owner-cadence"
+    "$build/owner-cadence" || failed=1
+  fi
   for finding in M4 M5 M6 M7 controls; do
     "$build/owner" "$finding" || failed=1
   done

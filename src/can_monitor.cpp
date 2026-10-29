@@ -493,6 +493,8 @@ void CanMonitor::performQuery(
     return;
   }
 
+  const bool discovery=request.signal_v2 && request.length==3 &&
+                       !request.signal_v2_essential;
   const uint32_t response_timeout_ms =
       std::max<uint32_t>(
           20, std::min<uint32_t>(request.timeout_ms,
@@ -538,7 +540,7 @@ void CanMonitor::performQuery(
   }
   if(!terminal_set && request.signal_v2) {
     const uint64_t now_us=static_cast<uint64_t>(esp_timer_get_time());
-    if(fault_locked_ || (v2_start_seen_ && (probe_guard_ || request.length==3) &&
+    if(fault_locked_ || (v2_start_seen_ && (last_v2_discovery_ || discovery) &&
         now_us-last_v2_start_us_<200000ULL)) {
       terminal=DiagnosticStatus::RateLimited;terminal_set=true;
     }
@@ -560,7 +562,7 @@ void CanMonitor::performQuery(
         makeDiagnosticRequestFrame(request);
     tx_us = static_cast<uint64_t>(esp_timer_get_time());
     if(request.signal_v2) {
-      v2_start_seen_=true;last_v2_start_us_=tx_us;
+      v2_start_seen_=true;last_v2_start_us_=tx_us;last_v2_discovery_=discovery;
       probe_guard_=probe_receiving_=request.length==3;
       if(probe_guard_)probe_tx_us_=tx_us;
     }
@@ -665,7 +667,7 @@ void CanMonitor::performQuery(
       }
       quiet_deadline_us = 0;
     } else if (step.event == TransactionEvent::Completed) {
-      if (!transaction.hasActiveIsoTp() && !(request.signal_v2 && request.length==3)) {
+      if (!transaction.hasActiveIsoTp() && !discovery) {
         quiet_deadline_us =
             captured.timestamp_us + cfg::kPostResponseQuietUs;
       }
