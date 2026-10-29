@@ -304,13 +304,17 @@ def evaluate(scenario, events):
         rearm_ok &= bool(faults and faults[0]["t"]>arms[-1]["t"])
     if scenario == "rearm":
         rearm_ok = len(arms) == 2 and len(stops) >= 2 and epochs[1] > int(stops[0]["epoch"]) > epochs[0]
-        rearm_ok &= any(e["kind"] == "rx" and stops[0]["t"] < e["t"] < arms[-1]["t"] for e in board)
+        old_cf=[e for e in rxs if e["id"]==ECU_RX and e["ext"]==1 and e["data"]==GROUP_CF[0]
+                and stops[0]["t"] < e["t"] < arms[-1]["t"]]
+        rearm_ok &= len(old_cf)==1 and old_cf[0]["ok"]==0
         # The deliberate stopped-generation RX must be refused, without loss.
         acknowledged = expected == accepted and all(e["ok"] or stops[0]["t"] < e["t"] < arms[-1]["t"] for e in rxs)
         rearm_ok &= any(int(e["epoch"]) == epochs[-1] for e in samples)
         snapshots = [e for e in kind("packet") if e.get("type") == "33"]
-        rearm_ok &= any(e["t"] > stops[0]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)
-        rearm_ok &= any(int(e.get("epoch",0)) == epochs[-1] and int(e.get("fresh",0)) > 0 for e in snapshots)
+        rearm_ok &= any(stops[0]["t"] < e["t"] < arms[-1]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)
+        rearm_ok &= any(e["t"]>arms[-1]["t"] and int(e.get("epoch",0))==epochs[-1] and int(e.get("fresh",0))>0
+                        and int(e.get("source_generation",0))>int(stops[0].get("source_generation",0))
+                        and int(e.get("mode_epoch",0))>int(stops[0].get("mode_epoch",0)) for e in snapshots)
         rearm_ok &= all(int(e["epoch"]) == max(int(a["epoch"]) for a in arms if a["t"] <= e["t"]) for e in samples)
     # Reboot cannot be inferred from an ordinary STOP. A new boot identity and
     # reconnected secured central are separate evidence supplied by the operator.

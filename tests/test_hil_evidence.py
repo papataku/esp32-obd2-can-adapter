@@ -70,6 +70,29 @@ def fault_trace(scenario):
     return renumber(events)
 
 
+def rearm_trace():
+    base=trace()
+    events=[e for e in base if e.get('t',99)<=.241]
+    for e in list(events):
+        if e['kind']=='rx':events.append(dict(kind='write',text=h.rx_line(e['id'],e['data'],True,1),write_t=e['t']-.0001))
+    def add(t,kind,**kw):
+        events.append(dict(kind=kind,t=t,t_us=str(round(t*1e6)),boot='12345678',gen=2,lost=0,text='',**kw))
+    add(.3,'stop_request',epoch='2');add(.31,'stopped',epoch='2',source_generation='3',mode_epoch='3')
+    events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_CF[0],True,1),write_t=.399))
+    add(.4,'rx',id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_CF[0],ok=0)
+    add(.5,'packet',type='33',epoch='2',fresh='0',current='1',source_generation='3',mode_epoch='3')
+    for e in trace():
+        if e['kind']=='write':continue
+        if e['kind']=='fence' and e['nonce']=='fresh':continue
+        e=copy.deepcopy(e);e['t']+=1.7;e['t_us']=str(round(e['t']*1e6));e['gen']=3
+        if 'observed_us' in e:e['observed_us']=str(int(e['observed_us'])+1700000)
+        if 'epoch' in e:e['epoch']=str(int(e['epoch'])+2)
+        events.append(e)
+        if e['kind']=='rx':events.append(dict(kind='write',text=h.rx_line(e['id'],e['data'],True,3),write_t=e['t']-.0001))
+    add(1.95,'packet',type='33',epoch='3',fresh='1',current='1',source_generation='4',mode_epoch='4')
+    return renumber(events)
+
+
 class Evidence(unittest.TestCase):
     def test_m2_discovery_fault_positive_controls(self):
         for scenario in ('noreply','extra','ff_probe','cf_probe','malformed','late','duplicate','wrong_src','eleven_bit','negative','txfail'):
@@ -104,6 +127,19 @@ class Evidence(unittest.TestCase):
             if not h.SCENARIOS[scenario][0]: continue
             e=trace();e.insert(-2,dict(kind='fault',t=5,t_us='5000000',seq=999999,gen=1,lost=0,reason='RX_ACCOUNTING_OR_BUS_FAULT'))
             self.assertFalse(h.evaluate(scenario,e)['pass'])
+    def test_m3_rearm_requires_old_cf_rejection_and_invalid_interval(self):
+        evidence=rearm_trace();r=h.evaluate('rearm',evidence)
+        self.assertTrue(r['pass'],r)
+        accepted=copy.deepcopy(evidence)
+        next(e for e in accepted if e['kind']=='rx' and e['ok']==0)['ok']=1
+        self.assertFalse(h.evaluate('rearm',accepted)['checks']['epoch_separation'])
+        stale=copy.deepcopy(evidence)
+        next(e for e in stale if e['kind']=='packet' and e['fresh']=='1')['source_generation']='3'
+        self.assertFalse(h.evaluate('rearm',stale)['checks']['epoch_separation'])
+        late_invalid=copy.deepcopy(evidence)
+        invalid=next(e for e in late_invalid if e['kind']=='packet' and e['fresh']=='0')
+        invalid['t']=62.0;invalid['t_us']='62000000'
+        self.assertFalse(h.evaluate('rearm',renumber(late_invalid))['checks']['epoch_separation'])
     def test_m3_stop_is_observed_until_quiet(self):
         e=trace();tx=copy.deepcopy(next(x for x in e if x['kind']=='tx'))
         tx.update(t=60.5,t_us='60500000',seq=e[-1]['seq']);e.insert(-1,tx);e[-1]['seq']+=1
