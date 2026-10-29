@@ -19,6 +19,12 @@ from the entire first trial**, including after stationary success. Its
 compile-only CI image is not permission to use it. Use matched explicit
 5Hz environments and record actual per-PID rates; requested rate is not proof.
 
+## N1 PR-A (docs-only): candidate approval and the three-second gate
+
+See [the RP8 candidate evidence and bounded physical-discovery specification](../protocol/signal-v2-2-bounded-ecu-discovery-pr-a.md). The three iOS owner-log-derived docs prove five observed 29-bit reply IDs, but **not** the induced maximum of two Single Frames per physical `0C/0D` request. Only `18DAF101` is proposed for separate owner review as a current-RP8 priority; it is **not a TX permission or pin**. All other observed sources and RPM conflicts remain unresolved. Therefore **this PR-A does not alter NO-GO:** phases 4–6 and vehicle ARM remain barred.
+
+For a future independently approved PR-B/C implementation only: explicit stationary ARM starts a NEW 3,000 ms epoch with all values Invalid; send individually admitted physical `0C/0D` only to owner-approved evidence candidates (<=4, currently proposed one), at least 200 ms apart, 120 ms response windows, no discovery FC or functional TX. Four frames/800 bits per candidate; retain 200-bit charges including late traffic and BOTH admission gates. Worst conservative envelopes: **4,000/5,000 bits per rolling 100 ms and 5,600/25,000 bits per rolling 1 s**, with preexisting reservations additionally enforced. Only current-epoch RAW-verified and independently approved unique ECU may pin; separately reserve first normal physical read and establish genuine Fresh speed zero by 3 s. Missing frame-count proof, source correctness, authorization, budget, independent analyzer or timely acquisition => STOP/Invalid, no automatic retry/functional fallback and no use of previous pin. Preserve phases 1–3 as read-only/offline evidence collection. No autonomous trial acceptance.
+
 ## 1. Inventory, wiring and protected backups (offline, no vehicle)
 
 Entry: both boards physically identified by the owner; vehicle disconnected.

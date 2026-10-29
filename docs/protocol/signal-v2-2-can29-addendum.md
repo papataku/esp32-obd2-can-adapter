@@ -65,3 +65,7 @@ Snapshot prefix20 extension. DEMO remains type1/prefix16. Host tests verify
 the exact echo, recalculated age, queue rejection and generation changes.
 The software contract still requires independent paired hardware acceptance;
 it does not override the functional-discovery NO-GO gate above.
+
+## N1 PR-A: evidence-bounded physical discovery — docs-only (2026-10-29)
+
+See [N1 candidate/provenance, SF contract, rolling-bit admission and approval gates](signal-v2-2-bounded-ecu-discovery-pr-a.md). Owner RP8 historical evidence records FIVE 29-bit responders; the **only proposed, not-yet-approved** priority candidate is `18DAF101`, chosen from the documented provisional ECU01 preference, not from guesswork. Other observed responders remain in the evidence table and are not declared false. The proposed `0C/0D` physical 2-SF cap has **no per-physical-query raw-frame proof** in the three cited documents; therefore active vehicle acquisition remains **NO-GO** until independent verification and PR-B/C. Discovery functional TX remains prohibited. Full conservative admission retains 200 bits/frame, 4 frames per candidate, 4,000/5,000 bits in a 100 ms envelope and 5,600/25,000 bits in a 1 s envelope; the upper and lower gates cannot be bypassed. STOP/ARM never reuses a prior pin.
