@@ -14,16 +14,16 @@ to transmit with this revision. Passive inspection remains distinct.
 This is an OWNER-OPERATED procedure. Agents must not flash, erase, connect to
 real CAN, or operate a vehicle. First obtain independent review of exact
 adapter and Ring SHAs, green host/policy/build CI, receiver freshness/epoch
-acceptance, and the independent bench evidence below. **10Hz is excluded
+acceptance, and the production-core serial-HIL evidence below. **10Hz is excluded
 from the entire first trial**, including after stationary success. Its
 compile-only CI image is not permission to use it. Use matched explicit
 5Hz environments and record actual per-PID rates; requested rate is not proof.
 
 ## N1 PR-A (docs-only): candidate approval and the three-second gate
 
-See [the RP8 candidate evidence and bounded physical-discovery specification](../protocol/signal-v2-2-bounded-ecu-discovery-pr-a.md). The three iOS owner-log-derived docs prove five observed 29-bit reply IDs, but **not** the induced maximum of two Single Frames per physical `0C/0D` request. Only `18DAF101` is proposed for separate owner review as a current-RP8 priority; it is **not a TX permission or pin**. All other observed sources and RPM conflicts remain unresolved. Therefore **this PR-A does not alter NO-GO:** phases 4–6 and vehicle ARM remain barred.
+See [the RP8 candidate evidence and bounded physical-discovery specification](../protocol/signal-v2-2-bounded-ecu-discovery-pr-a.md). The three iOS owner-log-derived docs prove five observed 29-bit reply IDs, but **not** the induced maximum of two Single Frames per physical `0C/0D` request. The owner **approves the candidate list `{18DAF101}` on 2026-10-29**, but this is **not a TX authorization, proof of a two-SF upper bound, or current-epoch ECU pin**. All other observed sources and RPM conflicts remain unresolved. Therefore **this PR-A does not alter NO-GO:** phases 4–6 and vehicle ARM remain barred.
 
-For a future independently approved PR-B/C implementation only: explicit stationary ARM starts a NEW 3,000 ms epoch with all values Invalid; send individually admitted physical `0C/0D` only to owner-approved evidence candidates (<=4, currently proposed one), at least 200 ms apart, 120 ms response windows, no discovery FC or functional TX. Four frames/800 bits per candidate; retain 200-bit charges including late traffic and BOTH admission gates. Worst conservative envelopes: **4,000/5,000 bits per rolling 100 ms and 5,600/25,000 bits per rolling 1 s**, with preexisting reservations additionally enforced. Only current-epoch RAW-verified and independently approved unique ECU may pin; separately reserve first normal physical read and establish genuine Fresh speed zero by 3 s. Missing frame-count proof, source correctness, authorization, budget, independent analyzer or timely acquisition => STOP/Invalid, no automatic retry/functional fallback and no use of previous pin. Preserve phases 1–3 as read-only/offline evidence collection. No autonomous trial acceptance.
+For a future independently approved PR-B/C implementation only: explicit stationary ARM starts a NEW 3,000 ms epoch with all values Invalid; send individually admitted physical `0C/0D` only to owner-approved evidence candidates (<=4, currently one), at least 200 ms apart, 120 ms response windows, no discovery FC or functional TX. Four frames/800 bits per candidate; retain 200-bit charges including late traffic and BOTH admission gates. Worst conservative envelopes: **4,000/5,000 bits per rolling 100 ms and 5,600/25,000 bits per rolling 1 s**, with preexisting reservations additionally enforced. Only a current-epoch RAW-verified, explicitly approved unique ECU may pin. **S1 is one probe plus 1-second count followed by automatic STOP, with values Invalid; it does not require or establish ongoing Fresh.** For S2 and S3, separately reserve the first regular physical read and require genuine Fresh speed zero within 3 s. Missing S1 self-measured frame-count evidence, S2/S3 source correctness, stage authorization, budget or timely acquisition => STOP/Invalid, no automatic retry/functional fallback and no pre-STOP pin reuse. Phases 1–3 remain passive/offline for diagnostics until explicit S1 entry approval; later S2 and S3 need their own approvals. No autonomous trial acceptance.
 
 ## 1. Inventory, wiring and protected backups (offline, no vehicle)
 
@@ -86,95 +86,48 @@ never guess offsets or perform automatic full-flash restoration.
 Exit: per-board verified restore evidence, backups, target SHA/env/flags,
 firmware SHA256, app capacity, partition and V2-1 linked-symbol exclusion evidence.
 
-## 2. Mandatory independently instrumented isolated bench (before vehicle)
+## 2. Required on-device serial HIL (before any vehicle ARM; no analyzer)
 
-Entry: no vehicle CAN; controlled isolated simulator bus and independent CAN
-analyzer with verified timestamps, loss/error counters and physical load
-measurement. Software reservations are estimates, not measured utilization.
-Do not claim this gate from host tests or compilation alone.
+Use an actual M5Dial with a **dedicated serial-HIL environment** preserving production CanOwner, two-level admission budget, STOP/ARM epoch, and Signal V2 wire logic. Only the TWAI driver boundary is replaced by a debug-serial PC virtual-ECU bridge. **Disconnect real CAN; TWAI must not initialize and hardware CAN TX must be unavailable** (verify env/compile/link symbols and runtime log). This is not the physical CAN output image.
 
-Capture at least 60s per supported bench case: boot/unarmed; authorized
-acquisition; duplicate SF/group/FF; maximum responders; capacity exhaustion;
-delayed/late replies across 100ms/1s boundaries; load pressure and speed-first
-shedding; timeout; pin loss; STOP during request/FC; ARM expiry; BLE disconnect,
-reconnect and immediate rearm. Fault injection belongs ONLY here.
+PC injects 0/1/2/3 SF, FF/CF, duplicates, wrong ID, 11bit, timeouts, late frames, TX fails/retries, overflow, STOP/re-ARM races and source-generation/Snapshot replays. Repeat the 60-second cases and admission boundary tests under real M5Dial task scheduling. Require zero discovery FC, full four-frame 800-bit reservation, correct retained 100ms/1s budgets, immediate STOP/Invalid, stale-result exclusion, and the 3,000ms acquisition deadline. Theoretical 160-bit max per 29-bit 8-byte frame with stuffing/intermission; retain 200-bit/frame accounting. Record relevant real-time counters and script versions; no on-wire stuffing trace is required.
 
-Use the analyzer to distinguish adapter request/FC and induced diagnostic RX
-from ambient traffic; include all those bits and CAN stuffing/interframe cost
-in every rolling 100ms and 1s interval, not aligned buckets. Require diagnostic
-load <=10%/100ms and <=5%/1s at 500kbit/s, no capture loss, no unexpected TX,
-and genuine acquisition age/Invalid behavior on both ends. Account for late
-traffic even after timeout/STOP. An external ECU flooding cannot be silenced
-by the adapter; require latched adapter TX halt and reject the test result.
-Confirm current functional discovery produces **zero** TX and a latched STOP;
-that confirms refusal, not successful vehicle-acquisition qualification.
-
-Exit: independent capture/report proving all limits and zero adapter TX before
-ARM and after drained STOP/expiry/disconnect; exact hashes and reviewer sign-off.
-Failure prevents any active vehicle trial.
+The serial bridge can validate code, budget and timing, **not a vehicle ECU's induced-response count or actual bus electrical load**. Proceed to a single S1 request only after review and explicit stage authorization. No hardware programming or vehicle action is instructed to an agent.
 
 ## 3. Passive parked vehicle inspection — never ARM here (2 minutes)
 
 Entry: phases 1–2 passed for the intended scope; owner verified wiring,
 power/termination and healthy vehicle baseline. Park, P, parking brake, IG ON;
-no other diagnostic tester. Keep a second operator and independent analyzer.
+no other diagnostic tester. Keep a second operator and record complete adapter self-monitoring counters.
 Boot unarmed, encrypted approved Ring may connect, but do not issue ARM.
 
 Observe passive bitrate/address format, error counters and warning lamps.
 Listen-only cannot solicit ECU discovery or prove Mode01 support. An ECU
 response ID seen passively is evidence to review, not a pin/authorization.
-Analyzer must verify zero adapter request/FC TX for 2 minutes. Any TX, warning,
+The adapter's own TX counters and authorization logs must show zero adapter request/FC TX for 2 minutes; this is self-measurement, not independent proof. Any TX, warning,
 bus error, overrun, dropped monitoring frames or unverified wiring aborts.
 Exit: clean passive evidence. This revision stops here for vehicle work.
 
-## 4. Explicit armed stationary acquisition (future gate, maximum 3 seconds)
+## 4. S1 — owner-approved single physical request and 1-second RX observation
 
-Entry: discovery refusal resolved by separate reviewed change with a proven
-induced-RX bound; repeat bench and review at new exact SHAs. Vehicle remains
-P/braked, stationary, driver ready to end trial; no movement permitted.
-Only after verifying encrypted, bonded, USB-registered subscribed peer,
-active authorized HELLO/profile and 5Hz demand, locally issue `SIGV2 CAN ARM`.
-The first admitted discovery request AFTER this ARM is the first possible
-CAN diagnostic TX. Record arm ack, epoch, actual request/response IDs and
-unique RAW-backed ECU pin. No functional fallback after pin loss.
+**Future gate only (NO-GO until PR-B/C + serial HIL + owner approval).** Park, P, brake, IG ON; secure authorized peer and exact owner-approved candidate `{18DAF101}`. After an explicit new-epoch ARM, send at most **one** individually admitted `18DA01F1` Service01 `0C/0D` request; do not send functional or FC. Charge four 8-byte frames = **800 bits** before TX at both admission layers. Count **every RX frame**, all `18DAF1xx` sources, SF/FF/CF, errors, overflow and unexpected ID from the pre-TX baseline through the following **1,000ms**; record TX and zero-FC counts, timestamps and rolling budget. Then **automatically STOP** and maintain Invalid. Complete/abort within the 3,000ms time guard; do **not** advance to ongoing 5Hz/live acquisition in S1.
 
-Initial absent/Invalid speed is allowed solely inside this stationary
-acquisition phase for at most 3 seconds after ARM. Any warning/error/load
-violation/ambiguity/11bit response aborts immediately even during this phase.
-Exit requires unique verified 29bit ECU and genuinely Fresh valid speed zero
-with acquisition timestamp/sequence within admitted deadline. Missing/Invalid
-speed at 3 seconds => STOP, end trial; no automatic repin/retry. No such grace
-period exists during idle acceptance or driving.
+If a third SF, FF/CF, 11bit, source mismatch, duplicate, late message, counter loss, RX overflow, TX/error/retry uncertainty or budget violation occurs, immediately STOP/Invalid and cancel all *future* requests/FC (an on-wire frame cannot be recalled). Retain late RX monitoring for future admission. Log is **self-measured, not externally verified**. Owner and PM review S1 evidence before granting separate S2 approval. One second of clean traffic is not proof of a perpetual two-SF ceiling.
 
-## 5. Stationary IG ON then idle acceptance (2 minutes each)
+## 5. S2 — stationary/P, 5Hz for at most 30 seconds
 
-Entry: phase 4 exit criteria and independent live monitoring satisfied.
-At all times require Fresh valid CAN speed zero, same verified ECU and valid
-RPM; auxiliary PIDs may be explicit Invalid after shedding, never false zero.
-Measure each PID's actual Hz and age; inspect CAN/DEMO/Invalid labels. A
-reservation denial/degradation is recorded and reviewed before progressing.
-Observe analyzer rolling diagnostic load, total ambient load, warning lamps,
-CAN error/overrun/drop counters continuously. Either operator ends the trial
-on any abort. Reconfirm stationary acceptance after an explicit new ARM;
-reconnect does not renew authorization or allow automatic recovery.
-Exit: both 2-minute phases pass, saved independent load and sample-quality
-records, no missing/Invalid speed or stale Fresh, explicit owner decision.
+Only after owner+PM accept S1 and the owner explicitly authorizes S2. Start a **new** ARM epoch, discard the S1 pin and stale results, acquire the approved physical ECU again with no functional request. First valid physical read must yield genuinely Fresh speed **zero** and usable RPM within 3,000ms or automatic STOP/Invalid; no synthesized speed zero. Continue only **30 seconds maximum** at 5Hz under full admission, with all-RX and `18DAF1xx` counts, TWAI error/retry/drop, source/age/epoch evidence and automatic STOP on any unexpected frame. Compare speed and RPM visually to **the vehicle's original instruments** with timestamps; unavailable or unreadable stock RPM => **UNCONFIRMED**, not approved. Owner/PM review before S3.
 
-## 6. Low speed (maximum 2 minutes, only after all stationary gates)
+## 6. S3 — driving (separate owner approval required)
 
-Entry: independent review permits this phase, safe controlled route and agreed
-low-speed ceiling; two people; second operator watches analyzer/logs and
-records, driver touches no equipment. Require valid current speed continuously;
-there is no discovery/recovery/invalid-speed grace period while moving.
-No firmware/rate change and no 10Hz. Exit: park safely and STOP, then verify
-no-TX and review evidence. A stationary pass alone is not low-speed approval.
+Only after S2 review and explicit owner authorization. Begin with a new epoch and a fully verified stationary first 3-second acquisition *before driving*; never reuse the S2 pin. Drive only in an owner-approved controlled setting, two people with the driver never operating equipment. Continuously require Fresh real CAN speed, the current pinned ECU, two-level admission, no unexpected reply and clean monitoring. Visually compare the original car speed/RPM indications with the adapter where available, allowing for display latency; do not claim accuracy if original RPM is unavailable. Fault/unknown speed/budget breach/counter loss => STOP/Invalid, the driver parks safely, and no automatic re-ARM. A stationary pass does not itself authorize S3.
 
 ## USB ARM, renewal, STOP and abort procedure
 
 ARM lasts **600,000ms (10 minutes)** and requires a currently eligible secured
 session. Console close/USB host loss is **not** an immediate disarm event in
 this implementation: assume TX remains eligible until expiry. Keep the owner
-console and independent monitor present. BLE disconnect revokes authorization;
+console and adapter self-monitoring log present. BLE disconnect revokes authorization;
 reconnect requires a new explicit ARM. Renew only parked, with live verified
 peer/profile, valid speed and clean load/error evidence; log ack and new expiry.
 A renewal of an already-armed trial must not reset ECU binding/generations.
@@ -185,9 +138,9 @@ Bench expiry verification must actually wait the full 10 minutes.
 `SIGV2 CAN STOP` first acknowledges `ack=REQUESTED` (revocation requested).
 Wait for `ack=STOPPED` after outstanding work drains; record epoch,
 SourceGeneration and ModeEpoch. The first ack alone is not proof of quiescence.
-Check independent analyzer for zero new adapter diagnostic request/FC for at
-least 2 seconds after drained acknowledgement; retain any already-on-wire or
-late ECU traffic separately. STOP cannot recall a frame already transmitted.
+Check the adapter's own TX and FC submission counters for zero new diagnostic attempts for at
+least 2 seconds after drained acknowledgement; classify this as self-observation, not independent physical proof. Preserve any already-on-wire,
+late ECU or uncertain retransmitted traffic separately. STOP cannot recall a frame already transmitted.
 If acknowledgement or no-TX proof fails, end trial and safely remove adapter
 power/connection while parked. Never interact with equipment as the driver.
 
@@ -210,15 +163,16 @@ cmp original-app.bin restored-app.bin
 Reboot and verify original build/behavior; do not call rollback successful on
 a write message alone. Save explicit entry/exit pass/fail and duration for each
 phase, firmware/source/env/partition hashes, arm/STOP acks, ECU binding and
-epoch changes, actual RX/FC counts, current/peak **reservation** windows and
-independent measured rolling load, per-PID age/Hz/quality, display evidence and
-warning-light status. Redact identities and locations before sharing.
+epoch changes, **all RX and 18DAF1xx per-ID/per-frame-type counts**, actual TX/FC submissions, TWAI
+errors/drops/overflows and retries where observable, current/peak **reservation** windows and
+self-estimated rolling load (200 bits/frame), stock-speed/RPM visual comparison where available,
+per-PID age/Hz/quality, display evidence and warning-light status. Redact identities and locations before sharing.
 
 Software load labels: `reserved_*` are conservative admitted request/RX/FC
 reservations retained through the response interval. `charged_traffic_*`
 uses actual candidate diagnostic RX timestamps plus precharged request/FC
-attempts at 200 bits/frame (failed TX attempts may conservatively remain
-charged); these are not analyzer-measured bits. `actual_candidate_rx_frames`
+attempts at 200 bits/frame (failed TX attempts remain conservatively
+charged). **This is adapter self-measurement, not an external bus-analyzer trace.** Re-transmissions may not be exactly derivable from TWAI counters; if accounting is uncertain, STOP and reject the evidence. `actual_candidate_rx_frames`
 counts all candidate-route RX including late frames;
 `actual_fc_submissions` counts successful FC driver submissions, not proven
 on-wire delivery. `4294967295` in a charged window/peak means saturated
