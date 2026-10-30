@@ -245,6 +245,7 @@ void printStats(const Stats& s, uint32_t fps) {
 } // namespace
 void setup() {
   holdTxdHigh(); // First application action. Never sample before asserting HIGH.
+  first_hold_observation=snapshot(false);
   // Dial's HOLD pin keeps power on; display touches only GPIO4..9.
   gpio_set_level(static_cast<gpio_num_t>(46),1);
   gpio_set_direction(static_cast<gpio_num_t>(46),GPIO_MODE_OUTPUT);
