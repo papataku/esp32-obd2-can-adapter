@@ -579,7 +579,8 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   }
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
   // Sole epoch right: physical Mode01 0C/0D; never FC or group.
-  const bool valid_s1=message.extd && !message.rtr &&
+  const bool valid_s1=message.extd && !message.rtr && !message.self &&
+      message.ss &&
       message.identifier==0x18DA01F1U && message.data_length_code==8 &&
       message.data[0]==3 && message.data[1]==1 &&
       message.data[2]==0x0C && message.data[3]==0x0D &&
