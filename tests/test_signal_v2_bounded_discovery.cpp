@@ -13,6 +13,9 @@ static m5can::DiagnosticRequest submitted{};
 static unsigned submits=0,functional=0;
 namespace m5can {
 CanStats CanMonitor::stats()const{return {};}
+void CanMonitor::endObservationAudit(ObservationAudit& audit,CanStats& out) {
+  audit=audit_;audit.owner_confirmed=false;out=stats_;
+}
 void CanMonitor::revokeLease(){}
 bool CanMonitor::acquireLease(uint32_t){return true;}
 bool CanMonitor::submitQuery(const DiagnosticRequest &r){
