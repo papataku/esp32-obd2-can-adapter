@@ -34,9 +34,15 @@ inline const char* pcTaskGetName(TaskHandle_t){return "host-test";}
 inline unsigned uxTaskPriorityGet(TaskHandle_t){return 4;}
 inline unsigned uxTaskGetStackHighWaterMark(TaskHandle_t){return 4096;}
 struct SerialStub {
+#if __cplusplus >= 201703L
   inline static bool capture=false;
   inline static std::string lines{};
   inline static std::string& captured=lines;
+#else
+  static bool capture;
+  static std::string lines;
+  static std::string& captured;
+#endif
   void begin(uint32_t){}
   int printf(const char* fmt,...) {
     if(!capture)return 0;

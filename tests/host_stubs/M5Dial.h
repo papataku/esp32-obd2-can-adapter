@@ -6,7 +6,15 @@
 #define TFT_LIGHTGREY 3
 #define TFT_RED 4
 #define middle_center 0
-namespace fonts { inline int Font4=0; inline int Font2=0; }
+namespace fonts {
+#if __cplusplus >= 201703L
+inline int Font4=0;
+inline int Font2=0;
+#else
+extern int Font4;
+extern int Font2;
+#endif
+}
 struct DisplayStub{
   void setRotation(int){}
   void fillScreen(int){}
