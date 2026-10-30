@@ -558,4 +558,93 @@ class R66p(unittest.TestCase):
         self.assertFalse(r['checks']['group_sample_causality'],r)
 
 
+
+class R66q(unittest.TestCase):
+    """M-19 initial STOP baseline/new boot, M-20 STOP ACK provenance."""
+
+    @staticmethod
+    def initial_evidence(boot="12345678"):
+        # Production: CanSamples initial (1,1), first tick epoch 1 -> (2,2),
+        # runner's initial SIGV2 CAN STOP epoch 2 -> (3,3).
+        return dict(kind="initial_stop_evidence", boot=boot, epoch="2",
+                    request_epoch="2", request_seq=11, ack_seq=12,
+                    source_generation="3", mode_epoch="3")
+
+    @classmethod
+    def first_boot(cls):
+        events=copy.deepcopy(trace())
+        # Later tests use real production generation/authorization epoch values.
+        # Preserve the host write vs board RX ordering and sequence.
+        for e in events:
+            if e.get("boot")=="12345678" and "epoch" in e:
+                e["epoch"]=str(int(e["epoch"])+2)
+            if e["kind"]=="sample":
+                e["source_generation"]="4";e["mode_epoch"]="4"
+            elif e["kind"]=="stopped":
+                e["source_generation"]="5";e["mode_epoch"]="5"
+        events.insert(0,cls.initial_evidence())
+        return events
+
+    def test_m19_real_initial_stop_then_first_arm_four_four_passes(self):
+        r=h.evaluate("normal",self.first_boot())
+        self.assertTrue(r["pass"],r)
+        self.assertTrue(r["checks"]["group_sample_causality"],r)
+        self.assertTrue(r["checks"]["epoch_separation"],r)
+
+    def test_m19_missing_initial_stop_baseline_fails(self):
+        events=trace()
+        r=h.evaluate("normal",events)
+        self.assertFalse(r["pass"],r)
+        self.assertFalse(r["checks"]["epoch_separation"],r)
+
+    def test_m20_stop_ack_generation_jump_fails_without_later_samples(self):
+        events=self.first_boot()
+        stop=next(e for e in events if e["kind"]=="stopped")
+        stop["source_generation"]="99";stop["mode_epoch"]="99"
+        r=h.evaluate("normal",events)
+        self.assertFalse(r["pass"],r)
+        self.assertFalse(r["checks"]["epoch_separation"],r)
+
+    def test_m20_stop_ack_missing_nonnumeric_out_of_range_structured_fail(self):
+        for mutation in ("missing","nonnumeric","range"):
+            events=self.first_boot()
+            stop=next(e for e in events if e["kind"]=="stopped")
+            if mutation=="missing":stop.pop("source_generation")
+            elif mutation=="nonnumeric":stop["mode_epoch"]="not-a-number"
+            else:stop["source_generation"]="4294967296"
+            r=h.evaluate("normal",events)
+            self.assertFalse(r["pass"],r)
+            self.assertFalse(r["checks"]["epoch_separation"],r)
+
+    def test_m19_disconnect_then_stop_ack_then_reconnect_positive(self):
+        events=copy.deepcopy(rearm_trace())
+        # Existing rearm trace includes two ARM epochs and completed GROUPs;
+        # add a real Central disconnect between race TX and the STOP request.
+        # Use the (original synthetic) generation series for the red test.
+        add=adder(events,1)
+        add(.448,"disconnect",handle="1")
+        r=h.evaluate("rearm",renumber(events))
+        self.assertTrue(r["pass"],r)
+
+    def test_m19_new_boot_initial_stop_then_arm_positive(self):
+        # One completed sample on boot A, followed by a new boot's complete
+        # independent 60s acquisition and its own startup STOP baseline.
+        first=self.first_boot()
+        prefix=[e for e in first if e["kind"]=="initial_stop_evidence" or
+                (e.get("t",-1)<=.241)]
+        second=self.first_boot()
+        second=[copy.deepcopy(e) for e in second]
+        for e in second:
+            if "boot" in e:e["boot"]="87654321"
+            if "t" in e:
+                e["t"]+=2;e["t_us"]=str(round(e["t"]*1e6))
+            if "observed_us" in e:e["observed_us"]=str(int(e["observed_us"])+2000000)
+            if "write_t" in e:e["write_t"]+=2
+            if "from_t" in e:e["from_t"]+=2
+        events=prefix+second
+        r=h.evaluate("reboot",events)
+        self.assertTrue(r["pass"],r)
+        self.assertTrue(r["checks"]["epoch_separation"],r)
+
+
 if __name__=='__main__':unittest.main()
