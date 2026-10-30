@@ -29,7 +29,12 @@ struct twai_message_t{
   uint8_t data[8]{};
 };
 inline esp_err_t twai_driver_install(const twai_general_config_t*,const twai_timing_config_t*,const twai_filter_config_t*){return ESP_OK;}
+#if defined(M5CAN_TEST_S1_BLIND_SPAN)
+void s1TestOnDriverUninstall();
+inline esp_err_t twai_driver_uninstall(){s1TestOnDriverUninstall();return ESP_OK;}
+#else
 inline esp_err_t twai_driver_uninstall(){return ESP_OK;}
+#endif
 inline esp_err_t twai_start(){return ESP_OK;}
 inline esp_err_t twai_stop(){return ESP_OK;}
 esp_err_t twai_receive(twai_message_t*,TickType_t);

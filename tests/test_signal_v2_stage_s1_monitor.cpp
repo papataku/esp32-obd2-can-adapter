@@ -44,11 +44,15 @@ static bool stop_fired=false;
 // Inject asynchronous Arduino STOP specifically after the transmitter has
 // incremented tx_attempts but before its driver submission.
 void s1TestOnCriticalExit(portMUX_TYPE*){
-  if(stop_during_tx && signal_v2::CanOwnerTestAccess::txAttempts(*stop_during_tx)){
+  if(stop_during_tx){
     CanMonitor* m=stop_during_tx;stop_during_tx=nullptr;
     stop_fired=true;
     m->revokeLease(); // Actual GATT STOP's lower-layer revocation
   }
+}
+void s1TestOnDriverUninstall(){
+  // Host-only 7ms TWAI reinstall blind interval, after physical TX.
+  if(!tx_ms.empty())g_test_millis+=7;
 }
 esp_err_t twai_get_status_info(twai_status_info_t*){return ESP_OK;}
 esp_err_t twai_receive(twai_message_t *m,TickType_t wait){
@@ -92,6 +96,12 @@ int main(){
     assert(line.find("request_ms=200")!=std::string::npos);
     assert(line.find(reply?"outcome=SINGLE_FRAME_CONTRACT":"outcome=NO_RESPONSE")!=std::string::npos);
     assert(line.find("stop=S1_OBSERVATION_COMPLETE")!=std::string::npos);
+    // M-06: a real non-observable driver reinstall interval is disclosed
+    // even when the count-based observation record is complete.
+    assert(line.find("blind_count=1")!=std::string::npos);
+    assert(line.find("blind_total_us=7000")!=std::string::npos);
+    assert(line.find("blind_open=0")!=std::string::npos);
+    assert(line.find("complete=1")!=std::string::npos);
   }
   // M-07: a CAN frame has begun, but its audit note has not yet run.
   // A host callback emulates preemption at frame_queue_ delivery, and
@@ -128,6 +138,7 @@ int main(){
     assert(stop_fired);
     assert(status!=ESP_OK);
     assert(tx_ms.empty());
+    assert(signal_v2::CanOwnerTestAccess::txAttempts(m)==0);
   }
   std::cout<<"PR-C2 S1 TX/STOP race + monitor integration PASS\n";
 }
