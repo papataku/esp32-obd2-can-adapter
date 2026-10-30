@@ -9,6 +9,9 @@
 #include <cstring>
 #include <driver/gpio.h>
 #include <driver/rtc_io.h>
+#include <driver/spi_master.h>
+#include <esp_heap_caps.h>
+#include <esp_idf_version.h>
 #include <esp_rom_gpio.h>
 #include <soc/gpio_struct.h>
 #include <soc/gpio_sig_map.h>
@@ -77,6 +80,11 @@ class DialDisplay : public lgfx::LGFX_Device {
     l.pwm_channel=7; l.invert=false;
     light_.config(l); panel_.setLight(&light_);
     setPanel(&panel_);
+  }
+  bool dmaReady() {
+    // Panel_Device::init ignores reserveDMABuffer failure. Require the
+    // real M5GFX DMA staging buffer before the CAN driver can exist.
+    return bus_.reserveDMABuffer(480) && bus_.getDMABuffer(480)!=nullptr;
   }
 } display;
 
@@ -279,11 +287,43 @@ void setup() {
   // Dial's HOLD pin keeps power on; LCD GPIO4..9, SPI3_HOST only.
   gpio_set_level(static_cast<gpio_num_t>(46),1);
   gpio_set_direction(static_cast<gpio_num_t>(46),GPIO_MODE_OUTPUT);
-  const bool display_ok=display.init();
-  display_ready=display_ok;
-  if (display_ok) display.setBrightness(128);
   Serial.begin(115200);
   Serial.setTxTimeoutMs(10);
+  // Fail-closed before M5GFX: its SPI3 path currently ignores
+  // spi_bus_initialize failures and Panel_Device ignores bus init status.
+  // The probe uses internal DMA-capable RAM, not ordinary heap memory.
+  void* dma_probe=heap_caps_malloc(512,MALLOC_CAP_INTERNAL|MALLOC_CAP_DMA);
+  if (!dma_probe) {
+    failClosed("spi3_dma_probe","dma_alloc",ESP_ERR_NO_MEM,snapshot(false));
+    return;
+  }
+  heap_caps_free(dma_probe);
+  spi_bus_config_t spi_cfg{};
+  spi_cfg.sclk_io_num=6;
+  spi_cfg.mosi_io_num=5;
+  spi_cfg.miso_io_num=-1;
+  spi_cfg.quadwp_io_num=-1;
+  spi_cfg.quadhd_io_num=-1;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4,4,0)
+  spi_cfg.data4_io_num=-1;
+  spi_cfg.data5_io_num=-1;
+  spi_cfg.data6_io_num=-1;
+  spi_cfg.data7_io_num=-1;
+#endif
+  spi_cfg.max_transfer_sz=512;
+  spi_cfg.flags=SPICOMMON_BUSFLAG_MASTER;
+  spi_cfg.intr_flags=0;
+  const esp_err_t bus_status=spi_bus_initialize(SPI3_HOST,&spi_cfg,SPI_DMA_CH_AUTO);
+  if (bus_status!=ESP_OK) {
+    failClosed("spi3_bus_init","spi_bus_initialize",bus_status,snapshot(false));
+    return;
+  }
+  // The M5GFX SPI3 path can reuse this initialized IDF bus. Its own
+  // redundant bus-init reports ALREADY_INITIALIZED but adds LCD device.
+  const bool display_ok=display.init();
+  const bool dma_ready=display_ok && display.dmaReady();
+  display_ready=display_ok && dma_ready;
+  if (display_ready) display.setBrightness(128);
   // SPI3 LCD init must not touch CAN TXD GPIO13. Preserve the raw
   // post-LCD snapshot and reject any mismatch without repair/retry.
   display_observation=snapshot(false);
@@ -294,6 +334,10 @@ void setup() {
   before_policy.running=true;
   if (!display_ok) {
     failClosed("display_init","display.init",0,before); return;
+  }
+  if (!dma_ready) {
+    failClosed("spi3_dma_buffer","reserveDMABuffer",ESP_ERR_NO_MEM,before);
+    return;
   }
   if (!passive::safe(before_policy)) {
     failClosed("post_display_unsafe",unsafeField(before_policy),0,before);

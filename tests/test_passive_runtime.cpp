@@ -10,6 +10,7 @@ int main(int argc,char** argv) {
   install_fail=fault=="install"; start_fail=fault=="start"; task_fail=fault=="task";
   if (fault=="bus-init-fail") mock_spi_bus_fail=true;
   if (fault=="dma-alloc-fail") mock_dma_alloc_fail=true;
+  if (fault=="display-dma-fail") mock_display_dma_fail=true;
   if (fault=="i2c-begin") mock_i2c_begin=true;
   if (fault=="before-pad") stuck_pad_low=true;
   if (fault=="display-clobber") display_disables_gpio13=true;
@@ -32,7 +33,8 @@ int main(int argc,char** argv) {
       fault=="stopped-rx" || fault=="start-nolom" || fault=="status-boot" ||
       fault=="display-low" || fault=="display-route" ||
       fault=="display-clobber" || fault=="display-clobber-stuck" ||
-      fault=="bus-init-fail" || fault=="dma-alloc-fail" || fault=="i2c-begin");
+      fault=="bus-init-fail" || fault=="dma-alloc-fail" ||
+      fault=="display-dma-fail" || fault=="i2c-begin");
   if (early) {
     assert(stats.fault && !stats.verified && !installed);
     assert(fault_evidence.captured);
@@ -48,6 +50,7 @@ int main(int argc,char** argv) {
     else if (fault=="display-route") { stage="post_display_unsafe"; field="txd_gpio"; }
     else if (fault=="bus-init-fail") { stage="spi3_bus_init"; field="spi_bus_initialize"; }
     else if (fault=="dma-alloc-fail") { stage="spi3_dma_probe"; field="dma_alloc"; }
+    else if (fault=="display-dma-fail") { stage="spi3_dma_buffer"; field="reserveDMABuffer"; }
     else if (fault=="i2c-begin") { stage="post_display_unsafe"; field="txd_gpio"; }
     else if (fault=="display-clobber-stuck") { stage="post_display_unsafe"; field="txd_gpio"; }
     else if (fault=="display-clobber") { stage="post_display_unsafe"; field="txd_gpio"; }

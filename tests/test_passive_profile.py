@@ -28,6 +28,15 @@ class PassiveProfile(unittest.TestCase):
         self.assertNotIn('b.spi_host=SPI2_HOST',source)
         self.assertIn('b.pin_miso=-1',source)
         self.assertIn('general.tx_queue_len=0',source)
+        # No Wire.begin(), IDF I2C initialization or LovyanGFX I2C.
+        # StampS3 variant's default SDA=GPIO13 / SCL=GPIO15.
+        for forbidden in ('Wire.begin(', 'Wire1.begin(', 'i2cInit(',
+                          'i2c_driver_install(', 'i2c_new_master_bus(',
+                          'lgfx::i2c::init(', 'TwoWire::begin('):
+            self.assertNotIn(forbidden, source)
+        self.assertIn('spi_bus_initialize(SPI3_HOST',source)
+        self.assertIn('heap_caps_malloc(512',source)
+        self.assertIn('display.dmaReady()',source)
     def test_forbidden_sdk_paths_fail_even_in_dead_code(self):
         # The fake SDK declaration verifies poisoning AFTER the SDK include.
         with tempfile.TemporaryDirectory() as d:

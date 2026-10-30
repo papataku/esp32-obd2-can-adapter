@@ -51,6 +51,10 @@ using esp_err_t=int;
 #define ESP_OK 0
 #define ESP_ERR_TIMEOUT 1
 #define ESP_FAIL 2
+#define ESP_ERR_NO_MEM 3
+#define SPICOMMON_BUSFLAG_MASTER 1
+#define ESP_IDF_VERSION_VAL(a,b,c) ((a)*10000+(b)*100+(c))
+#define ESP_IDF_VERSION ESP_IDF_VERSION_VAL(4,4,7)
 #define TWAI_STATE_STOPPED 0
 #define TWAI_STATE_RUNNING 1
 #define TWAI_MODE_LISTEN_ONLY 2
@@ -124,11 +128,14 @@ namespace fonts { inline int Font2=0; }
 struct spi_bus_config_t {
   int mosi_io_num=-1,miso_io_num=-1,sclk_io_num=-1;
   int quadwp_io_num=-1,quadhd_io_num=-1,max_transfer_sz=0,flags=0;
+  int data4_io_num=-1,data5_io_num=-1,data6_io_num=-1,data7_io_num=-1,intr_flags=0;
 };
 inline int spi_bus_initialize(int host,const spi_bus_config_t* cfg,int dma) {
   ++spi_bus_init_calls;
   assert(host==SPI3_HOST && cfg->mosi_io_num==5 && cfg->miso_io_num==-1);
   assert(cfg->sclk_io_num==6 && cfg->quadwp_io_num==-1 && cfg->quadhd_io_num==-1);
+  assert(cfg->data4_io_num==-1 && cfg->data5_io_num==-1 &&
+         cfg->data6_io_num==-1 && cfg->data7_io_num==-1);
   assert(dma==SPI_DMA_CH_AUTO);
   return mock_spi_bus_fail?ESP_FAIL:ESP_OK;
 }
@@ -147,11 +154,17 @@ inline void simulate_wire_begin() {
 }
 // Model Arduino-ESP32 2.0.17 SPI2 MISO=-1 -> GPIO13.
 inline int lcd_spi_host=-1;
+inline bool mock_display_dma_fail=false;
 inline bool lcd_auto_attached_gpio13=false;
 namespace lgfx {
 struct Bus_SPI {
   struct Config { int spi_host,spi_mode,freq_write,freq_read,dma_channel,pin_sclk,pin_mosi,pin_miso,pin_dc; bool spi_3wire,use_lock; };
   Config config() { return {}; }
+  bool reserveDMABuffer(unsigned len) { assert(len==480); return !mock_display_dma_fail; }
+  uint8_t* getDMABuffer(unsigned len) {
+    assert(len==480);
+    return mock_display_dma_fail ? nullptr : dma_probe_storage;
+  }
   void config(Config c) {
     assert(c.spi_host==SPI2_HOST || c.spi_host==SPI3_HOST);
     assert(c.pin_sclk==6 && c.pin_mosi==5 && c.pin_miso==-1 &&
@@ -170,6 +183,8 @@ struct Panel_GC9A01 {
 };
 inline bool display_ok=true;
 class LGFX_Device {
+ protected:
+  Bus_SPI* bus_=nullptr;
  public:
   void setPanel(Panel_GC9A01*) {}
   bool init() {
