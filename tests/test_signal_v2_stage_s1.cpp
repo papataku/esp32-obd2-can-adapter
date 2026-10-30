@@ -30,6 +30,8 @@ struct CanOwnerTestAccess {
   static bool fixed(const CanOwner &o){return o.ecu_.fixed();}
   static void rx(m5can::CanMonitor &m,uint32_t id,std::initializer_list<uint8_t> d){
     uint8_t b[8]{};std::memcpy(b,d.begin(),d.size());
+    // Match the real captureMessage RX-start counter before the audit note.
+    ++m.stats_.rx_frames;++m.stats_.ext_frames;
     m.audit_.note(id,true,false,uint8_t(d.size()),b);
   }
   static void counters(m5can::CanMonitor &m,const m5can::CanStats &s){m.stats_=s;}
