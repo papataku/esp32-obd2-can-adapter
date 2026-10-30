@@ -118,3 +118,10 @@ c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
 
 # Independent PR65 safety review: production monitor + owner, policy and C++11 ODR.
 bash tests/run_pr65_regressions.sh
+
+# Dedicated physical-TX-isolated receiver safety policy.
+c++ -std=c++17 -Wall -Wextra -Werror -Iinclude tests/test_passive_policy.cpp -o /tmp/m5can-passive-policy
+/tmp/m5can-passive-policy
+python3 tests/test_passive_profile.py
+./tests/run_passive_runtime.sh
+python3 tests/test_passive_flash_check.py

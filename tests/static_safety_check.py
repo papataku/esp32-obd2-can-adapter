@@ -47,8 +47,8 @@ checks = {
         "CanMonitor::transmitOwnedFrame" in can and "twai_transmit(" in can,
     "normal mode only referenced by CAN owner":
         normal_files == ["can_monitor.cpp"],
-    "TWAI state-changing calls only CAN owner":
-        mode_files == {"can_monitor.cpp"},
+    "TWAI state-changing calls only mutually exclusive CAN owners":
+        mode_files == {"can_monitor.cpp", "passive_rx.cpp"},
     "single-shot TX enabled":
         "tx.ss = 1" in can,
     "flow control is 30 00 00":

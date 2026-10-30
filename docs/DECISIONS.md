@@ -352,3 +352,16 @@ full 120ms window and enforces 200ms on both sides of its TX; regular essential
 reads can finish after the normal quiet period. Sustained 100ms demand tests
 cover owner scheduling and production monitor admission independently. This is
 host software evidence, not a response latency or physical vehicle qualification.
+
+## D025 - Dedicated passive image disconnects controller TX from GPIO
+
+`m5dial_signal_v2_can_29bit_passive` compiles only a USB ambient receiver.
+GPIO13 holds U179 TXD recessive HIGH; install uses unused GPIO39 and removes
+all controller TX routes before start. This defeats ESP32-S3 Listen-Only
+error-frame generation without relying on precompiled SDK errata settings.
+No diagnostic, NORMAL, ARM, lease, BLE or auto-recovery implementation is
+linked. Boot/100ms register and pad checks latch stop/uninstall on a fault.
+This is routing isolation, not electrical isolation against arbitrary faults.
+See [evidence and limitations](qa/m5dial-passive-design-review.md) and
+[owner/PM acceptance runbook](qa/m5dial-passive-runbook.md). Device acceptance
+remains pending; existing active/legacy gates and default env are unchanged.
