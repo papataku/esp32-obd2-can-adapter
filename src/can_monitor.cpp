@@ -81,7 +81,11 @@ bool CanMonitor::begin() {
   setError("CAN TX HARD DISABLED; TWAI NOT INITIALIZED");return true;
 #endif
   if (running_) return true;
-
+  tx_gate_ = xSemaphoreCreateMutex();
+  if (!tx_gate_) {
+    setError("CAN TX mutex allocation failed");
+    return false;
+  }
   frame_queue_ = xQueueCreate(cfg::kFrameQueueLen, sizeof(CapturedFrame));
   query_queue_ = xQueueCreate(1, sizeof(DiagnosticRequest));
   result_queue_ = xQueueCreate(1, sizeof(DiagnosticResult));
@@ -114,7 +118,34 @@ bool CanMonitor::begin() {
   return true;
 }
 
+void CanMonitor::beginObservationBlind(uint64_t at_us) {
+  portENTER_CRITICAL(&stats_mux_);
+  if (audit_.active && !audit_.blind_open) {
+    audit_.blind_open = true;
+    audit_.blind_open_since_us = at_us;
+    if (!audit_.blind_count) audit_.blind_start_us = at_us;
+    ++audit_.blind_count;
+  }
+  portEXIT_CRITICAL(&stats_mux_);
+}
+
+void CanMonitor::endObservationBlind(uint64_t at_us) {
+  portENTER_CRITICAL(&stats_mux_);
+  if (audit_.active && audit_.blind_open) {
+    audit_.blind_open = false;
+    if (at_us >= audit_.blind_open_since_us)
+      audit_.blind_total_us += at_us - audit_.blind_open_since_us;
+    if (audit_.blind_count == 1) audit_.blind_end_us = at_us;
+  }
+  portEXIT_CRITICAL(&stats_mux_);
+}
+
 bool CanMonitor::switchDriverMode(twai_mode_t mode) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  const bool blind_return = mode == TWAI_MODE_LISTEN_ONLY && probe_guard_;
+  if (blind_return)
+    beginObservationBlind(static_cast<uint64_t>(esp_timer_get_time()));
+#endif
   const esp_err_t stopped = twai_stop();
   if (stopped != ESP_OK && stopped != ESP_ERR_INVALID_STATE) return false;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
@@ -141,6 +172,10 @@ bool CanMonitor::switchDriverMode(twai_mode_t mode) {
   }
 
   updateDriverStats();
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if (blind_return)
+    endObservationBlind(static_cast<uint64_t>(esp_timer_get_time()));
+#endif
   return true;
 }
 
@@ -363,7 +398,12 @@ bool CanMonitor::acquireLease(uint32_t duration_ms) {
 #if defined(M5CAN_CAN_TX_HARD_DISABLED)
   (void)duration_ms;return false;
 #endif
-  if (fault_locked_) return false;
+  if (tx_gate_ && xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE)
+    return false;
+  if (fault_locked_) {
+    if (tx_gate_) xSemaphoreGive(tx_gate_);
+    return false;
+  }
   if (duration_ms == 0) duration_ms = cfg::kTxLeaseDefaultMs;
   duration_ms = std::min(duration_ms, cfg::kTxLeaseMaxMs);
   const uint64_t now_ms =
@@ -371,13 +411,21 @@ bool CanMonitor::acquireLease(uint32_t duration_ms) {
   portENTER_CRITICAL(&lease_mux_);
   lease_deadline_ms_ = now_ms + duration_ms;
   portEXIT_CRITICAL(&lease_mux_);
+  if (tx_gate_) xSemaphoreGive(tx_gate_);
   return true;
 }
 
 void CanMonitor::revokeLease() {
+  // STOP and actual driver submission linearize on a FreeRTOS task mutex.
+  // Never invoke twai_transmit() under a spinlock.
+  if (tx_gate_ && xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE) {
+    fault_locked_ = true;
+    return;
+  }
   portENTER_CRITICAL(&lease_mux_);
   lease_deadline_ms_ = 0;
   portEXIT_CRITICAL(&lease_mux_);
+  if (tx_gate_) xSemaphoreGive(tx_gate_);
 }
 
 uint32_t CanMonitor::leaseRemainingMs() const {
@@ -428,13 +476,22 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   (void)wait_ms;
   return ESP_FAIL;
 #else
+  // Preflight is not an authorization: STOP can intervene before the gate.
   if(!leaseAllowsBudget(wait_ms))return ESP_FAIL;
+  if (tx_gate_ && xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE)
+    return ESP_FAIL;
+  // B-03: final lease/fault check and TWAI enqueue share the STOP mutex.
+  // If STOP acquired it first, no new frame reaches the driver.
+  if (fault_locked_ || !leaseAllowsBudget(wait_ms)) {
+    if (tx_gate_) xSemaphoreGive(tx_gate_);
+    return ESP_FAIL;
+  }
   portENTER_CRITICAL(&stats_mux_);
   ++stats_.tx_attempts;
   portEXIT_CRITICAL(&stats_mux_);
-
   const esp_err_t result =
       twai_transmit(&message, pdMS_TO_TICKS(wait_ms));
+  if (tx_gate_) xSemaphoreGive(tx_gate_);
   // A TX result is one software submission event, not a physical wire
   // timestamp. Cache responses and dry-run TX are never fabricated as TX.
   RawCanFrame raw{};

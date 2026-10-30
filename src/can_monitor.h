@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <driver/twai.h>
+#include <freertos/semphr.h>
 
 #include "diagnostic_policy.h"
 #include "diagnostic_request_pacer.h"
@@ -69,6 +70,11 @@ struct ObservationAudit {
   uint8_t used = 0;
   uint32_t all_rx = 0, overflow = 0;
   uint32_t rx_inflight_at_end = 0; // Incomplete RX processing invalidates S1 evidence.
+  // M-06: explicit receive blind interval while TWAI is reinstalled.
+  uint32_t blind_count = 0;
+  uint64_t blind_start_us = 0, blind_end_us = 0, blind_total_us = 0;
+  uint64_t blind_open_since_us = 0;
+  bool blind_open = false;
   bool overflowed_now = false; // consumed by the RX path to revoke the lease
   void note(uint32_t id, bool ext, bool rtr, uint8_t dlc, const uint8_t* data) {
     if (!active) return;
@@ -166,6 +172,8 @@ class CanMonitor {
 
   bool installDriver(twai_mode_t mode);
   bool switchDriverMode(twai_mode_t mode);
+  void beginObservationBlind(uint64_t at_us);
+  void endObservationBlind(uint64_t at_us);
   CapturedFrame captureMessage(const twai_message_t& message,
                                uint64_t timestamp_us);
   void maybeUpdateDriverStats(uint64_t now_us);
@@ -189,6 +197,7 @@ class CanMonitor {
   QueueHandle_t query_queue_ = nullptr;
   QueueHandle_t result_queue_ = nullptr;
   TaskHandle_t rx_task_ = nullptr;
+  SemaphoreHandle_t tx_gate_ = nullptr; // Task mutex: blocking TWAI API allowed.
 
   mutable portMUX_TYPE query_mux_ = portMUX_INITIALIZER_UNLOCKED;
   mutable portMUX_TYPE stats_mux_ = portMUX_INITIALIZER_UNLOCKED;
