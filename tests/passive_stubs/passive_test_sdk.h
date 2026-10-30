@@ -140,7 +140,9 @@ class LGFX_Device {
       assert(GPIO.out & (1U<<13));
       GPIO.enable &= ~(1U<<13);
       GPIO.func_out_sel_cfg[13].val=0;
-      pad_high=false;
+      // Powered U179 may retain pad HIGH via its TXD pull-up. Emulate
+      // an independently LOW pad with display_clobber_external_low.
+      pad_high=!display_clobber_external_low;
     }
     if (display_drives_gpio13_low) {
       GPIO.out &= ~(1U<<13);
