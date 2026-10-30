@@ -37,6 +37,7 @@ static CanMonitor *audit_owner=nullptr;
 static bool owner_paused=false;
 static signal_v2::CanOwner* handoff_owner=nullptr;
 static bool preempt_after_receive=false;
+static CanMonitor *rearm_during_predrain=nullptr;
 static std::mutex driver_mu;
 static std::condition_variable driver_cv;
 static bool driver_block=false,driver_entered=false,driver_release=false;
@@ -48,6 +49,13 @@ void s1TestOnAuditDelay(uint32_t){
     signal_v2::CanOwnerTestAccess::serviceClose(*audit_owner);
 }
 int s1TestFrameQueueSend(QueueHandle_t,const void*,TickType_t){
+  if(rearm_during_predrain){
+    CanMonitor *const monitor=rearm_during_predrain;
+    rearm_during_predrain=nullptr;
+    monitor->revokeStageAuthorization(12);
+    assert(monitor->beginStageS1(13));
+    assert(monitor->acquireLease(550));
+  }
   if(preempt_owner){
     signal_v2::CanOwner *const o=preempt_owner;
     preempt_owner=nullptr;
@@ -286,6 +294,23 @@ int main(){
     assert(tx_ms.size()==1);
   }
 
+  // M-11/B-03: an old in-progress TX must not borrow a new stage
+  // authorization while pre-TX RX accounting temporarily releases tx_gate_.
+  {
+    CanMonitor monitor;assert(monitor.begin());g_test_millis=100;
+    rx.clear();tx_ms.clear();assert(monitor.beginStageS1(12));
+    assert(monitor.acquireLease(550));
+    rx={{100,frame(0x0CF00400U,{0xFF,0,0,0,0,0,0,0})}};
+    rearm_during_predrain=&monitor;
+    twai_message_t s1=frame(0x18DA01F1U,{3,1,0x0C,0x0D,0,0,0,0});
+    s1.ss=1;
+    assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)!=ESP_OK);
+    assert(rearm_during_predrain==nullptr);
+    assert(tx_ms.empty());
+    // The new epoch still owns its distinct, unused single-shot right.
+    assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)==ESP_OK);
+    assert(tx_ms.size()==1);
+  }
   // M-09: [tx_us, tx_us+1_000_000us), including exact endpoints.
   {
     ObservationAudit audit{};audit.active=true;

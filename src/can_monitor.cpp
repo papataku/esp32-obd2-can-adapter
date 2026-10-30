@@ -595,6 +595,9 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
     return ESP_FAIL;
   }
   stage_s1_consumed_=true;
+  // The mutex is temporarily released only to account for a drained frame.
+  // Never let that old transaction inherit a newer STOP/ARM epoch.
+  const uint32_t submitting_epoch=stage_epoch_;
   // M-11: the sole S1 TX right is consumed before any pre-TX RX drain.
   // Acquire/check and driver submission remain on the STOP tx_gate_.
   // Never call the complete RX accounting path while holding that gate:
@@ -611,6 +614,7 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
     captureMessage(pending,static_cast<uint64_t>(esp_timer_get_time()));
     if (xSemaphoreTake(tx_gate_,portMAX_DELAY)!=pdTRUE) return ESP_FAIL;
     if (fault_locked_ || !stage_authorized_ ||
+        stage_epoch_!=submitting_epoch ||
         stage_epoch_<=revoked_stage_epoch_ || !leaseAllowsBudget(wait_ms)) {
       xSemaphoreGive(tx_gate_);
       return ESP_FAIL;
@@ -628,6 +632,7 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   }
   portEXIT_CRITICAL(&stats_mux_);
   if (!pre_empty || fault_locked_ || !stage_authorized_ ||
+      stage_epoch_!=submitting_epoch ||
       stage_epoch_<=revoked_stage_epoch_ || !leaseAllowsBudget(wait_ms)) {
     xSemaphoreGive(tx_gate_);
     return ESP_FAIL;
