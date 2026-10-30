@@ -373,6 +373,7 @@ class R66m(unittest.TestCase):
         self.number_board_without_reordering_writes(events)
         r=h.evaluate('normal',events)
         self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['group_fc_causality'],r)
 
     def test_m14_fc_before_group_ff_is_rejected(self):
         events=trace()
@@ -387,6 +388,64 @@ class R66m(unittest.TestCase):
         self.number_board_without_reordering_writes(events)
         r=h.evaluate('normal',events)
         self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['group_fc_causality'],r)
+
+
+class R66n(unittest.TestCase):
+    """M-15/M-16 causal Fresh evidence and m-06 driver-RX controls."""
+
+    def test_m15_rearm_fresh_packet_before_first_new_epoch_sample_fails(self):
+        events=rearm_trace();add=adder(events,3)
+        add(1.712,'packet',type='33',epoch='3',fresh='1',current='1',
+            source_generation='4',mode_epoch='4',
+            pdu_source_generation='4',pdu_mode_epoch='4',
+            pdu_source='18DAF101',pdu_mixed='0')
+        packet=events.pop()
+        arm=next(e for e in events if e['kind']=='arm' and e['epoch']=='3')
+        events.insert(events.index(arm)+1,packet)
+        R66m.number_board_without_reordering_writes(events)
+        r=h.evaluate('rearm',events)
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['epoch_separation'],r)
+
+    def test_m16_sample_before_group_last_cf_fails(self):
+        events=trace()
+        sample=next(e for e in events if e['kind']=='sample')
+        sample['t']=.228;sample['t_us']='228000';sample['observed_us']='227000'
+        events.remove(sample)
+        first_cf=next(e for e in events if e['kind']=='rx' and e['data']==h.GROUP_CF[0])
+        cf_write=next(w for w in events if w['kind']=='write' and w.get('from_t')==.227)
+        events.insert(events.index(cf_write),sample)
+        R66m.number_board_without_reordering_writes(events)
+        r=h.evaluate('normal',events)
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['positive_acquisition'],r)
+
+    def test_m06_disconnect_after_fresh_sample_is_rejected(self):
+        events=disconnect_trace();add=adder(events,1)
+        add(.305,'sample',epoch='1',quality='0',speed='0',rpm='1000',
+            source='18DAF101',observed_us='303000',
+            source_generation='2',mode_epoch='2')
+        r=h.evaluate('disconnect',renumber(events))
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['epoch_separation'],r)
+
+    def test_m06_disconnect_running_driver_may_admit_late_rx(self):
+        events=disconnect_trace();add=adder(events,1)
+        for gate in ('owner','monitor'):
+            add(.289,'gate',gate=gate,epoch='1',cost='2400',
+                used100='2400',used1000='17600',discovery='0')
+        add(.290,'tx',id=h.ECU_TX,ext=1,dlc=8,
+            data=h.GROUP.ljust(8,b'\0'),ok=1)
+        events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_FF,True,1),
+                           write_t=.3049,from_t=.290,from_gen=1))
+        add(.305,'rx',id=h.ECU_RX,ext=1,dlc=len(h.GROUP_FF),
+            data=h.GROUP_FF,ok=1)
+        r=h.evaluate('disconnect',renumber(events))
+        self.assertTrue(r['pass'],r)
+        self.assertTrue(r['checks']['transport_complete'],r)
+        self.assertTrue(r['checks']['epoch_separation'],r)
+
 
 
 if __name__=='__main__':unittest.main()
