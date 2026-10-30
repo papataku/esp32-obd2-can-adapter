@@ -214,4 +214,32 @@ class R66h(unittest.TestCase):
         add(.45,'rx',id=0x18DAF102,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=0)
         self.assertFalse(h.evaluate('rearm',renumber(events))['checks']['transport_complete'])
 
+class R66i(unittest.TestCase):
+    """Seventh independent review M-03, M-04 (ChatGPT, 2026-10-30)."""
+    def deliberate(self,events):
+        return next(w for w in events if w.get('deliberate'))
+
+    def test_m03_deliberate_old_cf_has_race_generation(self):
+        events=rearm_trace()
+        w=self.deliberate(events);w['text']=w['text'].replace('HIL RX 1 ','HIL RX 999 ',1)
+        self.assertFalse(h.evaluate('rearm',events)['checks']['transport_complete'])
+
+    def test_m03_deliberate_write_follows_completed_stop(self):
+        events=rearm_trace();w=self.deliberate(events)
+        events.remove(w);w['write_t']=.305
+        events.append(w)
+        self.assertFalse(h.evaluate('rearm',renumber(events))['checks']['transport_complete'])
+
+    def overlap_with_driver(self,*kinds):
+        events=overlap_trace();add=adder(events,3)
+        for i,k in enumerate(kinds):add(1.7101+i*.0001,k)
+        return renumber(events)
+
+    def test_m04_no_admission_while_driver_stopped(self):
+        self.assertFalse(h.evaluate('overlap',self.overlap_with_driver('stop'))['checks']['transport_complete'])
+
+    def test_m04_driver_restart_is_running_again(self):
+        r=h.evaluate('overlap',self.overlap_with_driver('stop','install','start'))
+        self.assertTrue(r['pass'],r)
+
 if __name__=='__main__':unittest.main()

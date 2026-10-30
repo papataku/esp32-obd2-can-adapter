@@ -238,10 +238,16 @@ def evaluate(scenario, events):
     def admitted_while_running(e):
         # The shim admits only while installed and running: an ok=1 RX
         # after a completed STOP and before the next ARM breaks that contract.
-        life = [x for x in board if x["seq"] < e["seq"] and x.get("boot") == e.get("boot")
-                and x["kind"] in ("arm", "stopped")]
-        return bool(life) and life[-1]["kind"] == "arm"
-    def reconcile(extra_refusal=lambda e: False):
+        before = [x for x in board if x["seq"] < e["seq"] and x.get("boot") == e.get("boot")]
+        life = [x for x in before if x["kind"] in ("arm", "stopped")]
+        if not life or life[-1]["kind"] != "arm":
+            return False
+        # Driver state is separate from authorization (review M-04): after a
+        # driver stop/uninstall/BUS_OFF only a later start makes it RUNNING.
+        driver = [x for x in before if x["kind"] in ("install", "start", "stop", "uninstall") or
+                  (x["kind"] == "command" and x.get("command") == "BUSOFF")]
+        return not driver or driver[-1]["kind"] == "start"
+    def reconcile(extra_refusal=lambda e, w: False):
         slots = Counter(predicted)
         pending, ok, deliberate = [], True, 0
         for e in events:
@@ -261,7 +267,7 @@ def evaluate(scenario, events):
                 # Only the single deliberate operator injection (rearm) lacks a
                 # cause, and it must be refused (review m-01).
                 deliberate += 1
-                ok &= not e["ok"] and extra_refusal(e) and deliberate == 1
+                ok &= not e["ok"] and extra_refusal(e, w) and deliberate == 1
                 continue
             if True:
                 key = (w["from_t"], w.get("from_gen"), line)
@@ -277,7 +283,7 @@ def evaluate(scenario, events):
                 continue
             fail_closed = bool(first_fault_stop and e["seq"] > first_fault_stop["seq"] and
                                cause and cause["seq"] < trigger["seq"])
-            ok &= fail_closed or extra_refusal(e)
+            ok &= fail_closed or extra_refusal(e, w)
         return ok and not pending
     acknowledged = reconcile()
     # The generation is part of the injection contract: an admitted RX must
@@ -437,8 +443,16 @@ def evaluate(scenario, events):
                 and stops[0]["t"] < e["t"] < arms[-1]["t"]]
         rearm_ok &= len(old_cf)==1 and old_cf[0]["ok"]==0
         # The deliberate stopped-generation RX must be refused, without loss.
-        acknowledged = reconcile(lambda e: e["id"] == ECU_RX and e["ext"] == 1 and e["data"] == GROUP_CF[0]
-                                 and stops[0]["t"] < e["t"] < arms[-1]["t"])
+        # M-03: the deliberate old CF carries the generation of the group TX
+        # pending at the race STOP and is written after that STOP completed
+        # and before the re-ARM (host order), then refused in the same interval.
+        position = {id(x): i for i, x in enumerate(events)}
+        race_tx = [t for t in txs if t["seq"] < stops[0]["seq"] and t["data"][:7] == GROUP]
+        race_gen = str(race_tx[-1].get("gen")) if race_tx else None
+        acknowledged = reconcile(lambda e, w: e["id"] == ECU_RX and e["ext"] == 1 and e["data"] == GROUP_CF[0]
+                                 and stops[0]["t"] < e["t"] < arms[-1]["t"]
+                                 and w["text"].split()[2] == race_gen
+                                 and position[id(stops[0])] < position[id(w)] < position[id(arms[-1])])
         rearm_ok &= any(int(e["epoch"]) == epochs[-1] for e in samples)
         snapshots = [e for e in kind("packet") if e.get("type") == "33"]
         rearm_ok &= any(stops[0]["t"] < e["t"] < arms[-1]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)
