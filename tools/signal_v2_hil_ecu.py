@@ -222,11 +222,18 @@ def evaluate(scenario, events):
     first_fault_stop = next((x for x in stops if x["seq"] > trigger["seq"]), None) if trigger else None
     # Responses the virtual ECU model actually schedules for each successful
     # adapter TX, keyed by the cause's board time and generation (B-09).
-    model = VirtualEcu(scenario)
+    # M-19 (reboot): board seq resets on each boot; a global seq sort
+    # interleaves two independent ISO-TP conversations and can make a valid
+    # second-boot FC appear unscheduled. Replay in recorded board order with
+    # a distinct virtual ECU state for each boot identity.
+    models = {}
     predicted = Counter()
-    for t in sorted(txs, key=lambda x: x["seq"]):
+    for t in txs:
         if t["ok"]:
-            for _, line in model.on_tx(t["id"], t["data"]):
+            boot = t.get("boot")
+            if boot not in models:
+                models[boot] = VirtualEcu(scenario)
+            for _, line in models[boot].on_tx(t["id"], t["data"]):
                 if line.startswith("HIL RX "):
                     predicted[(t["t"], t.get("gen"), " ".join(line.split()[3:]))] += 1
     # One-to-one causal reconciliation in host arrival order (B-11..B-13):
