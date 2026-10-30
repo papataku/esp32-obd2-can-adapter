@@ -353,18 +353,39 @@ class R66m(unittest.TestCase):
         r=h.evaluate('disconnect',renumber(events))
         self.assertFalse(r['checks']['no_tx_after_stop'],r)
 
+    @staticmethod
+    def number_board_without_reordering_writes(events):
+        # Synthetic trace() embeds the corresponding host write before each RX.
+        # Do not sort those writes by an absent write_t: M-11 would fail first.
+        seq=0
+        for e in events:
+            if 't_us' in e:
+                seq+=1;e['seq']=seq
+
     def test_m14_extra_fc_after_last_cf_is_rejected(self):
         events=trace();add=adder(events,1)
         add(.250,'tx',id=h.ECU_TX,ext=1,dlc=8,
             data=b'\x30'+b'\0'*7,ok=1)
-        r=h.evaluate('normal',renumber(events))
+        extra=events.pop()
+        i=next(i for i,e in enumerate(events)
+               if 'seq' in e and e['t']>.250)
+        events.insert(i,extra)
+        self.number_board_without_reordering_writes(events)
+        r=h.evaluate('normal',events)
         self.assertFalse(r['pass'],r)
 
     def test_m14_fc_before_group_ff_is_rejected(self):
-        events=trace();add=adder(events,1)
-        add(.222,'tx',id=h.ECU_TX,ext=1,dlc=8,
-            data=b'\x30'+b'\0'*7,ok=1)
-        r=h.evaluate('normal',renumber(events))
+        events=trace()
+        fc=next(e for e in events if e['kind']=='tx' and e['data'][:1]==b'\x30')
+        old_t=fc['t'];fc['t']=.223;fc['t_us']='223000'
+        events.remove(fc)
+        ff=next(e for e in events if e['kind']=='rx' and e['data']==h.GROUP_FF)
+        events.insert(events.index(ff)-1,fc) # before the FF host write
+        for w in events:
+            if w['kind']=='write' and abs(w.get('from_t',-1)-old_t)<1e-8:
+                w['from_t']=.223 # CF writes are caused by the moved FC
+        self.number_board_without_reordering_writes(events)
+        r=h.evaluate('normal',events)
         self.assertFalse(r['pass'],r)
 
 
