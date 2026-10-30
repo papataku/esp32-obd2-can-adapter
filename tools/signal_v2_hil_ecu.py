@@ -458,7 +458,7 @@ def evaluate(scenario, events):
             # A first ARM therefore yields exactly (2,2). After the same-
             # boot STOP ACK, the next ARM yields exactly STOP+(1,1), not an
             # arbitrary larger pair. No counter changes during a single ARM.
-            expected = ((stopped_generations[0] + 1,
+            expected_generations = ((stopped_generations[0] + 1,
                          stopped_generations[1] + 1)
                         if stopped and stopped_generations else
                         (2, 2) if stopped is None else None)
@@ -472,9 +472,9 @@ def evaluate(scenario, events):
                  generations[0] > last_sample[1][0] and
                  generations[1] > last_sample[1][1]))
             generation_valid = bool(
-                arm and generations is not None and expected is not None
-                and expected[0] <= 0xFFFFFFFF and expected[1] <= 0xFFFFFFFF
-                and generations == expected and generations[0] == generations[1]
+                arm and generations is not None and expected_generations is not None
+                and expected_generations[0] <= 0xFFFFFFFF and expected_generations[1] <= 0xFFFFFFFF
+                and generations == expected_generations and generations[0] == generations[1]
                 and continuous and newer_than_previous_epoch)
             sample_generation_ok &= generation_valid
             valid = bool(
