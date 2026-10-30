@@ -854,6 +854,7 @@ def run(port, scenario, seconds, trace_path):
     ready_deadline = 0
     current_generation = 0
     initial_deadline = start + 5
+    pending_initial_stop = None
 
     def send(line, record=True, cause=None):
         if line.startswith("HIL RX 0 "):
@@ -901,6 +902,7 @@ def run(port, scenario, seconds, trace_path):
                         if time.monotonic()>=reconnect_until:raise
                         time.sleep(.05)
                 phase="initial_stop";phase_at=time.monotonic();initial_deadline=phase_at+10
+                pending_initial_stop = None
                 scheduled.clear();send("SIGV2 CAN STOP",False)
                 continue
             while b"\n" in buf:
@@ -909,8 +911,37 @@ def run(port, scenario, seconds, trace_path):
                 if not text:
                     continue
                 if phase == "initial_stop":
-                    if "ack=STOPPED" in text or "kind=stopped" in text:
-                        send("HIL FENCE " + nonce, False);phase="fencing";phase_at=now
+                    # M-19: do not throw away the only known starting counter
+                    # state. Preserve a matched, sequenced board STOP request
+                    # and STOP ACK before FENCE; a loose serial ack line or a
+                    # previously buffered STOPPED event is never sufficient.
+                    try:
+                        pre = parse_event(text)
+                    except (ValueError, KeyError):
+                        events.append({"kind": "parse_error", "text": text})
+                        continue
+                    if pre and pre.get("kind") == "stop_request":
+                        pending_initial_stop = pre
+                    elif pre and pre.get("kind") == "stopped" and pending_initial_stop:
+                        request = pending_initial_stop
+                        if (pre.get("boot") == request.get("boot") and
+                            pre.get("epoch") == request.get("epoch") and
+                            pre.get("seq", 0) > request.get("seq", 0)):
+                            events.append({
+                                "kind": "initial_stop_evidence",
+                                "boot": pre.get("boot"),
+                                "epoch": pre.get("epoch"),
+                                "request_epoch": request.get("epoch"),
+                                "request_seq": request.get("seq"),
+                                "ack_seq": pre.get("seq"),
+                                "request_t_us": request.get("t_us"),
+                                "ack_t_us": pre.get("t_us"),
+                                "source_generation": pre.get("source_generation"),
+                                "mode_epoch": pre.get("mode_epoch"),
+                            })
+                            pending_initial_stop = None
+                            send("HIL FENCE " + nonce, False)
+                            phase="fencing";phase_at=now
                     continue
                 try:
                     e = parse_event(text)
@@ -924,6 +955,7 @@ def run(port, scenario, seconds, trace_path):
                     if reboot_seen or not any(x["kind"] == "sample" for x in events):
                         events.append({"kind":"parse_error", "text":"unexpected reboot"});break
                     reboot_seen=True;phase="initial_stop";phase_at=now;initial_deadline=now+10
+                    pending_initial_stop = None
                     scheduled.clear();send("SIGV2 CAN STOP",False)
                     continue
                 if phase == "fencing":
