@@ -52,6 +52,58 @@ overload must STOP; its >cap load remains in JSON and is never called within-cap
 All normal traffic and **both** reservation gates retain 200 bits/frame,
 5,000/100ms and 25,000/1s. No cap or budget algorithm is changed.
 
+## M-19/M-20: boot and STOP generation evidence (2026-10-31)
+
+The board's sample source-generation counters are **not** the TWAI driver
+\`gen\` field. Both owner counters start at 1 (CanSamples, 
+\`include/signal_v2_can_samples.h:17\`). The GATT authorization epoch starts
+at 1 (\`src/signal_v2_gatt.cpp:47-48\`), and \`CanOwner::tick\` increments
+**both counters once per changed authorization epoch**
+(\`src/signal_v2_can_owner.h:182-186\`).
+
+Before *each boot's* first FENCE the runner sends \`SIGV2 CAN STOP\`. It must
+retain the matched board \`stop_request\` and \`stopped\` event as a separate
+\`initial_stop_evidence\` JSONL record, including boot, request/ACK sequence
+and timestamp, authorization epoch, source_generation and mode_epoch.
+The initial STOP ACK is **not a post-FENCE board frame** and does not count
+toward the 60-second session or the sequenced load ledger. A loose serial
+\`ack=STOPPED\` line, a stale pre-command ACK, a missing prelude, a second
+prelude for the same boot or an incorrect boot ID cannot qualify.
+
+The mandatory generation transitions are:
+
+- **Initial STOP then first ARM:** firmware initializes both counters at
+  (1,1), consumes authorization epoch 1 in its first tick to (2,2),
+  then increments once for the runner's initial STOP (normally epoch 2,
+  generations 3/3) and once for ARM (normally epoch 3, generations **4/4**).
+  Repeated *recorded* startup STOPs may increase the baseline; the matched
+  ACK, not a guessed 2/2, is authoritative.
+- **Ordinary operator STOP then re-ARM:** STOP increments the epoch and both
+  counters once; the ACK must equal the last valid counters +1/+1.
+  A subsequent ARM increments them once more.
+  Source: \`src/signal_v2_gatt.cpp:166-205,599-611\`.
+- **Internal owner fault then STOP ACK:** owner \`stop()\` increments both
+  counters once (\`src/signal_v2_can_owner.h:38-48\`) and the first STOP ACK
+  records that state. GATT also increments its authorization epoch after
+  \`owner.tick\` returns. The next idle tick consumes this pending transition,
+  adding one increment **before** a later operator STOP or new ARM
+  (\`src/signal_v2_gatt.cpp:599-611\`).
+- **Central disconnect then STOP ACK, later reconnection:** disconnect
+  increments the authorization epoch (\`src/signal_v2_gatt.cpp:536-543\`);
+  the next owner tick adds one increment and the STOP ACK records it.
+  Reconnection alone does not authorize CAN TX; a new accepted ARM
+  increments the epoch/counters again. Do not promote pre-disconnect data.
+- **New boot:** counters reset to (1,1) and GATT authorization restarts at 1.
+  A **separate initial STOP request/ACK and FENCE** for the new boot are
+  mandatory. Never carry the preceding boot's counter baseline forward.
+
+The oracle checks every same-boot STOP ACK **even if no later sample exists**,
+enforces exact +1 (including the internal-fault deferred tick case),
+checks request/ACK epochs and ordering, and rejects missing, nonnumeric,
+out-of-range or discontinuous generations with a structured FAIL.
+Full-GROUP-only scope (m-07) still applies; this is **software HIL evidence**,
+not a physical-bus or central receipt test.
+
 ## Device procedure (separate authorized bench task)
 
 1. Back up/verify the target identity and flash only with separate operator
