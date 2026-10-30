@@ -37,6 +37,8 @@ inline bool pad_high=true;
 inline bool stuck_pad_low=false, display_disables_gpio13=false;
 inline bool display_drives_gpio13_low=false, display_corrupts_gpio13_route=false;
 inline bool display_clobber_external_low=false;
+inline bool mock_spi_bus_fail=false, mock_dma_alloc_fail=false, mock_i2c_begin=false;
+inline int spi_bus_init_calls=0, dma_alloc_calls=0, i2c_begin_calls=0;
 inline bool stuck_rtc_mux=false,stuck_sleep=false,bad_iomux=false,bad_input=false;
 inline bool bad_rx_on_install=false,skip_listen_on_start=false;
 inline int gpio_set_level(int pin,int value) { if (pin<32) GPIO.out=(GPIO.out&~(1U<<pin))|(value<<pin); return 0; }
@@ -117,6 +119,32 @@ namespace fonts { inline int Font2=0; }
 #define SPI2_HOST 2
 #define SPI3_HOST 3
 #define SPI_DMA_CH_AUTO 3
+#define MALLOC_CAP_INTERNAL 1
+#define MALLOC_CAP_DMA 2
+struct spi_bus_config_t {
+  int mosi_io_num=-1,miso_io_num=-1,sclk_io_num=-1;
+  int quadwp_io_num=-1,quadhd_io_num=-1,max_transfer_sz=0,flags=0;
+};
+inline int spi_bus_initialize(int host,const spi_bus_config_t* cfg,int dma) {
+  ++spi_bus_init_calls;
+  assert(host==SPI3_HOST && cfg->mosi_io_num==5 && cfg->miso_io_num==-1);
+  assert(cfg->sclk_io_num==6 && cfg->quadwp_io_num==-1 && cfg->quadhd_io_num==-1);
+  assert(dma==SPI_DMA_CH_AUTO);
+  return mock_spi_bus_fail?ESP_FAIL:ESP_OK;
+}
+inline uint8_t dma_probe_storage[512]{};
+inline void* heap_caps_malloc(size_t len,uint32_t caps) {
+  ++dma_alloc_calls;
+  assert(len>=480 && (caps & MALLOC_CAP_INTERNAL) && (caps & MALLOC_CAP_DMA));
+  return mock_dma_alloc_fail?nullptr:dma_probe_storage;
+}
+inline void heap_caps_free(void* p) { assert(p==dma_probe_storage); }
+inline void simulate_wire_begin() {
+  ++i2c_begin_calls;
+  GPIO.enable &= ~(1U<<13);
+  GPIO.func_out_sel_cfg[13].val=0;
+  pad_high=false;
+}
 // Model Arduino-ESP32 2.0.17 SPI2 MISO=-1 -> GPIO13.
 inline int lcd_spi_host=-1;
 inline bool lcd_auto_attached_gpio13=false;
@@ -154,6 +182,7 @@ class LGFX_Device {
       pad_high=false;
       lcd_auto_attached_gpio13=true;
     }
+    if (mock_i2c_begin) simulate_wire_begin();
     if (display_disables_gpio13) {
       if (display_clobber_external_low) stuck_pad_low=true;
       assert(GPIO.out & (1U<<13));

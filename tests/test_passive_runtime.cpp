@@ -8,6 +8,9 @@ int main(int argc,char** argv) {
   const std::string fault=argv[1];
   lgfx::display_ok=fault!="display";
   install_fail=fault=="install"; start_fail=fault=="start"; task_fail=fault=="task";
+  if (fault=="bus-init-fail") mock_spi_bus_fail=true;
+  if (fault=="dma-alloc-fail") mock_dma_alloc_fail=true;
+  if (fault=="i2c-begin") mock_i2c_begin=true;
   if (fault=="before-pad") stuck_pad_low=true;
   if (fault=="display-clobber") display_disables_gpio13=true;
   if (fault=="display-clobber-stuck") {
@@ -28,7 +31,8 @@ int main(int argc,char** argv) {
       fault=="before-sleep" || fault=="before-mux" || fault=="before-input" ||
       fault=="stopped-rx" || fault=="start-nolom" || fault=="status-boot" ||
       fault=="display-low" || fault=="display-route" ||
-      fault=="display-clobber" || fault=="display-clobber-stuck");
+      fault=="display-clobber" || fault=="display-clobber-stuck" ||
+      fault=="bus-init-fail" || fault=="dma-alloc-fail" || fault=="i2c-begin");
   if (early) {
     assert(stats.fault && !stats.verified && !installed);
     assert(fault_evidence.captured);
@@ -42,6 +46,9 @@ int main(int argc,char** argv) {
     else if (fault=="status-boot") { stage="initial_check"; field="twai_status"; }
     else if (fault=="display-low") { stage="post_display_unsafe"; field="txd_latch_high"; }
     else if (fault=="display-route") { stage="post_display_unsafe"; field="txd_gpio"; }
+    else if (fault=="bus-init-fail") { stage="spi3_bus_init"; field="spi_bus_initialize"; }
+    else if (fault=="dma-alloc-fail") { stage="spi3_dma_probe"; field="dma_alloc"; }
+    else if (fault=="i2c-begin") { stage="post_display_unsafe"; field="txd_gpio"; }
     else if (fault=="display-clobber-stuck") { stage="post_display_unsafe"; field="txd_gpio"; }
     else if (fault=="display-clobber") { stage="post_display_unsafe"; field="txd_gpio"; }
     else {
@@ -52,6 +59,9 @@ int main(int argc,char** argv) {
       if (fault=="before-input") field="txd_input_enabled";
     }
     assert(stage==fault_evidence.stage && field==fault_evidence.field);
+    if (fault=="bus-init-fail" || fault=="dma-alloc-fail")
+      assert(calls.empty()); // TWAI install forbidden on failed LCD preflight.
+    if (fault=="i2c-begin") assert(i2c_begin_calls==1);
     if (fault=="before-pad") assert(!fault_evidence.pins.txd_pad_high);
     if (fault=="before-rtc" || fault=="before-sleep")
       assert(!fault_evidence.pins.txd_awake);
@@ -84,6 +94,8 @@ int main(int argc,char** argv) {
     return 0;
   }
   assert(fresh(readStats()) && calls.back()=="task");
+  assert(spi_bus_init_calls==1 && dma_alloc_calls==1);
+  assert(i2c_begin_calls==0);
   assert(!display_reasserted);
   assert(!lcd_auto_attached_gpio13);
   assert(lcd_spi_host==SPI3_HOST);
