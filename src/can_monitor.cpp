@@ -162,6 +162,7 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   }
 
   portENTER_CRITICAL(&stats_mux_);
+  ++rx_processing_; // Paired below after audit_.note(), including closed windows.
   ++stats_.rx_frames;
   if (frame.extended) ++stats_.ext_frames;
   else ++stats_.std_frames;
@@ -213,6 +214,7 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   // audit snapshot never contains a frame whose loss is not yet counted.
   portENTER_CRITICAL(&stats_mux_);
   audit_.note(frame.identifier, frame.extended, frame.rtr, frame.dlc, frame.data);
+  --rx_processing_;
   const bool audit_overflowed = audit_.overflowed_now;
   audit_.overflowed_now = false;
   portEXIT_CRITICAL(&stats_mux_);

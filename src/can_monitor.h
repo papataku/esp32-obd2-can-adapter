@@ -68,6 +68,7 @@ struct ObservationAudit {
   uint32_t counts[kIds][kTypes]{};
   uint8_t used = 0;
   uint32_t all_rx = 0, overflow = 0;
+  uint32_t rx_inflight_at_end = 0; // Incomplete RX processing invalidates S1 evidence.
   bool overflowed_now = false; // consumed by the RX path to revoke the lease
   void note(uint32_t id, bool ext, bool rtr, uint8_t dlc, const uint8_t* data) {
     if (!active) return;
@@ -100,6 +101,7 @@ class CanMonitor {
   void endObservationAudit(ObservationAudit& copy, CanStats& final_stats) {
     portENTER_CRITICAL(&stats_mux_);
     audit_.active = false;
+    audit_.rx_inflight_at_end = rx_processing_;
     copy = audit_;
     statsLocked(final_stats); // includes the charged-traffic windows (M-03)
     portEXIT_CRITICAL(&stats_mux_);
@@ -192,6 +194,7 @@ class CanMonitor {
   mutable portMUX_TYPE stats_mux_ = portMUX_INITIALIZER_UNLOCKED;
   mutable portMUX_TYPE lease_mux_ = portMUX_INITIALIZER_UNLOCKED;
   CanStats stats_{};
+  uint32_t rx_processing_ = 0; // Started RX awaiting audit_.note(); stats_mux_ protected.
   ObservationAudit audit_{}; // protected by stats_mux_
   RawCanCapture raw_capture_{}; // CAN-owner producer, Arduino writer consumer
   volatile bool running_ = false;

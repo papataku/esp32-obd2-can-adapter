@@ -63,7 +63,13 @@ class CanOwner {
     m5can::CanStats s{};
     can_->endObservationAudit(audit,s); // Same boundary as the per-ID counts.
     const auto d=[](uint64_t now,uint64_t base){return now>=base?now-base:0ULL;};
-    const bool lossless=!audit.overflow && s.driver_rx_missed==s1_base_.driver_rx_missed &&
+    // M-07: reject closure during a partially processed RX, or a window
+    // where the global RX counter and ID audit span different frames.
+    const bool rx_consistent=!audit.rx_inflight_at_end &&
+      s.rx_frames>=s1_base_.rx_frames &&
+      s.rx_frames-s1_base_.rx_frames==static_cast<uint64_t>(audit.all_rx);
+    const bool lossless=rx_consistent && !audit.overflow &&
+      s.driver_rx_missed==s1_base_.driver_rx_missed &&
       s.driver_rx_overrun==s1_base_.driver_rx_overrun && s.app_queue_drops==s1_base_.app_queue_drops &&
       s.driver_bus_error==s1_base_.driver_bus_error;
     const bool complete=lossless && s1_tx_ms_ && !std::strcmp(reason,"S1_OBSERVATION_COMPLETE");
@@ -71,7 +77,7 @@ class CanOwner {
       "fc=%llu,all_rx=%lu,candidate_rx=%llu,tx_attempts=%llu,tx_success=%llu,"
       "rx_missed=%lu,rx_overrun=%lu,queue_drops=%llu,bus_error=%lu,"
       "reserved_peak100=%lu,reserved_peak1000=%lu,charged_peak100=%lu,charged_peak1000=%lu,"
-      "id_overflow=%lu,outcome=%s,stop=%s,complete=%u\n",
+      "id_overflow=%lu,rx_counted=%llu,rx_inflight_end=%lu,outcome=%s,stop=%s,complete=%u\n",
       (unsigned long)epoch_,(unsigned long)s1_started_,(unsigned long)s1_enqueued_at_,(unsigned long)s1_tx_ms_,
       (unsigned long)millis(),s1_sent_?1U:0U,
       (unsigned long long)d(s.signal_v2_fc,s1_base_.signal_v2_fc),(unsigned long)audit.all_rx,
@@ -84,7 +90,10 @@ class CanOwner {
       (unsigned long)(s.driver_bus_error-s1_base_.driver_bus_error),
       (unsigned long)budget_.peak100,(unsigned long)budget_.peak1000,
       (unsigned long)s.observed_peak100,(unsigned long)s.observed_peak1000,
-      (unsigned long)audit.overflow,s1_outcome_,reason,complete?1U:0U);
+      (unsigned long)audit.overflow,
+      (unsigned long long)d(s.rx_frames,s1_base_.rx_frames),
+      (unsigned long)audit.rx_inflight_at_end,
+      s1_outcome_,reason,complete?1U:0U);
     for(unsigned i=0;i<audit.used;++i)
       Serial.printf("#SIGNALV2_S1_ID,epoch=%lu,id=%08lX,ext=%u,sf=%lu,ff=%lu,cf=%lu,fc=%lu,other=%lu\n",
         (unsigned long)epoch_,(unsigned long)audit.ids[i],unsigned(audit.extended[i]),
