@@ -31,6 +31,8 @@ def trace(scenario='normal'):
         frame(t+.009,'rx',h.GROUP_CF[0]);frame(t+.011,'rx',h.GROUP_CF[1])
         add(t+.02,'sample',epoch='1',quality='0',speed='0',rpm='1000',source='18DAF101',
             observed_us=str(round((t+.011)*1e6)))
+    # The runner records its final operator STOP write before the request.
+    events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=60.099))
     add(60.1,'stop_request',epoch='2');add(60.11,'stopped',epoch='2');add(61.2,'fence',nonce='freshend')
     n=0
     for e in events:
@@ -65,6 +67,7 @@ def fault_trace(scenario):
         add(.02+delay,'rx',id=int(cid,16),ext=int(ext),dlc=len(data),data=data,ok=1)
     add(.2,'fault',epoch='1',reason=sorted(h.FAULT_REASONS[scenario])[0])
     add(.21,'stopped',epoch='2')
+    events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=60.099))
     add(60.1,'stop_request',epoch='3');add(60.11,'stopped',epoch='3')
     add(61.2,'fence',nonce='freshend')
     return renumber(events)
@@ -82,7 +85,9 @@ def rearm_trace():
     add(.4,'rx',id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_CF[0],ok=0)
     add(.5,'packet',type='33',epoch='2',fresh='0',current='1',source_generation='3',mode_epoch='3')
     for e in trace():
-        if e['kind']=='write':continue
+        if e['kind']=='write':
+            if e['text']=='SIGV2 CAN STOP':events.append(dict(e,write_t=e['write_t']+1.7))
+            continue
         if e['kind']=='fence' and e['nonce']=='fresh':continue
         e=copy.deepcopy(e);e['t']+=1.7;e['t_us']=str(round(e['t']*1e6));e['gen']=3
         if 'observed_us' in e:e['observed_us']=str(int(e['observed_us'])+1700000)

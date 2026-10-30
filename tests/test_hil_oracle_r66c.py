@@ -22,7 +22,9 @@ def adder(events,gen):
     return add
 
 
-def final_stop(add,epoch):
+def final_stop(add,epoch,events=None):
+    if events is not None:
+        events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=60.099))
     add(60.1,'stop_request',epoch=str(epoch));add(60.11,'stopped',epoch=str(epoch))
     add(61.2,'fence',nonce='freshend')
 
@@ -30,7 +32,7 @@ def final_stop(add,epoch):
 def disconnect_trace():
     events=healthy_prefix();add=adder(events,1)
     add(.3,'disconnect',handle='1');add(.31,'stopped',epoch='2',source_generation='3',mode_epoch='3')
-    final_stop(add,3)
+    final_stop(add,3,events)
     return renumber(events)
 
 
@@ -48,7 +50,7 @@ def overlap_trace():
     add(1.712,'fault',epoch='3',reason='DISCOVERY_RESPONSE_CONTRACT')
     add(1.72,'stopped',epoch='4',source_generation='4',mode_epoch='4')
     add(1.9,'packet',type='33',epoch='4',fresh='0',current='1',source_generation='4',mode_epoch='4')
-    final_stop(add,5)
+    final_stop(add,5,events)
     return renumber(events)
 
 
@@ -145,5 +147,28 @@ class R66e(unittest.TestCase):
             events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.PAIR_SF,True,3),write_t=1.7249,**write))
             add(1.725,'rx',id=h.ECU_RX,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=0)
             self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['transport_complete'],write)
+
+class R66f(unittest.TestCase):
+    """Fourth independent review B-08..B-10 (ChatGPT, 2026-10-30)."""
+    def test_b08_final_stop_needs_host_write(self):
+        events=[e for e in fault_trace('noreply') if not (e['kind']=='write' and e['text']=='SIGV2 CAN STOP')]
+        self.assertFalse(h.evaluate('noreply',events)['checks']['stop_ack_and_quiet'])
+
+    def test_b09_refused_rx_must_be_the_modelled_response(self):
+        events=overlap_trace();add=adder(events,4)
+        events.append(dict(kind='write',text=h.rx_line(0x18DAF102,h.PAIR_SF,True,3),write_t=1.7249,
+                           from_t=1.71,from_gen=3))
+        add(1.725,'rx',id=0x18DAF102,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=0)
+        self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['transport_complete'])
+
+    def test_b10_disconnect_scheduled_refusal_is_fail_closed(self):
+        events=disconnect_trace();add=adder(events,1)
+        for g in ('owner','monitor'):
+            add(.289,'gate',gate=g,epoch='1',cost='2400',used100='2400',used1000='17600',discovery='0')
+        add(.29,'tx',id=h.ECU_TX,ext=1,dlc=8,data=h.GROUP.ljust(8,b'\0'),ok=1)
+        events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_FF,True,1),write_t=.3149,
+                           from_t=.29,from_gen=1))
+        add(.315,'rx',id=h.ECU_RX,ext=1,dlc=len(h.GROUP_FF),data=h.GROUP_FF,ok=0)
+        r=h.evaluate('disconnect',renumber(events));self.assertTrue(r['pass'],r)
 
 if __name__=='__main__':unittest.main()

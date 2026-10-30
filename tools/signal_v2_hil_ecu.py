@@ -215,9 +215,20 @@ def evaluate(scenario, events):
     writes = [e for e in events if e["kind"] == "write" and e["text"].startswith("HIL RX ")]
     expected = Counter("HIL RX 0 " + " ".join(e["text"].split()[3:]) for e in writes)
     accepted = Counter(rx_line(e["id"], e["data"], bool(e["ext"])) for e in rxs)
-    first_fault_stop = None
-    if faults:
-        first_fault_stop = next((x for x in stops if x["seq"] > faults[0]["seq"]), None)
+    # A fault or a central disconnect ends authorization (B-10); its first
+    # completed STOP is the boundary after which scheduled RX may be refused.
+    triggers = sorted(faults + kind("disconnect"), key=lambda x: x["seq"])
+    trigger = triggers[0] if triggers else None
+    first_fault_stop = next((x for x in stops if x["seq"] > trigger["seq"]), None) if trigger else None
+    # Responses the virtual ECU model actually schedules for each successful
+    # adapter TX, keyed by the cause's board time and generation (B-09).
+    model = VirtualEcu(scenario)
+    predicted = Counter()
+    for t in sorted(txs, key=lambda x: x["seq"]):
+        if t["ok"]:
+            for _, line in model.on_tx(t["id"], t["data"]):
+                if line.startswith("HIL RX "):
+                    predicted[(t["t"], t.get("gen"), " ".join(line.split()[3:]))] += 1
     # Provenance: the runner tags each scheduled write with the board time and
     # generation of the adapter TX that caused it.
     scheduled_writes = [w for w in writes if "from_t" in w]
@@ -230,7 +241,10 @@ def evaluate(scenario, events):
             if i in used or " ".join(w["text"].split()[3:]) != line:
                 continue
             cause = next((t for t in txs if t["t"] == w["from_t"] and t.get("gen") == w.get("from_gen")), None)
-            if cause and cause["seq"] < faults[0]["seq"] and w["text"].split()[2] == str(w.get("from_gen")):
+            key = (w["from_t"], w.get("from_gen"), line)
+            if (cause and cause["seq"] < trigger["seq"] and w["text"].split()[2] == str(w.get("from_gen"))
+                    and predicted[key] > 0):
+                predicted[key] -= 1
                 used.add(i)
                 return True
         return False
@@ -269,7 +283,13 @@ def evaluate(scenario, events):
     final_done = next((x for x in stops if final_request and x["seq"] > final_request["seq"] and
                        x.get("boot") == final_request.get("boot") and
                        x.get("epoch") == final_request.get("epoch")), None)
-    final_quiet = bool(final_request and final_done and fences and
+    # B-08: correlate the operator's recorded host STOP write (events are in
+    # host arrival order) after every fault/disconnect and before the request.
+    position = {id(e): i for i, e in enumerate(events)}
+    stop_writes = [i for i, e in enumerate(events) if e["kind"] == "write" and e["text"] == "SIGV2 CAN STOP"]
+    last_trigger = max([position[id(f)] for f in faults + kind("disconnect")], default=-1)
+    host_stop = bool(final_request and any(last_trigger < i < position[id(final_request)] for i in stop_writes))
+    final_quiet = bool(final_request and final_done and fences and host_stop and
                        all(f["seq"] < final_request["seq"] for f in faults + kind("disconnect")) and
                        fences[-1]["t"] - final_done["t"] >= 1)
     sample_ok = bool(samples) and all(
