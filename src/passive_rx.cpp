@@ -157,7 +157,7 @@ void failClosed(const char* stage, const char* field, int code,
 }
 bool check(const char* stage="periodic_check") {
   twai_status_info_t info{};
-  const esp_err_t status=installed ? twai_get_status_info(&info) : ESP_ERR_INVALID_STATE;
+  const esp_err_t status=installed ? twai_get_status_info(&info) : ESP_FAIL;
   const bool ok=installed && status==ESP_OK;
   const uint32_t now=millis();
   const auto observed=snapshot(ok && info.state==TWAI_STATE_RUNNING);
@@ -212,7 +212,7 @@ void printFault(const FaultEvidence& f) {
       "#PASSIVE_FAULT,stage=%s,field=%s,code=%d,no_tx_routes=%u,txd_gpio=%u,"
       "txd_enabled=%u,txd_latch_high=%u,txd_pad_high=%u,txd_mux_gpio=%u,"
       "txd_input_enabled=%u,txd_push_pull=%u,txd_awake=%u,rx_route=%u,"
-      "controller_listen_only=%u,running=%u\\n",
+      "controller_listen_only=%u,running=%u\n",
       f.stage,f.field,f.code,
       unsigned(s.no_tx_routes),unsigned(s.txd_gpio),unsigned(s.txd_enabled),
       unsigned(s.txd_latch_high),unsigned(s.txd_pad_high),unsigned(s.txd_mux_gpio),
@@ -285,13 +285,13 @@ void setup() {
     failClosed("driver_start","twai_start",start_result,snapshot(false)); return;
   }
   if (!check("initial_check")) return;
-  const BaseType_t task_result=xTaskCreatePinnedToCore(
+  const auto task_result=xTaskCreatePinnedToCore(
       owner,"passive-can",4096,nullptr,configMAX_PRIORITIES-3,nullptr,0);
   if (task_result!=pdPASS) {
     failClosed("task_create","xTaskCreatePinnedToCore",task_result,snapshot(false));
     return;
   }
-  Serial.printf("#PASSIVE,git=%s,baud=500000,filter=ALL,tx=ISOLATED\\n", M5CAN_BUILD_SHA);
+  Serial.printf("#PASSIVE,git=%s,baud=500000,filter=ALL,tx=ISOLATED\n", M5CAN_BUILD_SHA);
 }
 void loop() {
   static uint32_t report_ms=0, draw_ms=0, fps=0;
