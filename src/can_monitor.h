@@ -87,17 +87,27 @@ class CanMonitor {
   friend struct signal_v2::CanOwnerTestAccess;
  public:
   // Start a fresh audit window (clears previous counts) / copy it.
-  void beginObservationAudit() {
+  // The counter snapshot is taken in the same critical section as the audit
+  // boundary, so per-ID counts and counter deltas cover the same frames.
+  void beginObservationAudit(CanStats& baseline) {
     portENTER_CRITICAL(&stats_mux_);
     audit_ = ObservationAudit{};
     audit_.active = true;
+    baseline = stats_;
     portEXIT_CRITICAL(&stats_mux_);
   }
-  void endObservationAudit(ObservationAudit& copy) {
+  void endObservationAudit(ObservationAudit& copy, CanStats& final_stats) {
     portENTER_CRITICAL(&stats_mux_);
     audit_.active = false;
     copy = audit_;
+    final_stats = stats_;
     portEXIT_CRITICAL(&stats_mux_);
+  }
+  bool observationAuditOverflowed() const {
+    portENTER_CRITICAL(&stats_mux_);
+    const bool overflowed = audit_.overflow != 0;
+    portEXIT_CRITICAL(&stats_mux_);
+    return overflowed;
   }
   bool begin();
   bool pop(CapturedFrame& frame, TickType_t wait_ticks = 0);

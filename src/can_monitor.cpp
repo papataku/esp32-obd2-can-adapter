@@ -575,6 +575,7 @@ void CanMonitor::performQuery(
       terminal_set = true;
     } else if (!terminal_set) {
       diagnostic_pacer_.noteSuccessfulTx(request, tx_us);
+      result.request_tx_us = tx_us;
     }
   }
 

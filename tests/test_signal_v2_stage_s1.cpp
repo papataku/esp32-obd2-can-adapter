@@ -32,6 +32,7 @@ struct CanOwnerTestAccess {
     uint8_t b[8]{};std::memcpy(b,d.begin(),d.size());
     m.audit_.note(id,true,false,uint8_t(d.size()),b);
   }
+  static void counters(m5can::CanMonitor &m,const m5can::CanStats &s){m.stats_=s;}
 };
 }
 using signal_v2::CanOwner;using signal_v2::CanOwnerTestAccess;
@@ -44,8 +45,10 @@ static void add(uint32_t id,std::initializer_list<uint8_t> pdu){
   f.can_id=id;f.dlc=uint8_t(pdu.size()+1);f.data[0]=uint8_t(pdu.size());
   std::memcpy(f.data+1,pdu.begin(),pdu.size());
 }
-static void begin(DiagnosticStatus st=DiagnosticStatus::Ok){
+// The probe was actually submitted to the driver at tx_ms.
+static void begin(DiagnosticStatus st=DiagnosticStatus::Ok,uint32_t tx_ms=5){
   response={};response.status=st;response.completed_at_us=1000;available=true;
+  response.request_tx_us=uint64_t(tx_ms)*1000ULL;
 }
 static const signal_v2::Simulator::Demand none{};
 static const signal_v2::Simulator::Demand demand{{200,200,200,200,200}};
@@ -57,15 +60,17 @@ static std::string record(){
 // Request S1 for the next epoch; it needs no BLE demand.
 static void s1(CanOwner &o,uint32_t now=0,uint32_t epoch=1){
   SerialStub::lines.clear();
-  o.requestStageS1();o.tick(now,none,true,epoch);
+  o.requestStageS1(epoch);o.tick(now,none,true,epoch);
   assert(o.stageS1()&&o.busy()&&!o.stopped());
   assert(submitted.can_id==0x18DA01F1U&&submitted.length==3);
   assert(submitted.data[0]==1&&submitted.data[1]==0x0C&&submitted.data[2]==0x0D);
 }
 // After the probe, nothing else is ever submitted and output stays Invalid.
+// The 1,000 ms window counts from the actual TX (t=5), not the enqueue.
 static void quietUntilStop(CanOwner &o,unsigned n){
-  for(uint32_t t=20;t<1000;t+=50){o.tick(t,demand,true,1);assert(!o.stopped());}
-  o.tick(1000,demand,true,1);assert(o.stopped());
+  for(uint32_t t=20;t<1005;t+=50){o.tick(t,demand,true,1);assert(!o.stopped());}
+  o.tick(1004,demand,true,1);assert(!o.stopped());
+  o.tick(1005,demand,true,1);assert(o.stopped());
   for(uint32_t t=1000;t<5000;t+=100)o.tick(t,demand,true,1);
   assert(submits==n&&o.samples().acquired==0&&!CanOwnerTestAccess::fixed(o));
 }
@@ -136,27 +141,69 @@ int main(){
   }
   {// Admission failure: no retry.
     m5can::CanMonitor m;CanOwner o;o.attach(&m);
-    admit=false;o.requestStageS1();o.tick(0,none,true,1);admit=true;
+    admit=false;o.requestStageS1(1);o.tick(0,none,true,1);admit=true;
     const auto n=submits;
     for(uint32_t t=0;t<3000;t+=100)o.tick(t,none,true,1);
     assert(o.stopped()&&submits==n);
     assert(record().find("stop=QUERY_ADMISSION_FAILED")!=std::string::npos);
   }
-  {// A probe that never completes hits the 3s fail-safe.
-    m5can::CanMonitor m;CanOwner o;o.attach(&m);s1(o);
-    o.tick(2999,demand,true,1);assert(!o.stopped());
-    o.tick(3000,demand,true,1);assert(o.stopped());
-    assert(record().find("stop=DISCOVERY_TIMEOUT")!=std::string::npos);
-  }
   {// Operator STOP mid-window still emits the record; the next generic ARM
    // is a new epoch that does not reuse anything from S1.
     m5can::CanMonitor m;CanOwner o;o.attach(&m);s1(o);
     begin();add(0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0});o.tick(10,demand,true,1);
-    o.tick(100,none,false,2);
-    assert(record().find("stop=EPOCH_CHANGED")!=std::string::npos);
+    o.noteAuthorizationEnd("OPERATOR_STOP");o.tick(100,none,false,2);
+    // The record keeps the observed epoch and the actual cause.
+    assert(record().find("#SIGNALV2_S1,epoch=1,")!=std::string::npos);
+    assert(record().find("stop=OPERATOR_STOP")!=std::string::npos);
     o.tick(400,demand,true,3);
     assert(!o.stageS1()&&!CanOwnerTestAccess::fixed(o));
     assert(submitted.length==3); // fresh bounded discovery, not a group read
+  }
+  {// F1: a request bound to epoch 2 is never consumed by a later epoch.
+    m5can::CanMonitor m;CanOwner o;o.attach(&m);
+    const auto n=submits;
+    o.requestStageS1(2);
+    // The disconnect bumped the epoch before the S1 arm landed; the owner
+    // first observes a later armed epoch, which must not become S1.
+    o.tick(10,none,true,4);
+    assert(!o.stageS1()&&submits==n);
+  }
+  {// F2: enqueue at t=0 but the driver transmits at t=200: the window ends
+   // at 1,200, never at 1,000.
+    m5can::CanMonitor m;CanOwner o;o.attach(&m);s1(o);
+    begin(DiagnosticStatus::NoData,200);o.tick(210,demand,true,1);
+    o.tick(1000,demand,true,1);assert(!o.stopped());
+    o.tick(1199,demand,true,1);assert(!o.stopped());
+    o.tick(1200,demand,true,1);assert(o.stopped());
+    assert(record().find("request_ms=200")!=std::string::npos);
+  }
+  {// F2: no completion within 1 s stops early as incomplete evidence.
+    m5can::CanMonitor m;CanOwner o;o.attach(&m);s1(o);
+    o.tick(999,demand,true,1);assert(!o.stopped());
+    o.tick(1000,demand,true,1);assert(o.stopped());
+    const auto r=record();
+    assert(r.find("stop=S1_NO_COMPLETION")!=std::string::npos&&r.find("complete=0")!=std::string::npos);
+  }
+  {// A completion that never transmitted is not an observation.
+    m5can::CanMonitor m;CanOwner o;o.attach(&m);s1(o);
+    begin(DiagnosticStatus::DriverError,0);o.tick(10,demand,true,1);
+    assert(o.stopped()&&record().find("stop=S1_NOT_TRANSMITTED")!=std::string::npos);
+  }
+  {// F4: counters and per-ID audit share one boundary; a bus error inside
+   // the window makes the evidence incomplete.
+    m5can::CanMonitor m;CanOwner o;o.attach(&m);s1(o);
+    begin();add(0x18DAF101,{0x41,0x0C,0x13,0x88,0x0D,0});o.tick(10,demand,true,1);
+    m5can::CanStats s{};s.driver_bus_error=1;CanOwnerTestAccess::counters(m,s);
+    o.tick(1005,demand,true,1);assert(o.stopped());
+    const auto r=record();
+    assert(r.find("bus_error=1")!=std::string::npos&&r.find("complete=0")!=std::string::npos);
+  }
+  {// F5: per-ID capacity overflow stops immediately.
+    m5can::CanMonitor m;CanOwner o;o.attach(&m);s1(o);
+    begin(DiagnosticStatus::NoData);o.tick(10,demand,true,1);
+    for(uint32_t id=0x100;id<0x109;++id)CanOwnerTestAccess::rx(m,id,{0xFF});
+    o.tick(20,demand,true,1);assert(o.stopped());
+    assert(record().find("stop=S1_AUDIT_OVERFLOW")!=std::string::npos);
   }
   assert(functional==0);
   std::cout<<"PR-C2 stage S1 single observation PASS\n";

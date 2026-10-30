@@ -9,6 +9,7 @@
 #include "signal_v2_simulator.h"
 #include <Arduino.h>
 #include <array>
+#include <atomic>
 #include <cstring>
 namespace signal_v2 {
 // Runs only in BLE application owner task, never inside a NimBLE callback.
@@ -35,8 +36,14 @@ class CanOwner {
   // authorization. One physical 0C/0D request, 1,000 ms receive/count window,
   // automatic STOP. Never pins an ECU, never publishes a value.
   static constexpr uint32_t kS1ObservationMs=1000;
-  bool s1_requested_=false,s1_=false,s1_sent_=false,s1_reported_=false;
-  uint32_t s1_started_=0,s1_request_at_=0;
+  bool s1_=false,s1_sent_=false,s1_reported_=false;
+  // A stage request is bound to the exact authorization epoch it created
+  // (review F1); any later epoch (disconnect, STOP) cannot consume it.
+  std::atomic<uint32_t> s1_requested_epoch_{0};
+  // Why the authorization ended, set by the GATT side before it bumps the
+  // epoch (review F3). Atomic: disconnect runs on the NimBLE task.
+  std::atomic<const char*> s1_end_reason_{nullptr};
+  uint32_t s1_started_=0,s1_enqueued_at_=0,s1_tx_ms_=0;
   const char* s1_outcome_="NOT_SENT";
   m5can::CanStats s1_base_{};
   void stop(const char* reason,uint8_t quality=10){
@@ -53,18 +60,19 @@ class CanOwner {
     if(s1_reported_||!can_)return;
     s1_reported_=true;
     m5can::ObservationAudit audit{};
-    can_->endObservationAudit(audit);
-    const auto s=can_->stats();
+    m5can::CanStats s{};
+    can_->endObservationAudit(audit,s); // Same boundary as the per-ID counts.
     const auto d=[](uint64_t now,uint64_t base){return now>=base?now-base:0ULL;};
     const bool lossless=!audit.overflow && s.driver_rx_missed==s1_base_.driver_rx_missed &&
-      s.driver_rx_overrun==s1_base_.driver_rx_overrun && s.app_queue_drops==s1_base_.app_queue_drops;
-    const bool complete=lossless && !std::strcmp(reason,"S1_OBSERVATION_COMPLETE");
-    Serial.printf("#SIGNALV2_S1,epoch=%lu,start_ms=%lu,request_ms=%lu,end_ms=%lu,requests=%u,"
+      s.driver_rx_overrun==s1_base_.driver_rx_overrun && s.app_queue_drops==s1_base_.app_queue_drops &&
+      s.driver_bus_error==s1_base_.driver_bus_error;
+    const bool complete=lossless && s1_tx_ms_ && !std::strcmp(reason,"S1_OBSERVATION_COMPLETE");
+    Serial.printf("#SIGNALV2_S1,epoch=%lu,start_ms=%lu,enqueue_ms=%lu,request_ms=%lu,end_ms=%lu,requests=%u,"
       "fc=%llu,all_rx=%lu,candidate_rx=%llu,tx_attempts=%llu,tx_success=%llu,"
       "rx_missed=%lu,rx_overrun=%lu,queue_drops=%llu,bus_error=%lu,"
       "reserved_peak100=%lu,reserved_peak1000=%lu,charged_peak100=%lu,charged_peak1000=%lu,"
       "id_overflow=%lu,outcome=%s,stop=%s,complete=%u\n",
-      (unsigned long)epoch_,(unsigned long)s1_started_,(unsigned long)s1_request_at_,
+      (unsigned long)epoch_,(unsigned long)s1_started_,(unsigned long)s1_enqueued_at_,(unsigned long)s1_tx_ms_,
       (unsigned long)millis(),s1_sent_?1U:0U,
       (unsigned long long)d(s.signal_v2_fc,s1_base_.signal_v2_fc),(unsigned long)audit.all_rx,
       (unsigned long long)d(s.signal_v2_rx,s1_base_.signal_v2_rx),
@@ -85,8 +93,17 @@ class CanOwner {
         (unsigned long)audit.counts[i][4]);
   }
   void s1Tick(uint32_t now){
+    // Any frame beyond the fixed per-ID capacity is unaccounted evidence.
+    if(can_->observationAuditOverflowed()){stop("S1_AUDIT_OVERFLOW",10);return;}
     if(s1_sent_){
-      if(!in_flight_ && uint32_t(now-s1_request_at_)>=kS1ObservationMs)
+      if(in_flight_){
+        // A transaction ends 120 ms after TX; no completion within the
+        // window means the observation cannot be bounded (review F2).
+        if(uint32_t(now-s1_enqueued_at_)>=kS1ObservationMs)stop("S1_NO_COMPLETION",10);
+        return;
+      }
+      // The window is measured from the actual driver submission time.
+      if(int32_t(now-s1_tx_ms_)>=int32_t(kS1ObservationMs))
         stop("S1_OBSERVATION_COMPLETE",6);
       return;
     }
@@ -103,7 +120,7 @@ class CanOwner {
     if(!can_->acquireLease(550)||!can_->submitQuery(req)){
       stop("QUERY_ADMISSION_FAILED",10);return;
     }
-    s1_sent_=true;s1_request_at_=now;
+    s1_sent_=true;s1_enqueued_at_=now;
     discovery_running_=true;discovery_started_=now;
     physical_=false;essential_=false;submitted_epoch_=epoch_;in_flight_=true;
   }
@@ -150,6 +167,8 @@ class CanOwner {
   // driver/budget error) latches STOP; never assemble a partial success.
   void probeResult(const m5can::DiagnosticResult& r){
     if(s1_){
+      if(!r.request_tx_us){s1_outcome_="NOT_TRANSMITTED";stop("S1_NOT_TRANSMITTED",10);return;}
+      s1_tx_ms_=uint32_t(r.request_tx_us/1000ULL);
       if(r.status==m5can::DiagnosticStatus::NoData &&
          !r.response_count && !r.raw_frame_count)s1_outcome_="NO_RESPONSE";
       else if(validProbe(r,probe_target_))s1_outcome_="SINGLE_FRAME_CONTRACT";
@@ -232,7 +251,9 @@ class CanOwner {
 public:
   void attach(m5can::CanMonitor* can){can_=can;}
   // Called with the authorization epoch increment of `SIGV2 CAN S1` only.
-  void requestStageS1(){s1_requested_=true;}
+  void requestStageS1(uint32_t epoch){s1_requested_epoch_.store(epoch);}
+  // Record why authorization is ending before the caller bumps the epoch.
+  void noteAuthorizationEnd(const char* reason){s1_end_reason_.store(reason);}
   bool stageS1()const{return s1_;}
   const CanSamples &samples()const{return samples_;}
   bool stopped()const{return stopped_;}
@@ -244,6 +265,13 @@ public:
     // Optional edge-derived epoch preserves callers outside the GATT boundary.
     if(!epoch)epoch=epoch_+(armed!=previously_armed_);
     if(epoch!=epoch_){
+      // An interrupted S1 (operator STOP, expiry, disconnect) emits its record
+      // with its own epoch and cause before the state is replaced (F3).
+      if(s1_&&!s1_reported_){
+        const char* why=s1_end_reason_.load();
+        reportS1(why?why:"EPOCH_CHANGED");
+      }
+      s1_end_reason_.store(nullptr);
       epoch_=epoch;
       invalidate(10);
       ++samples_.source_generation; ++samples_.mode_epoch;
@@ -253,13 +281,12 @@ public:
       discovery_running_=false;discovery_started_=0;
       if(armed)stopped_=false;
       had_demand_=false;next_=now;
-      // An interrupted S1 (operator STOP, expiry) still emits its record.
-      if(s1_&&!s1_reported_)reportS1("EPOCH_CHANGED");
-      // A stage request applies to exactly the next armed epoch.
-      s1_=armed&&s1_requested_;s1_requested_=false;
+      // A stage request applies only to the epoch it created.
+      s1_=armed&&s1_requested_epoch_.load()==epoch;
+      s1_requested_epoch_.store(0);
       s1_sent_=s1_reported_=false;s1_outcome_="NOT_SENT";
-      s1_started_=now;s1_request_at_=0;
-      if(s1_){s1_base_=can_->stats();can_->beginObservationAudit();}
+      s1_started_=now;s1_enqueued_at_=s1_tx_ms_=0;
+      if(s1_)can_->beginObservationAudit(s1_base_);
     }
     if(armed && !stopped_) {
       const auto health=can_->stats();

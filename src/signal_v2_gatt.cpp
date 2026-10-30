@@ -166,6 +166,7 @@ class Callbacks : public NimBLECharacteristicCallbacks {
 void manage(const char *cmd, uint32_t now) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(!std::strcmp(cmd,"SIGV2 CAN STOP")) {
+    owner.noteAuthorizationEnd("OPERATOR_STOP");
     can_armed=false;++can_authorization_epoch;owner.invalidate(10);
     for(auto &p:peers) {
       p.output.size=p.dataoff=0;
@@ -198,12 +199,16 @@ void manage(const char *cmd, uint32_t now) {
       if(l.active&&l.status&&l.data&&authorized(l)&&
          peers[i].session.active(now)) secured=true;
     }
-    const bool accepted=secured && !can_armed && !owner.busy();
+    bool accepted=secured && !can_armed && !owner.busy();
     if(accepted){
-      owner.requestStageS1();
-      ++can_authorization_epoch;
+      // Bind the request to the epoch it creates. A disconnect callback that
+      // runs before or during this block bumps the epoch, so the request can
+      // never be consumed and the stale arm is withdrawn (review F1).
+      const uint32_t epoch=can_authorization_epoch.fetch_add(1)+1;
+      owner.requestStageS1(epoch);
       can_armed=true;
       armed_until=now+5000;
+      if(can_authorization_epoch.load()!=epoch){can_armed=false;accepted=false;}
     }
     Serial.printf("#SIGNALV2_CAN,stage=S1,armed=%u,reason=%s,ttl_ms=5000\n",
       accepted?1U:0U,accepted?"USB_VERIFIED":(secured?"BUSY_OR_ARMED":"NOT_READY"));
@@ -513,6 +518,7 @@ void connected(uint16_t handle) {
 }
 void disconnected(uint16_t handle) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  owner.noteAuthorizationEnd("CENTRAL_DISCONNECT");
   can_armed=false; // New connection requires a new local USB arm.
   ++can_authorization_epoch; // Owner task invalidates/drains by epoch.
   owner.revokeAuthorization(); // Thread-safe lease revoke; no sample/selector mutation.
@@ -565,6 +571,7 @@ void poll() {
   }
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(can_armed && int32_t(armed_until-now)<=0){
+    owner.noteAuthorizationEnd("USB_ARM_EXPIRED");
     can_armed=false;++can_authorization_epoch;owner.invalidate(10);
     Serial.println("#SIGNALV2_CAN,armed=0,reason=USB_ARM_EXPIRED");
   }
