@@ -14,9 +14,24 @@ struct CanOwnerTestAccess {
   static void perform(m5can::CanMonitor &m,const m5can::DiagnosticRequest &q,m5can::DiagnosticResult &r){
     m.acquireLease(550);m.performQuery(q,r);
   }
+  static void capture(m5can::CanMonitor &m,const twai_message_t &frame){
+    m.captureMessage(frame,static_cast<uint64_t>(g_test_millis)*1000ULL);
+  }
 };
 }
 using namespace m5can;
+// Deterministic host-only scheduling point: xQueueSend(frame_queue_) occurs
+// after RX counters/drop accounting but before the per-ID audit entry.
+static signal_v2::CanOwner *preempt_owner=nullptr;
+int s1TestFrameQueueSend(QueueHandle_t,const void*,TickType_t){
+  if(preempt_owner){
+    signal_v2::CanOwner *const o=preempt_owner;
+    preempt_owner=nullptr;
+    const signal_v2::Simulator::Demand none{};
+    o->tick(1200,none,true,1); // The owner ends S1 while RX is suspended.
+  }
+  return pdTRUE;
+}
 struct Scheduled{uint32_t at;twai_message_t frame;};
 static std::vector<Scheduled> rx;
 static std::vector<uint32_t> tx_ms;
@@ -62,6 +77,29 @@ int main(){
     assert(line.find("request_ms=200")!=std::string::npos);
     assert(line.find(reply?"outcome=SINGLE_FRAME_CONTRACT":"outcome=NO_RESPONSE")!=std::string::npos);
     assert(line.find("stop=S1_OBSERVATION_COMPLETE")!=std::string::npos);
+  }
+  // M-07: a CAN frame has begun, but its audit note has not yet run.
+  // A host callback emulates preemption at frame_queue_ delivery, and
+  // causes the Arduino owner to close the audit before RX resumes.
+  // Old implementation: complete=1 even though this frame is not audited.
+  // Fixed implementation: complete=0 with rx_inflight_end=1.
+  {
+    CanMonitor m;assert(m.begin());signal_v2::CanOwner o;o.attach(&m);
+    SerialStub::lines.clear();tx_ms.clear();rx.clear();
+    g_test_millis=0;o.requestStageS1(1);o.tick(0,none,true,1);assert(o.busy());
+    g_test_millis=200;
+    DiagnosticResult r{};signal_v2::CanOwnerTestAccess::perform(m,probe(),r);
+    assert(r.request_tx_us==200000ULL);
+    signal_v2::CanOwnerTestAccess::complete(o,r);
+    g_test_millis=1200;
+    preempt_owner=&o;
+    signal_v2::CanOwnerTestAccess::capture(
+        m,frame(0x0CF00400U,{0xFF,0,0,0,0,0,0,0}));
+    assert(preempt_owner==nullptr && o.stopped());
+    const std::string line=record();
+    assert(line.find("complete=0")!=std::string::npos);
+    assert(line.find("rx_inflight_end=1")!=std::string::npos);
+    assert(line.find("rx_counted=1")!=std::string::npos);
   }
   std::cout<<"PR-C2 S1 window from real driver submission PASS\n";
 }
