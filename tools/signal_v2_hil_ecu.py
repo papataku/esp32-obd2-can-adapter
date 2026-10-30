@@ -359,38 +359,73 @@ def evaluate(scenario, events):
             in_discovery = False
         elif x["kind"] == "tx" and x["data"][:1] == b"\x30" and in_discovery:
             discovery_fc = True
-    # M-14: authorize at most one FC per GROUP, after that GROUP's admitted
-    # FF but before the last CF or sample. Follow the same causal host-write
-    # relationship already validated by reconcile(), not just a frame count.
+    # M-14/M-16: board-sequenced, causal GROUP state machine. An FF must
+    # belong to the current GROUP TX, CFs to its sole FC, and the completed
+    # CF sequence must precede exactly one Fresh sample from that group.
+    # These are driver-admitted RX records, not just aggregate RX counts.
     group_fc_ok = True
+    group_sample_ok = True
+    completed_samples = []
     active_group = None
+    latest_arm = {}
     for x in board:
         k = x["kind"]
-        if k == "tx":
+        boot = x.get("boot")
+        if k == "arm":
+            latest_arm[boot] = x if x.get("ok") == "1" else None
+            active_group = None
+        elif k in ("stop_request", "stopped", "fault", "disconnect", "fence"):
+            latest_arm[boot] = None
+            active_group = None
+        elif k == "tx":
             if x["data"][:7] == GROUP:
-                active_group = {"tx": x, "ff": False, "fc": None, "complete": False}
+                active_group = {"tx": x, "arm": latest_arm.get(boot),
+                                "stage": "group", "fc": None,
+                                "last_cf": None, "sampled": False}
             elif x["data"][:1] == b"\x30":
-                legal = bool(active_group and active_group["ff"] and
-                             active_group["fc"] is None and not active_group["complete"] and
-                             x.get("boot") == active_group["tx"].get("boot") and
+                legal = bool(active_group and active_group["stage"] == "ff" and
+                             active_group["fc"] is None and
+                             boot == active_group["tx"].get("boot") and
                              x.get("gen") == active_group["tx"].get("gen"))
                 group_fc_ok &= legal
-                if active_group is not None and active_group["fc"] is None:
+                if legal:
                     active_group["fc"] = x
+                    active_group["stage"] = "fc"
             else:
-                active_group = None  # An essential/probe TX ends group FC eligibility.
-        elif k in ("arm", "stop_request", "stopped", "fault", "disconnect", "fence"):
-            active_group = None
-        elif (k == "rx" and active_group is not None and x.get("ok") == 1 and
-              x.get("id") == ECU_RX and x.get("ext") == 1):
+                active_group = None  # Essential/probe TX is not a GROUP FC.
+        elif (k == "rx" and active_group is not None and x.get("ok") == 1
+              and x.get("id") == ECU_RX and x.get("ext") == 1):
             cause = rx_causes.get(x["seq"])
-            if x["data"] == GROUP_FF and cause is active_group["tx"]:
-                active_group["ff"] = True
-            elif (x["data"] == GROUP_CF[-1] and active_group["fc"] is not None and
-                  cause is active_group["fc"]):
-                active_group["complete"] = True
-        elif k == "sample" and active_group is not None:
-            active_group["complete"] = True
+            if (x["data"] == GROUP_FF and active_group["stage"] == "group"
+                    and cause is active_group["tx"]):
+                active_group["stage"] = "ff"
+            elif (x["data"] == GROUP_CF[0] and active_group["stage"] == "fc"
+                  and cause is active_group["fc"]):
+                active_group["stage"] = "cf0"
+            elif (x["data"] == GROUP_CF[1] and active_group["stage"] == "cf0"
+                  and cause is active_group["fc"]):
+                active_group["last_cf"] = x
+                active_group["stage"] = "complete"
+        elif k == "sample":
+            arm = active_group.get("arm") if active_group else None
+            last_cf = active_group.get("last_cf") if active_group else None
+            valid = bool(
+                active_group and arm and last_cf
+                and active_group["stage"] == "complete"
+                and not active_group["sampled"]
+                and x.get("boot") == arm.get("boot") == active_group["tx"].get("boot")
+                and x.get("epoch") == arm.get("epoch")
+                and x.get("source") == "%08X" % ECU_RX
+                and x.get("quality") == "0"
+                and "source_generation" in x and "mode_epoch" in x
+                and int(x.get("source_generation", 0)) > 0
+                and int(x.get("mode_epoch", 0)) > 0
+                and int(x.get("observed_us", 0)) >= int(last_cf["t"] * 1e6)
+                and x["seq"] > last_cf["seq"])
+            group_sample_ok &= valid
+            if valid:
+                completed_samples.append(x)
+                active_group["sampled"] = True
     tx_after_stop = 0
     for e in txs:
         previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault", "disconnect")]
@@ -508,6 +543,9 @@ def evaluate(scenario, events):
             gate_ok &= first.get("cost") == "800" and first.get("used100") == "800" and first.get("used1000") == "800"
     if scenario == "admission":
         gate_ok &= all(int(e["used100"]) <= 4000 and int(e["used1000"]) <= 5600 for e in gates)
+    # M-15: a Fresh PDU must be backed by a finished GROUP's own valid
+    # sample in this authorization epoch, after the last ARM/STOP boundary.
+    # A PDU's declared generations are not evidence on their own.
     packet_ok = all(e.get("current") == "1" for e in kind("packet"))
     for e in kind("packet"):
         if not int(e.get("fresh", 0)):
@@ -521,6 +559,18 @@ def evaluate(scenario, events):
         if closed:
             packet_ok &= (int(e.get("pdu_source_generation", 0)) > int(closed[-1].get("source_generation", 0)) and
                           int(e.get("pdu_mode_epoch", 0)) > int(closed[-1].get("mode_epoch", 0)))
+        boundary = next((x for x in reversed(board) if
+                         x.get("boot") == e.get("boot") and x["seq"] < e["seq"]
+                         and x["kind"] in ("arm", "stop_request", "stopped", "fault", "disconnect")), None)
+        matching = any(
+            sample["seq"] > boundary["seq"] and sample["seq"] < e["seq"]
+            and sample.get("boot") == e.get("boot")
+            and sample.get("epoch") == e.get("epoch")
+            and sample.get("source") == e.get("pdu_source")
+            and sample.get("source_generation") == e.get("pdu_source_generation")
+            and sample.get("mode_epoch") == e.get("pdu_mode_epoch")
+            for sample in completed_samples) if boundary and boundary["kind"] == "arm" else False
+        packet_ok &= matching
     for e in samples + [x for x in kind("packet") if int(x.get("fresh", 0))]:
         previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault", "disconnect")]
         packet_ok &= bool(previous and previous[-1]["kind"] == "arm")
@@ -597,8 +647,9 @@ def evaluate(scenario, events):
         "no_functional_tx": not any(e["id"] in (0x7DF, 0x18DB33F1) for e in raw_txs),
         "tx_allowlist": tx_allowed,
         "group_fc_causality": group_fc_ok,
+        "group_sample_causality": group_sample_ok,
         "no_fc_on_probe_ff": (scenario not in ("ff_probe", "cf_probe", "malformed", "extra", "duplicate", "wrong_src", "eleven_bit", "negative", "late", "noreply") or not fc_txs) and not discovery_fc,
-        "positive_acquisition": (sample_ok and healthy_first and bool(group_txs) and bool(fc_txs)) if not expect_stop or after_healthy else not samples,
+        "positive_acquisition": (sample_ok and group_sample_ok and healthy_first and bool(group_txs) and bool(fc_txs)) if not expect_stop or after_healthy else not samples,
         "sustained_cadence": sustained if scenario in ("normal", "split", "rearm") else True,
         "both_admission_gates": gate_ok and retry_ok,
         "epoch_separation": rearm_ok and packet_ok,
