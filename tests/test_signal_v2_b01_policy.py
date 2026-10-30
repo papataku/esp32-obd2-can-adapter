@@ -75,6 +75,65 @@ class SerialHilB01(unittest.TestCase):
                     "env:m5dial_signal_v2_can_29bit_10hz_lab"):
             self.assertTrue(stage_one(flags[env]))
 
+    def test_b01_production_gatt_arm_branch_accepts_secured_usb(self):
+        _, flags = flags_by_env()
+        defs = [f for f in flags[HIL] if f.startswith("-D") or f.startswith("-U")]
+        source = (ROOT / "src/signal_v2_gatt.cpp").read_text()
+        begin = '  if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {'
+        end = '  // PR-C2 stage S1'
+        self.assertEqual(source.count(begin), 1, "production GATT ARM branch changed")
+        part = begin + source.split(begin, 1)[1].split(end, 1)[0]
+        self.assertIn("can_armed=secured;", part)
+        self.assertIn("M5CAN_SIGNAL_V2_STAGE_GATED", part)
+        # Compile the unchanged production GATT ARM branch, not a hand-written
+        # approximation. Only BLE secure-link/Serial dependencies are stubbed.
+        harness = r"""
+#include <atomic>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <cassert>
+struct Link { bool active=true, status=true, data=true; };
+Link snapshot(unsigned) { return {}; }
+bool authorized(const Link&) { return true; }
+struct Session { bool active(uint32_t)const{return true;} };
+struct Peer { Session session; };
+Peer peers[2];
+std::atomic<bool> can_armed{false};
+std::atomic<uint32_t> can_authorization_epoch{2};
+uint32_t armed_until=0;
+struct SerialOut {
+  char text[512]{};
+  void println(const char* s){std::snprintf(text,sizeof(text),"%s",s);}
+  int printf(const char* f,...) {
+    va_list a;va_start(a,f);int n=std::vsnprintf(text,sizeof(text),f,a);
+    va_end(a);return n;
+  }
+} Serial;
+namespace hil {void note(const char*,...){}}
+void manage(const char* cmd,uint32_t now){
+""" + part + """
+}
+int main(){
+  manage("SIGV2 CAN ARM",100);
+  assert(can_armed.load());
+  assert(can_authorization_epoch.load()==3);
+  assert(armed_until==600100);
+  assert(std::strstr(Serial.text,"reason=USB_VERIFIED"));
+}
+"""
+        with tempfile.TemporaryDirectory() as d:
+            source_file = pathlib.Path(d) / "gatt-arm.cpp"
+            exe = pathlib.Path(d) / "gatt-arm"
+            source_file.write_text(harness)
+            p = subprocess.run(["c++", "-std=c++17", "-Wall", "-Wextra",
+                                "-Werror", *defs, str(source_file), "-o",
+                                str(exe)], cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, (p.stdout+p.stderr)[-4000:])
+            p = subprocess.run([str(exe)], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, (p.stdout+p.stderr)[-4000:])
+
     def test_b01_compiled_real_owner_arm_group_fresh(self):
         _,flags=flags_by_env()
         definitions=[f for f in flags[HIL] if f.startswith("-D") or f.startswith("-U")]
