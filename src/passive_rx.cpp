@@ -271,9 +271,11 @@ void setup() {
   if (display_ok) display.setBrightness(128);
   Serial.begin(115200);
   Serial.setTxTimeoutMs(10);
-  // Pre-install, RX route and controller state do not exist yet. Keep raw
-  // evidence intact; substitute only these precondition N/A fields for safe().
-  const auto before=snapshot(false);
+  // Preserve pre-repair hardware evidence. Only reapply GPIO13 after
+  // display init if the output was disabled (high-Z) and the HIGH data
+  // latch and other safety signals remained correct.
+  display_observation=snapshot(false);
+  auto before=display_observation;
   auto before_policy=before;
   before_policy.rx_route=true;
   before_policy.controller_listen_only=true;
@@ -282,7 +284,23 @@ void setup() {
     failClosed("display_init","display.init",0,before); return;
   }
   if (!passive::safe(before_policy)) {
-    failClosed("before_snapshot",unsafeField(before_policy),0,before); return;
+    if (!displayOutputWasHighImpedance(display_observation)) {
+      failClosed("post_display_unsafe",unsafeField(before_policy),0,before);
+      return;
+    }
+    // TWAI is not installed. We never authorize a LOW latch/misrouted
+    // enabled pin: assert HIGH first, then reenable only GPIO output.
+    holdTxdHigh();
+    display_reasserted=true;
+    before=snapshot(false);
+    before_policy=before;
+    before_policy.rx_route=true;
+    before_policy.controller_listen_only=true;
+    before_policy.running=true;
+    if (!passive::safe(before_policy)) {
+      failClosed("before_snapshot",unsafeField(before_policy),0,before);
+      return;
+    }
   }
   twai_general_config_t general=TWAI_GENERAL_CONFIG_DEFAULT(sink, rx, TWAI_MODE_LISTEN_ONLY);
   general.tx_queue_len=0; general.rx_queue_len=128;
