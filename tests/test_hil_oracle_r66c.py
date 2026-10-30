@@ -605,6 +605,14 @@ class R66q(unittest.TestCase):
         self.assertFalse(r["pass"],r)
         self.assertFalse(r["checks"]["epoch_separation"],r)
 
+    def test_m20_old_oracle_accepts_unrelated_final_stop_jump(self):
+        events=trace()
+        stop=next(e for e in events if e["kind"]=="stopped")
+        stop["source_generation"]="99";stop["mode_epoch"]="99"
+        r=h.evaluate("normal",events)
+        self.assertFalse(r["pass"],r)
+        self.assertFalse(r["checks"]["epoch_separation"],r)
+
     def test_m20_stop_ack_missing_nonnumeric_out_of_range_structured_fail(self):
         for mutation in ("missing","nonnumeric","range"):
             events=self.first_boot()
@@ -631,7 +639,8 @@ class R66q(unittest.TestCase):
         # independent 60s acquisition and its own startup STOP baseline.
         first=self.first_boot()
         prefix=[e for e in first if e["kind"]=="initial_stop_evidence" or
-                (e.get("t",-1)<=.241)]
+                ("t" in e and e["t"]<=.241) or
+                (e["kind"]=="write" and e.get("from_t",999)<=.241)]
         second=self.first_boot()
         second=[copy.deepcopy(e) for e in second]
         for e in second:
