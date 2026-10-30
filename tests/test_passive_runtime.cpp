@@ -122,7 +122,7 @@ int main(int argc,char** argv) {
   assert(fresh(readStats()) && calls.back()=="task");
   assert(mock_spi3_registered_devices==1);
   assert(spi_bus_init_calls==2 && mock_spi_add_device_calls==1);
-  assert(spi_bus_init_calls==1 && dma_alloc_calls==1);
+  assert(spi_bus_init_calls==2 && dma_alloc_calls==1);
   assert(i2c_begin_calls==0);
   assert(!display_reasserted);
   assert(!lcd_auto_attached_gpio13);
