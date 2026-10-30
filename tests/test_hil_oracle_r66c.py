@@ -10,7 +10,7 @@ from test_hil_evidence import trace,renumber,fault_trace,rearm_trace,annotate
 
 
 def healthy_prefix(until=.241):
-    events=[e for e in trace() if e.get('t',99)<=until]
+    events=[e for e in trace() if e['kind']=='initial_stop_evidence' or e.get('t',99)<=until]
     for e in list(events):
         if e['kind']=='rx':events.append(dict(kind='write',text=h.rx_line(e['id'],e['data'],True,1),write_t=e['t']-.0001))
     return events
@@ -22,35 +22,37 @@ def adder(events,gen):
     return add
 
 
-def final_stop(add,epoch,events=None):
+def final_stop(add,epoch,events=None,source_generation=None):
     if events is not None:
         events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=60.099))
-    add(60.1,'stop_request',epoch=str(epoch));add(60.11,'stopped',epoch=str(epoch))
+    add(60.1,'stop_request',epoch=str(epoch))
+    kwargs={'source_generation':str(source_generation),'mode_epoch':str(source_generation)} if source_generation is not None else {}
+    add(60.11,'stopped',epoch=str(epoch),**kwargs)
     add(61.2,'fence',nonce='freshend')
 
 
 def disconnect_trace():
     events=healthy_prefix();add=adder(events,1)
-    add(.3,'disconnect',handle='1');add(.31,'stopped',epoch='2',source_generation='3',mode_epoch='3')
-    final_stop(add,3,events)
+    add(.3,'disconnect',handle='1');add(.31,'stopped',epoch='4',source_generation='5',mode_epoch='5')
+    final_stop(add,5,events,source_generation=6)
     return annotate(renumber(events))
 
 
 def overlap_trace():
     events=healthy_prefix();add=adder(events,2)
-    add(.3,'stop_request',epoch='2');add(.31,'stopped',epoch='2',source_generation='3',mode_epoch='3')
-    add(.5,'packet',type='33',epoch='2',fresh='0',current='1',source_generation='3',mode_epoch='3')
+    add(.3,'stop_request',epoch='4');add(.31,'stopped',epoch='4',source_generation='5',mode_epoch='5')
+    add(.5,'packet',type='33',epoch='4',fresh='0',current='1',source_generation='5',mode_epoch='5')
     add=adder(events,3)
-    add(1.7,'arm',epoch='3',ok='1')
+    add(1.7,'arm',epoch='5',ok='1')
     for g in ('owner','monitor'):
-        add(1.705,'gate',gate=g,epoch='3',cost='800',used100='800',used1000='4000',discovery='1')
+        add(1.705,'gate',gate=g,epoch='5',cost='800',used100='800',used1000='4000',discovery='1')
     add(1.71,'tx',id=h.ECU_TX,ext=1,dlc=8,data=h.PROBE.ljust(8,b'\0'),ok=1)
     events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_CF[0],True,3),write_t=1.7109))
     add(1.711,'rx',id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_CF[0],ok=1)
-    add(1.712,'fault',epoch='3',reason='DISCOVERY_RESPONSE_CONTRACT')
-    add(1.72,'stopped',epoch='4',source_generation='4',mode_epoch='4')
-    add(1.9,'packet',type='33',epoch='4',fresh='0',current='1',source_generation='4',mode_epoch='4')
-    final_stop(add,5,events)
+    add(1.712,'fault',epoch='5',reason='DISCOVERY_RESPONSE_CONTRACT')
+    add(1.72,'stopped',epoch='6',source_generation='7',mode_epoch='7')
+    add(1.9,'packet',type='33',epoch='6',fresh='0',current='1',source_generation='7',mode_epoch='7')
+    final_stop(add,7,events,source_generation=9)
     return annotate(renumber(events))
 
 
@@ -572,18 +574,7 @@ class R66q(unittest.TestCase):
 
     @classmethod
     def first_boot(cls):
-        events=copy.deepcopy(trace())
-        # Later tests use real production generation/authorization epoch values.
-        # Preserve the host write vs board RX ordering and sequence.
-        for e in events:
-            if e.get("boot")=="12345678" and "epoch" in e:
-                e["epoch"]=str(int(e["epoch"])+2)
-            if e["kind"]=="sample":
-                e["source_generation"]="4";e["mode_epoch"]="4"
-            elif e["kind"]=="stopped":
-                e["source_generation"]="5";e["mode_epoch"]="5"
-        events.insert(0,cls.initial_evidence())
-        return events
+        return copy.deepcopy(trace())
 
     def test_m19_real_initial_stop_then_first_arm_four_four_passes(self):
         r=h.evaluate("normal",self.first_boot())
@@ -592,7 +583,7 @@ class R66q(unittest.TestCase):
         self.assertTrue(r["checks"]["epoch_separation"],r)
 
     def test_m19_missing_initial_stop_baseline_fails(self):
-        events=trace()
+        events=[e for e in trace() if e["kind"]!="initial_stop_evidence"]
         r=h.evaluate("normal",events)
         self.assertFalse(r["pass"],r)
         self.assertFalse(r["checks"]["epoch_separation"],r)
@@ -629,8 +620,10 @@ class R66q(unittest.TestCase):
         # Existing rearm trace includes two ARM epochs and completed GROUPs;
         # add a real Central disconnect between race TX and the STOP request.
         # Use the (original synthetic) generation series for the red test.
-        add=adder(events,1)
-        add(.448,"disconnect",handle="1")
+        stop_request=next(e for e in events if e["kind"]=="stop_request" and e.get("t")==.45)
+        stop_request["kind"]="disconnect"
+        stop_request.pop("epoch",None)
+        stop_request["handle"]="1"
         r=h.evaluate("rearm",renumber(events))
         self.assertTrue(r["pass"],r)
 
