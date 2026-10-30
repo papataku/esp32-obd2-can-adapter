@@ -40,6 +40,8 @@ static bool preempt_after_receive=false;
 static std::mutex driver_mu;
 static std::condition_variable driver_cv;
 static bool driver_block=false,driver_entered=false,driver_release=false;
+static bool pre_tx_status_failure=false;
+static uint32_t inject_driver_delay_ms=0;
 void s1TestOnAuditDelay(uint32_t){
   if (audit_owner && !owner_paused &&
       signal_v2::CanOwnerTestAccess::closePending(*audit_owner))
@@ -73,6 +75,7 @@ void s1TestOnDriverUninstall(){
   if(!tx_ms.empty())g_test_millis+=7;
 }
 esp_err_t twai_get_status_info(twai_status_info_t* info){
+  if(pre_tx_status_failure)return ESP_FAIL;
   if(info)info->msgs_to_rx=static_cast<uint32_t>(
       std::count_if(rx.begin(),rx.end(),[](const Scheduled& s){
         return s.at<=g_test_millis;
@@ -102,6 +105,7 @@ esp_err_t twai_transmit(const twai_message_t*,TickType_t){
     }
   }
   tx_ms.push_back(g_test_millis);
+  g_test_millis+=inject_driver_delay_ms;
   return ESP_OK;
 }
 static twai_message_t frame(uint32_t id,std::initializer_list<uint8_t> d){
@@ -162,6 +166,59 @@ int main(){
     assert(owner.stopped());
     assert(evidence.find("outside_pre=1")!=std::string::npos);
     assert(evidence.find("all_rx=0,")!=std::string::npos);
+  }
+
+  // N-04: one pre-TX candidate is counted in epoch total, never as
+  // a candidate inside [software_tx_us, software_tx_us+1s).
+  {
+    CanMonitor monitor;assert(monitor.begin());signal_v2::CanOwner owner;
+    owner.attach(&monitor);SerialStub::lines.clear();rx.clear();tx_ms.clear();
+    g_test_millis=0;owner.requestStageS1(1);owner.tick(0,none,true,1);
+    g_test_millis=200;audit_owner=&monitor;
+    rx={{200,frame(0x18DAF101,{6,0x41,0x0C,0x13,0x88,0x0D,0})}};
+    DiagnosticResult result{};
+    signal_v2::CanOwnerTestAccess::perform(monitor,probe(),result);
+    assert(result.request_tx_us);
+    signal_v2::CanOwnerTestAccess::complete(owner,result);
+    owner.tick(1200,none,true,1);
+    const std::string line=record();
+    assert(line.find("outside_pre=1")!=std::string::npos);
+    assert(line.find("candidate_rx=0,candidate_rx_total=1")!=std::string::npos);
+    assert(line.find("complete=1")!=std::string::npos);
+  }
+  // M-11: no provable queue-empty status => no driver TX and no complete S1.
+  {
+    CanMonitor monitor;assert(monitor.begin());signal_v2::CanOwner owner;
+    owner.attach(&monitor);SerialStub::lines.clear();rx.clear();tx_ms.clear();
+    g_test_millis=0;owner.requestStageS1(1);owner.tick(0,none,true,1);
+    g_test_millis=200;audit_owner=&monitor;pre_tx_status_failure=true;
+    DiagnosticResult result{};
+    signal_v2::CanOwnerTestAccess::perform(monitor,probe(),result);
+    pre_tx_status_failure=false;
+    assert(result.request_tx_us==0 && tx_ms.empty());
+    signal_v2::CanOwnerTestAccess::complete(owner,result);
+    assert(owner.stopped());
+    const std::string line=record();
+    assert(line.find("complete=0")!=std::string::npos);
+    assert(line.find("pre_tx_queue_empty=0")!=std::string::npos);
+  }
+  // M-11: driver accepts TX but the last queue-empty observation is
+  // 1000us old. No second TX; evidence cannot be complete.
+  {
+    CanMonitor monitor;assert(monitor.begin());signal_v2::CanOwner owner;
+    owner.attach(&monitor);SerialStub::lines.clear();rx.clear();tx_ms.clear();
+    g_test_millis=0;owner.requestStageS1(1);owner.tick(0,none,true,1);
+    g_test_millis=200;audit_owner=&monitor;
+    inject_driver_delay_ms=1;
+    DiagnosticResult result{};
+    signal_v2::CanOwnerTestAccess::perform(monitor,probe(),result);
+    inject_driver_delay_ms=0;
+    assert(tx_ms.size()==1 && result.request_tx_us==201000ULL);
+    signal_v2::CanOwnerTestAccess::complete(owner,result);
+    owner.tick(1201,none,true,1);
+    const std::string line=record();
+    assert(line.find("pre_tx_gap_us=1000,pre_tx_gap_ok=0")!=std::string::npos);
+    assert(line.find("complete=0")!=std::string::npos);
   }
   // M-07: a CAN frame has begun, but its audit note has not yet run.
   // A host callback emulates preemption at frame_queue_ delivery, and

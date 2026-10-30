@@ -114,6 +114,42 @@ Exit: clean passive evidence. This revision stops here for vehicle work.
 
 If a third SF, FF/CF, 11bit, source mismatch, duplicate, late message, counter loss, RX overflow, TX/error/retry uncertainty or budget violation occurs, immediately STOP/Invalid and cancel all *future* requests/FC (an on-wire frame cannot be recalled). Retain late RX monitoring for future admission. Log is **self-measured, not externally verified**. Owner and PM review S1 evidence before granting separate S2 approval. One second of clean traffic is not proof of a perpetual two-SF ceiling.
 
+### S1 audit semantics: software receipt window and pre-TX proof (M-11/N-04)
+
+S1 evidence uses **software RX dequeue/observation timestamps** from
+`twai_receive()`, not CAN-controller or physical wire arrival timestamps.
+The only claimed interval is `[request_tx_us, request_tx_us+1,000,000us)`,
+where `request_tx_us` is the driver-accepted TX software timestamp. Hardware
+RX timestamps are **not available**, so `complete=1` cannot prove the
+physical arrival time of any frame. This limitation remains even with an
+independent code review, and it cannot be promoted into an on-wire latency
+guarantee.
+
+Immediately before its single authorized S1 TX, the CAN owner drains
+already-queued TWAI RX and processes it as `outside_pre`, then checks
+`twai_get_status_info().msgs_to_rx==0` under the STOP/TX exclusion gate.
+An unprovable empty queue, driver status error, or unbounded drain means
+**no TX and `complete=0`**; no retry is permitted. The software elapsed gap
+from empty check completion to driver acceptance is recorded as
+`pre_tx_gap_us`. The cap is **500 microseconds**: a larger gap yields
+`complete=0` (and if excessive before submission, TX is withheld).
+`pre_tx_drain_frames`, `pre_tx_queue_empty`, `pre_tx_drain_end_us`,
+`pre_tx_gap_us` and `pre_tx_gap_ok` must all be retained in the raw
+`#SIGNALV2_S1` evidence. A queued frame arriving after the final empty
+check but before driver acceptance is still a **residual physical-time gap**.
+The residual gap is not proven empty by software and is **never** described
+as physical-bus coverage.
+
+`candidate_rx` is the number of approved candidate-response frames whose
+**software receipt timestamps** fall inside the 1-second interval.
+`candidate_rx_total` is the entire S1 audit epoch, including pre-TX and
+post-window candidate RX; these numbers must not be conflated. Record
+`outside_pre`, `outside_post`, `blind_*`, driver losses, and
+`owner_confirmed` alongside them. `complete=1` denotes only bounded,
+accounted **software-visible evidence**, never a physically lossless bus
+trace. S1 remains single-shot and Invalid; S2/S3 remain barred pending
+separate owner authorization and evidence review.
+
 ## 5. S2 — stationary/P, 5Hz for at most 30 seconds
 
 Only after owner+PM accept S1 and the owner explicitly authorizes S2. Start a **new** ARM epoch, discard the S1 pin and stale results, acquire the approved physical ECU again with no functional request. First valid physical read must yield genuinely Fresh speed **zero** and usable RPM within 3,000ms or automatic STOP/Invalid; no synthesized speed zero. Continue only **30 seconds maximum** at 5Hz under full admission, with all-RX and `18DAF1xx` counts, TWAI error/retry/drop, source/age/epoch evidence and automatic STOP on any unexpected frame. Compare speed and RPM visually to **the vehicle's original instruments** with timestamps; unavailable or unreadable stock RPM => **UNCONFIRMED**, not approved. Owner/PM review before S3.
