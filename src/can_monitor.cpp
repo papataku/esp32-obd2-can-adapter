@@ -417,7 +417,7 @@ bool CanMonitor::acquireLease(uint32_t duration_ms) {
 
 void CanMonitor::revokeLease() {
   // STOP and actual driver submission linearize on a FreeRTOS task mutex.
-  // Never invoke twai_transmit() under a spinlock.
+  // Never invoke a blocking driver API under a spinlock.
   if (tx_gate_ && xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE) {
     fault_locked_ = true;
     return;
