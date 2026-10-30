@@ -14,6 +14,9 @@ static unsigned submits=0,functional=0;
 static m5can::CanStats health{};
 namespace m5can {
 CanStats CanMonitor::stats()const{return health;}
+void CanMonitor::endObservationAudit(ObservationAudit& copy, CanStats& stats) {
+  audit_.active=false;audit_.owner_confirmed=true;copy=audit_;stats=stats_;
+}
 void CanMonitor::revokeLease(){}
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
 bool CanMonitor::beginStageS1(uint32_t){return true;}

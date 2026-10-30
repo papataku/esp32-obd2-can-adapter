@@ -20,7 +20,12 @@ inline uint32_t millis(){return g_test_millis;}
 inline uint32_t micros(){return g_test_millis*1000U;}
 inline void delay(uint32_t ms){g_test_millis+=ms;}
 inline void taskYIELD(){}
+#if defined(M5CAN_TEST_S1_OWNER_BARRIER)
+void s1TestOnAuditDelay(uint32_t);
+inline void vTaskDelay(uint32_t ms){s1TestOnAuditDelay(ms);g_test_millis+=ms;}
+#else
 inline void vTaskDelay(uint32_t ms){g_test_millis+=ms;}
+#endif
 inline void portENTER_CRITICAL(portMUX_TYPE*){}
 #if defined(M5CAN_TEST_S1_STOP_RACE)
 void s1TestOnCriticalExit(portMUX_TYPE*);

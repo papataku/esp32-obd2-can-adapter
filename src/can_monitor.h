@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <driver/twai.h>
 #include <freertos/semphr.h>
+#include <atomic>
 
 #include "diagnostic_policy.h"
 #include "diagnostic_request_pacer.h"
@@ -72,6 +73,8 @@ struct ObservationAudit {
   uint32_t accounted_rx = 0, outside_before = 0, outside_after = 0;
   uint64_t window_start_us = 0;
   bool window_set = false;
+  bool owner_confirmed = false;
+  uint32_t pending_rx_at_close = 0;
   uint32_t rx_inflight_at_end = 0; // Incomplete RX processing invalidates S1 evidence.
   // M-06: explicit receive blind interval while TWAI is reinstalled.
   uint32_t blind_count = 0;
@@ -115,14 +118,7 @@ class CanMonitor {
     statsLocked(baseline);
     portEXIT_CRITICAL(&stats_mux_);
   }
-  void endObservationAudit(ObservationAudit& copy, CanStats& final_stats) {
-    portENTER_CRITICAL(&stats_mux_);
-    audit_.active = false;
-    audit_.rx_inflight_at_end = rx_processing_;
-    copy = audit_;
-    statsLocked(final_stats); // includes the charged-traffic windows (M-03)
-    portEXIT_CRITICAL(&stats_mux_);
-  }
+  void endObservationAudit(ObservationAudit& copy, CanStats& final_stats);
   // Caller holds stats_mux_.
   void statsLocked(CanStats& copy) const {
     copy = stats_;
@@ -190,6 +186,7 @@ class CanMonitor {
  private:
   static void rxTaskThunk(void* arg);
   void rxTask();
+  void processAuditCloseOnOwner();
 
   bool installDriver(twai_mode_t mode);
   bool switchDriverMode(twai_mode_t mode);
@@ -226,6 +223,8 @@ class CanMonitor {
   CanStats stats_{};
   uint32_t rx_processing_ = 0; // Started RX awaiting audit_.note(); stats_mux_ protected.
   ObservationAudit audit_{}; // protected by stats_mux_
+  std::atomic<bool> audit_close_requested_{false};
+  std::atomic<bool> audit_close_done_{false};
   RawCanCapture raw_capture_{}; // CAN-owner producer, Arduino writer consumer
   volatile bool running_ = false;
   volatile bool fault_locked_ = false;

@@ -21,12 +21,21 @@ struct CanOwnerTestAccess {
     return m.transmitOwnedFrame(f,20);
   }
   static uint64_t txAttempts(const m5can::CanMonitor &m){return m.stats_.tx_attempts;}
+  static bool closePending(const m5can::CanMonitor &m){return m.audit_close_requested_.load();}
+  static void serviceClose(m5can::CanMonitor &m){m.processAuditCloseOnOwner();}
 };
 }
 using namespace m5can;
 // Deterministic host-only scheduling point: xQueueSend(frame_queue_) occurs
 // after RX counters/drop accounting but before the per-ID audit entry.
 static signal_v2::CanOwner *preempt_owner=nullptr;
+static CanMonitor *audit_owner=nullptr;
+static bool owner_paused=false;
+void s1TestOnAuditDelay(uint32_t){
+  if (audit_owner && !owner_paused &&
+      signal_v2::CanOwnerTestAccess::closePending(*audit_owner))
+    signal_v2::CanOwnerTestAccess::serviceClose(*audit_owner);
+}
 int s1TestFrameQueueSend(QueueHandle_t,const void*,TickType_t){
   if(preempt_owner){
     signal_v2::CanOwner *const o=preempt_owner;
@@ -84,6 +93,7 @@ int main(){
     g_test_millis=0;o.requestStageS1(1);o.tick(0,none,true,1);assert(o.busy());
     // The CAN owner task actually submits 200 ms after the enqueue.
     g_test_millis=200;
+    audit_owner=&m;
     if(reply)rx={{210,frame(0x18DAF101,{6,0x41,0x0C,0x13,0x88,0x0D,0})}};
     DiagnosticResult r{};signal_v2::CanOwnerTestAccess::perform(m,probe(),r);
     assert(tx_ms.size()==1&&tx_ms[0]==200);
@@ -117,6 +127,7 @@ int main(){
     assert(r.request_tx_us==200000ULL);
     signal_v2::CanOwnerTestAccess::complete(o,r);
     g_test_millis=1200;
+    audit_owner=&m;owner_paused=true;
     preempt_owner=&o;
     signal_v2::CanOwnerTestAccess::capture(
         m,frame(0x0CF00400U,{0xFF,0,0,0,0,0,0,0}));
@@ -125,6 +136,8 @@ int main(){
     assert(line.find("complete=0")!=std::string::npos);
     assert(line.find("rx_inflight_end=1")!=std::string::npos);
     assert(line.find("rx_counted=1")!=std::string::npos);
+    assert(line.find("owner_confirmed=0")!=std::string::npos);
+    owner_paused=false;
   }
   // B-03: STOP races in after the earlier lease check but before physical
   // twai_transmit. The post-STOP driver queue must remain empty.

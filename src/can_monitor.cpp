@@ -179,6 +179,53 @@ bool CanMonitor::switchDriverMode(twai_mode_t mode) {
   return true;
 }
 
+void CanMonitor::endObservationAudit(ObservationAudit& copy, CanStats& final_stats) {
+  audit_close_done_.store(false,std::memory_order_release);
+  audit_close_requested_.store(true,std::memory_order_release);
+  for (unsigned i=0;i<100 &&
+       !audit_close_done_.load(std::memory_order_acquire);++i)
+    vTaskDelay(pdMS_TO_TICKS(1));
+  portENTER_CRITICAL(&stats_mux_);
+  if (!audit_close_done_.load(std::memory_order_acquire)) {
+    audit_.owner_confirmed=false;
+    audit_.active=false;
+  }
+  audit_.rx_inflight_at_end=rx_processing_;
+  copy=audit_;
+  statsLocked(final_stats);
+  portEXIT_CRITICAL(&stats_mux_);
+  audit_close_requested_.store(false,std::memory_order_release);
+}
+
+void CanMonitor::processAuditCloseOnOwner() {
+  if (!audit_close_requested_.load(std::memory_order_acquire)) return;
+  bool certified=true;
+  uint32_t pending_seen=0;
+  bool drained=false;
+  for (uint32_t i=0;i<=cfg::kTwaiRxQueueLen;++i) {
+    twai_status_info_t state{};
+    if (twai_get_status_info(&state)!=ESP_OK) {certified=false;break;}
+    twai_message_t frame{};
+    if (twai_receive(&frame,0)==ESP_OK) {
+      ++pending_seen;
+      captureMessage(frame,static_cast<uint64_t>(esp_timer_get_time()));
+      continue;
+    }
+    if (state.msgs_to_rx) {certified=false;pending_seen+=state.msgs_to_rx;}
+    else drained=true;
+    break;
+  }
+  twai_status_info_t last{};
+  if (!drained || twai_get_status_info(&last)!=ESP_OK || last.msgs_to_rx)
+    certified=false;
+  portENTER_CRITICAL(&stats_mux_);
+  audit_.owner_confirmed=certified && !pending_seen && !rx_processing_;
+  audit_.pending_rx_at_close=pending_seen+last.msgs_to_rx;
+  audit_.active=false;
+  portEXIT_CRITICAL(&stats_mux_);
+  audit_close_done_.store(true,std::memory_order_release);
+}
+
 void CanMonitor::rxTaskThunk(void* arg) {
   static_cast<CanMonitor*>(arg)->rxTask();
 }
@@ -267,6 +314,8 @@ void CanMonitor::rxTask() {
                 xPortGetCoreID(),static_cast<unsigned>(uxTaskPriorityGet(nullptr)));
 #endif
   while (running_) {
+    if(audit_close_requested_.load(std::memory_order_acquire))
+      processAuditCloseOnOwner();
     DiagnosticRequest request{};
     if (xQueueReceive(query_queue_, &request, 0) == pdTRUE) {
       DiagnosticResult& result=owner_result_;
