@@ -368,6 +368,13 @@ def evaluate(scenario, events):
     completed_samples = []
     active_group = None
     latest_arm = {}
+    # M-17: generation continuity belongs to the owner's CAN sample stream,
+    # not to the TWAI shim's install generation. STOP ACK records the last
+    # invalidated source/mode generations and ARM starts a new authorization.
+    last_stopped = {}
+    epoch_sample_generations = {}
+    last_sample_by_boot = {}
+    sample_generation_ok = True
     for x in board:
         k = x["kind"]
         boot = x.get("boot")
@@ -375,6 +382,8 @@ def evaluate(scenario, events):
             latest_arm[boot] = x if x.get("ok") == "1" else None
             active_group = None
         elif k in ("stop_request", "stopped", "fault", "disconnect", "fence"):
+            if k == "stopped":
+                last_stopped[boot] = x
             latest_arm[boot] = None
             active_group = None
         elif k == "tx":
@@ -409,6 +418,31 @@ def evaluate(scenario, events):
         elif k == "sample":
             arm = active_group.get("arm") if active_group else None
             last_cf = active_group.get("last_cf") if active_group else None
+            # Each sample must use newer generations than the most recent
+            # same-boot STOP ACK. Within one ARM interval, generation changes
+            # without another authorization boundary are unexplained and fail.
+            present = all(field in x for field in ("source_generation", "mode_epoch"))
+            generations = ((int(x["source_generation"]), int(x["mode_epoch"]))
+                           if present else (0, 0))
+            stopped = last_stopped.get(boot)
+            stopped_present = stopped is None or all(
+                field in stopped for field in ("source_generation", "mode_epoch"))
+            newer_than_stop = bool(
+                stopped_present and (stopped is None or (
+                    generations[0] > int(stopped["source_generation"])
+                    and generations[1] > int(stopped["mode_epoch"]))))
+            epoch_key = (boot, arm["seq"]) if arm else None
+            initial = epoch_sample_generations.get(epoch_key)
+            continuous = initial is None or generations == initial
+            last_sample = last_sample_by_boot.get(boot)
+            newer_than_previous_epoch = bool(
+                last_sample is None or last_sample[0] == epoch_key or
+                (generations[0] > last_sample[1][0] and
+                 generations[1] > last_sample[1][1]))
+            generation_valid = bool(
+                arm and present and min(generations) > 0 and
+                newer_than_stop and continuous and newer_than_previous_epoch)
+            sample_generation_ok &= generation_valid
             valid = bool(
                 active_group and arm and last_cf
                 and active_group["stage"] == "complete"
@@ -417,15 +451,16 @@ def evaluate(scenario, events):
                 and x.get("epoch") == arm.get("epoch")
                 and x.get("source") == "%08X" % ECU_RX
                 and x.get("quality") == "0"
-                and "source_generation" in x and "mode_epoch" in x
-                and int(x.get("source_generation", 0)) > 0
-                and int(x.get("mode_epoch", 0)) > 0
+                and generation_valid
                 and int(x.get("observed_us", 0)) >= int(last_cf["t"] * 1e6)
                 and x["seq"] > last_cf["seq"])
             group_sample_ok &= valid
             if valid:
                 completed_samples.append(x)
                 active_group["sampled"] = True
+                if initial is None:
+                    epoch_sample_generations[epoch_key] = generations
+                last_sample_by_boot[boot] = (epoch_key, generations)
     tx_after_stop = 0
     for e in txs:
         previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault", "disconnect")]
@@ -652,7 +687,7 @@ def evaluate(scenario, events):
         "positive_acquisition": (sample_ok and group_sample_ok and healthy_first and bool(group_txs) and bool(fc_txs)) if not expect_stop or after_healthy else not samples,
         "sustained_cadence": sustained if scenario in ("normal", "split", "rearm") else True,
         "both_admission_gates": gate_ok and retry_ok,
-        "epoch_separation": rearm_ok and packet_ok,
+        "epoch_separation": rearm_ok and packet_ok and sample_generation_ok,
         "within_100ms_cap": peaks["peak100_bits"] <= CAP_100MS,
         "within_1s_cap": peaks["peak1000_bits"] <= CAP_1S,
     }
