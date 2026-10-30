@@ -325,4 +325,47 @@ class R66l(unittest.TestCase):
         events.remove(w);events.insert(0,w)
         self.assertFalse(h.evaluate('normal',events)['checks']['transport_complete'])
 
+
+class R66m(unittest.TestCase):
+    """PM fix regressions: M-13 disconnect revocation and M-14 FC causality."""
+
+    def test_m13_disconnect_blocks_fresh_packet_before_stop_ack(self):
+        events=disconnect_trace();add=adder(events,1)
+        add(.305,'packet',type='33',epoch='1',fresh='1',current='1',
+            source_generation='2',mode_epoch='2',
+            pdu_source_generation='2',pdu_mode_epoch='2',
+            pdu_source='18DAF101',pdu_mixed='0')
+        r=h.evaluate('disconnect',renumber(events))
+        self.assertFalse(r['checks']['epoch_separation'],r)
+
+    def test_m13_disconnect_blocks_group_tx_before_stop_ack(self):
+        events=disconnect_trace()
+        disconnected=next(e for e in events if e['kind']=='disconnect')
+        stopped=next(e for e in events if e['kind']=='stopped' and e['t']==.31)
+        disconnected['t']=.5;disconnected['t_us']='500000'
+        stopped['t']=.504;stopped['t_us']='504000'
+        add=adder(events,1)
+        for gate in ('owner','monitor'):
+            add(.501,'gate',gate=gate,epoch='1',cost='2400',
+                used100='2400',used1000='16000',discovery='0')
+        add(.502,'tx',id=h.ECU_TX,ext=1,dlc=8,
+            data=h.GROUP.ljust(8,b'\0'),ok=1)
+        r=h.evaluate('disconnect',renumber(events))
+        self.assertFalse(r['checks']['no_tx_after_stop'],r)
+
+    def test_m14_extra_fc_after_last_cf_is_rejected(self):
+        events=trace();add=adder(events,1)
+        add(.250,'tx',id=h.ECU_TX,ext=1,dlc=8,
+            data=b'\x30'+b'\0'*7,ok=1)
+        r=h.evaluate('normal',renumber(events))
+        self.assertFalse(r['pass'],r)
+
+    def test_m14_fc_before_group_ff_is_rejected(self):
+        events=trace();add=adder(events,1)
+        add(.222,'tx',id=h.ECU_TX,ext=1,dlc=8,
+            data=b'\x30'+b'\0'*7,ok=1)
+        r=h.evaluate('normal',renumber(events))
+        self.assertFalse(r['pass'],r)
+
+
 if __name__=='__main__':unittest.main()
