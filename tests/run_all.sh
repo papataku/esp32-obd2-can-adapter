@@ -101,7 +101,9 @@ c++ -std=c++11 -Wall -Wextra -Wno-unused-function -Werror \
   -Itests/pr65/stubs -Itests/host_stubs -Iinclude -Isrc \
   -include tests/s1_rx_interleaving_hook.h \
   tests/test_signal_v2_stage_s1_monitor.cpp src/can_monitor.cpp src/diagnostic_policy.cpp \
-  src/diagnostic_transaction.cpp src/isotp_reassembler.cpp tests/host_stubs/stubs.cpp \
+  src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
+  src/signal_v2_can_samples.cpp src/signal_v2_discovery_profile.cpp \
+  tests/host_stubs/stubs.cpp \
   -o /tmp/m5can-v22-stage-s1-monitor
 /tmp/m5can-v22-stage-s1-monitor
 python3 tests/test_signal_v2_elf_policy.py
