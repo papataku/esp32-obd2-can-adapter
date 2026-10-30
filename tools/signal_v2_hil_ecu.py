@@ -286,6 +286,7 @@ def evaluate(scenario, events):
     def admitted_while_running(e):
         return admissible.get(e["seq"], False)
     order = {id(x): i for i, x in enumerate(events)}
+    rx_causes = {}  # Board RX sequence -> causally paired adapter TX.
     def reconcile(extra_refusal=lambda e, w: False):
         slots = Counter(predicted)
         pending, ok, deliberate = [], True, 0
@@ -319,6 +320,7 @@ def evaluate(scenario, events):
                     continue
                 slots[key] -= 1
             if e["ok"]:
+                rx_causes[e["seq"]] = cause
                 # The admitted RX must carry its own write's injection
                 # generation (M-01) and arrive while running (M-02).
                 ok &= w["text"].split()[2] == str(e.get("gen")) and admitted_while_running(e)
@@ -357,9 +359,41 @@ def evaluate(scenario, events):
             in_discovery = False
         elif x["kind"] == "tx" and x["data"][:1] == b"\x30" and in_discovery:
             discovery_fc = True
+    # M-14: authorize at most one FC per GROUP, after that GROUP's admitted
+    # FF but before the last CF or sample. Follow the same causal host-write
+    # relationship already validated by reconcile(), not just a frame count.
+    group_fc_ok = True
+    active_group = None
+    for x in board:
+        k = x["kind"]
+        if k == "tx":
+            if x["data"][:7] == GROUP:
+                active_group = {"tx": x, "ff": False, "fc": None, "complete": False}
+            elif x["data"][:1] == b"\x30":
+                legal = bool(active_group and active_group["ff"] and
+                             active_group["fc"] is None and not active_group["complete"] and
+                             x.get("boot") == active_group["tx"].get("boot") and
+                             x.get("gen") == active_group["tx"].get("gen"))
+                group_fc_ok &= legal
+                if active_group is not None and active_group["fc"] is None:
+                    active_group["fc"] = x
+            else:
+                active_group = None  # An essential/probe TX ends group FC eligibility.
+        elif k in ("arm", "stop_request", "stopped", "fault", "disconnect", "fence"):
+            active_group = None
+        elif (k == "rx" and active_group is not None and x.get("ok") == 1 and
+              x.get("id") == ECU_RX and x.get("ext") == 1):
+            cause = rx_causes.get(x["seq"])
+            if x["data"] == GROUP_FF and cause is active_group["tx"]:
+                active_group["ff"] = True
+            elif (x["data"] == GROUP_CF[-1] and active_group["fc"] is not None and
+                  cause is active_group["fc"]):
+                active_group["complete"] = True
+        elif k == "sample" and active_group is not None:
+            active_group["complete"] = True
     tx_after_stop = 0
     for e in txs:
-        previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault")]
+        previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault", "disconnect")]
         if not previous or previous[-1]["kind"] in ("stopped", "stop_request", "fault"):
             tx_after_stop += 1
     first_arm = arms[0]["t"] if arms else 0
@@ -488,7 +522,7 @@ def evaluate(scenario, events):
             packet_ok &= (int(e.get("pdu_source_generation", 0)) > int(closed[-1].get("source_generation", 0)) and
                           int(e.get("pdu_mode_epoch", 0)) > int(closed[-1].get("mode_epoch", 0)))
     for e in samples + [x for x in kind("packet") if int(x.get("fresh", 0))]:
-        previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault")]
+        previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault", "disconnect")]
         packet_ok &= bool(previous and previous[-1]["kind"] == "arm")
     rearm_ok = True
     if scenario == "overlap":
@@ -562,6 +596,7 @@ def evaluate(scenario, events):
         "no_tx_after_stop": tx_after_stop == 0,
         "no_functional_tx": not any(e["id"] in (0x7DF, 0x18DB33F1) for e in raw_txs),
         "tx_allowlist": tx_allowed,
+        "group_fc_causality": group_fc_ok,
         "no_fc_on_probe_ff": (scenario not in ("ff_probe", "cf_probe", "malformed", "extra", "duplicate", "wrong_src", "eleven_bit", "negative", "late", "noreply") or not fc_txs) and not discovery_fc,
         "positive_acquisition": (sample_ok and healthy_first and bool(group_txs) and bool(fc_txs)) if not expect_stop or after_healthy else not samples,
         "sustained_cadence": sustained if scenario in ("normal", "split", "rearm") else True,
