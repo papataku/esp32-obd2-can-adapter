@@ -166,7 +166,26 @@ inline int spi_bus_initialize(int host,const spi_bus_config_t* cfg,int dma) {
   assert(cfg->data4_io_num==-1 && cfg->data5_io_num==-1 &&
          cfg->data6_io_num==-1 && cfg->data7_io_num==-1);
   assert(dma==SPI_DMA_CH_AUTO);
-  return mock_spi_bus_fail?ESP_FAIL:ESP_OK;
+  if (mock_spi_bus_fail) return ESP_FAIL;
+  // M5GFX silently tolerates INVALID_STATE on its redundant second init.
+  return spi_bus_init_calls==1?ESP_OK:ESP_ERR_INVALID_STATE;
+}
+inline struct FakeSpiRegisteredDevice {} fake_spi_registered_device;
+using spi_device_handle_t=FakeSpiRegisteredDevice*;
+struct spi_device_interface_config_t {
+  int clock_speed_hz=0,spics_io_num=-1,queue_size=0,flags=0;
+};
+inline bool mock_m5gfx_device_add_fail=false;
+inline int mock_spi_add_device_calls=0;
+inline int spi_bus_add_device(int host,const spi_device_interface_config_t* cfg,
+                              spi_device_handle_t* handle) {
+  ++mock_spi_add_device_calls;
+  assert(host==SPI3_HOST && cfg->clock_speed_hz==10000000);
+  assert(cfg->spics_io_num==-1 && cfg->queue_size==1 && handle);
+  if (mock_m5gfx_device_add_fail) return ESP_ERR_NO_MEM;
+  *handle=&fake_spi_registered_device;
+  ++mock_spi3_registered_devices;
+  return ESP_OK;
 }
 inline uint8_t dma_probe_storage[512]{};
 inline void* heap_caps_malloc(size_t len,uint32_t caps) {
@@ -190,7 +209,6 @@ inline void simulate_wire_begin() {
 inline int lcd_spi_host=-1;
 inline bool mock_display_dma_fail=false;
 // A successful M5GFX init is not proof of IDF SPI3 device registration.
-inline bool mock_m5gfx_device_add_fail=false;
 inline bool mock_m5gfx_second_bus_invalid_state=false;
 // Registration belongs to the M5GFX device, never the transient probe.
 inline bool lcd_auto_attached_gpio13=false;
@@ -235,10 +253,21 @@ class LGFX_Device {
       pad_high=false;
       lcd_auto_attached_gpio13=true;
     }
-    // M5GFX second spi_bus_initialize sees already-initialized SPI3.
-    // It ignores INVALID_STATE and separately attempts spi_bus_add_device.
-    if (mock_m5gfx_second_bus_invalid_state) assert(spi_bus_init_calls==1);
-    if (!mock_m5gfx_device_add_fail) ++mock_spi3_registered_devices;
+    // M5GFX 0.2.35 attempts the same bus initialization for a second
+    // time, ignores INVALID_STATE, then independently registers its device.
+    spi_bus_config_t redundant{};
+    redundant.mosi_io_num=5;
+    redundant.miso_io_num=-1;
+    redundant.sclk_io_num=6;
+    const int second_status=spi_bus_initialize(SPI3_HOST,&redundant,SPI_DMA_CH_AUTO);
+    assert(second_status==ESP_ERR_INVALID_STATE);
+    if (mock_m5gfx_second_bus_invalid_state) assert(spi_bus_init_calls==2);
+    spi_device_interface_config_t devcfg{};
+    devcfg.clock_speed_hz=10000000;
+    devcfg.spics_io_num=-1;
+    devcfg.queue_size=1;
+    spi_device_handle_t handle=nullptr;
+    (void)spi_bus_add_device(SPI3_HOST,&devcfg,&handle); // M5GFX ignores result
     if (mock_i2c_begin) simulate_wire_begin();
     if (display_disables_gpio13) {
       if (display_clobber_external_low) stuck_pad_low=true;

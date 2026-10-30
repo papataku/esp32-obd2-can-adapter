@@ -75,7 +75,12 @@ int main(int argc,char** argv) {
     if (fault=="bus-init-fail" || fault=="dma-alloc-fail" ||
         fault=="m5gfx-device-add-fail" ||
         fault=="m5gfx-second-bus-reinit-add-fail")
-      assert(calls.empty()); // TWAI install forbidden on failed LCD preflight.
+      assert(calls.empty());
+    if (fault=="m5gfx-device-add-fail" ||
+        fault=="m5gfx-second-bus-reinit-add-fail") {
+      assert(spi_bus_init_calls==2);
+      assert(mock_spi_add_device_calls==1 && mock_spi3_registered_devices==0);
+    } // TWAI install forbidden on failed LCD preflight.
     if (fault=="i2c-begin") {
       assert(i2c_begin_calls==1 && i2c_scl_gpio15_driven);
       assert((GPIO.enable & (1U<<15))!=0 && (GPIO.out & (1U<<15))==0);
@@ -116,6 +121,7 @@ int main(int argc,char** argv) {
   }
   assert(fresh(readStats()) && calls.back()=="task");
   assert(mock_spi3_registered_devices==1);
+  assert(spi_bus_init_calls==2 && mock_spi_add_device_calls==1);
   assert(spi_bus_init_calls==1 && dma_alloc_calls==1);
   assert(i2c_begin_calls==0);
   assert(!display_reasserted);
