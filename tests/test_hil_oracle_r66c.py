@@ -491,4 +491,71 @@ class R66o(unittest.TestCase):
         self.assertTrue(r['checks']['epoch_separation'],r)
 
 
+
+class R66p(unittest.TestCase):
+    """M-18 exact FW +1 generation transitions, m-08 robust normalization."""
+
+    def test_m18_rearm_uniform_generation_99_fails(self):
+        events=rearm_trace()
+        samples=[e for e in events if e['kind']=='sample' and e.get('epoch')=='3']
+        self.assertTrue(samples)
+        for e in samples:
+            e['source_generation']='99';e['mode_epoch']='99'
+        # Keep the Fresh PDU consistent with its altered samples; prove that
+        # an internally self-consistent but impossible new epoch still fails.
+        for p in [e for e in events if e['kind']=='packet' and e.get('fresh')=='1']:
+            p['pdu_source_generation']='99';p['pdu_mode_epoch']='99'
+        r=h.evaluate('rearm',events)
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['group_sample_causality'],r)
+        self.assertFalse(r['checks']['epoch_separation'],r)
+
+    def test_m18_initial_epoch_uniform_mismatched_counter_fails(self):
+        events=trace()
+        for e in events:
+            if e['kind']=='sample':
+                e['source_generation']='2';e['mode_epoch']='9'
+        r=h.evaluate('normal',events)
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['group_sample_causality'],r)
+        self.assertFalse(r['checks']['epoch_separation'],r)
+
+    def test_m18_rearm_correct_four_four_stays_accepted(self):
+        events=rearm_trace()
+        last=[e for e in events if e['kind']=='sample' and e.get('epoch')=='3']
+        self.assertTrue(last)
+        self.assertTrue(all(e['source_generation']=='4' and e['mode_epoch']=='4' for e in last))
+        r=h.evaluate('rearm',events)
+        self.assertTrue(r['pass'],r)
+        self.assertTrue(r['checks']['group_sample_causality'],r)
+        self.assertTrue(r['checks']['epoch_separation'],r)
+
+    def test_m08_int_string_mixed_generation_matching_succeeds(self):
+        events=rearm_trace()
+        for e in events:
+            if e['kind']=='sample' and e.get('epoch')=='3':
+                e['source_generation']=4
+                e['mode_epoch']=4
+        r=h.evaluate('rearm',events)
+        self.assertTrue(r['pass'],r)
+        self.assertTrue(r['checks']['epoch_separation'],r)
+
+    def test_m08_nonnumeric_generation_yields_structured_fail(self):
+        events=trace()
+        sample=next(e for e in events if e['kind']=='sample')
+        sample['source_generation']='not_a_number'
+        r=h.evaluate('normal',events)  # Must never raise ValueError.
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['group_sample_causality'],r)
+        self.assertFalse(r['checks']['epoch_separation'],r)
+
+    def test_m08_out_of_range_generation_yields_structured_fail(self):
+        events=trace()
+        sample=next(e for e in events if e['kind']=='sample')
+        sample['mode_epoch']='4294967296'
+        r=h.evaluate('normal',events)
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['group_sample_causality'],r)
+
+
 if __name__=='__main__':unittest.main()
