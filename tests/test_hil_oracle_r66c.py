@@ -457,7 +457,7 @@ class R66o(unittest.TestCase):
     def test_m17_rearm_post_stop_sample_generation_must_exceed_stop_ack(self):
         events=rearm_trace()
         samples=[e for e in events if e['kind']=='sample'
-                 and e.get('epoch')=='3' and e['t']>2.0]
+                 and e.get('epoch')=='5' and e['t']>2.0]
         self.assertTrue(samples)
         for e in samples:
             e['source_generation']='2'
@@ -499,7 +499,7 @@ class R66p(unittest.TestCase):
 
     def test_m18_rearm_uniform_generation_99_fails(self):
         events=rearm_trace()
-        samples=[e for e in events if e['kind']=='sample' and e.get('epoch')=='3']
+        samples=[e for e in events if e['kind']=='sample' and e.get('epoch')=='5']
         self.assertTrue(samples)
         for e in samples:
             e['source_generation']='99';e['mode_epoch']='99'
@@ -524,9 +524,9 @@ class R66p(unittest.TestCase):
 
     def test_m18_rearm_correct_four_four_stays_accepted(self):
         events=rearm_trace()
-        last=[e for e in events if e['kind']=='sample' and e.get('epoch')=='3']
+        last=[e for e in events if e['kind']=='sample' and e.get('epoch')=='5']
         self.assertTrue(last)
-        self.assertTrue(all(e['source_generation']=='4' and e['mode_epoch']=='4' for e in last))
+        self.assertTrue(all(e['source_generation']=='6' and e['mode_epoch']=='6' for e in last))
         r=h.evaluate('rearm',events)
         self.assertTrue(r['pass'],r)
         self.assertTrue(r['checks']['group_sample_causality'],r)
@@ -535,9 +535,9 @@ class R66p(unittest.TestCase):
     def test_m08_int_string_mixed_generation_matching_succeeds(self):
         events=rearm_trace()
         for e in events:
-            if e['kind']=='sample' and e.get('epoch')=='3':
-                e['source_generation']=4
-                e['mode_epoch']=4
+            if e['kind']=='sample' and e.get('epoch')=='5':
+                e['source_generation']=6
+                e['mode_epoch']=6
         r=h.evaluate('rearm',events)
         self.assertTrue(r['pass'],r)
         self.assertTrue(r['checks']['epoch_separation'],r)
