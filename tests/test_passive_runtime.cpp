@@ -42,7 +42,7 @@ int main(int argc,char** argv) {
     else if (fault=="status-boot") { stage="initial_check"; field="twai_status"; }
     else if (fault=="display-low") { stage="post_display_unsafe"; field="txd_latch_high"; }
     else if (fault=="display-route") { stage="post_display_unsafe"; field="txd_gpio"; }
-    else if (fault=="display-clobber-stuck") { stage="before_snapshot"; field="txd_pad_high"; }
+    else if (fault=="display-clobber-stuck") { stage="post_display_unsafe"; field="txd_gpio"; }
     else {
       stage="first_hold";
       if (fault=="before-pad") field="txd_pad_high";
@@ -87,7 +87,7 @@ int main(int argc,char** argv) {
     assert(display_reasserted);
     assert(first_hold_observation.txd_gpio && first_hold_observation.txd_enabled);
     assert(!display_observation.txd_gpio && !display_observation.txd_enabled);
-    assert(display_observation.txd_latch_high && !display_observation.txd_pad_high);
+    assert(display_observation.txd_latch_high && display_observation.txd_pad_high);
     const auto final_snapshot=snapshot(true);
     assert(passive::safe(final_snapshot));
     printBootEvidence();
