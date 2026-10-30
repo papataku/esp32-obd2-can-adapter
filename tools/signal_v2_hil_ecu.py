@@ -375,6 +375,34 @@ def evaluate(scenario, events):
     epoch_sample_generations = {}
     last_sample_by_boot = {}
     sample_generation_ok = True
+
+    # m-08: canonicalize each observed uint32 generation exactly once.
+    # Accept native ints and ASCII decimal strings, never booleans, negative,
+    # zero, floats, out-of-range values, missing fields or arbitrary text.
+    # All later safety checks reuse these pairs, including Fresh PDU matching.
+    def uint32_generation(value):
+        if type(value) is int:
+            number = value
+        elif (type(value) is str and len(value) <= 10 and
+              re.fullmatch(r"[0-9]+", value)):
+            number = int(value)
+        else:
+            return None
+        return number if 1 <= number <= 0xFFFFFFFF else None
+
+    def generation_pair(event, first, second):
+        a = uint32_generation(event.get(first))
+        b = uint32_generation(event.get(second))
+        return (a, b) if a is not None and b is not None else None
+
+    generation_pairs = {}
+    for event in board:
+        if event["kind"] in ("sample", "stopped"):
+            generation_pairs[id(event)] = generation_pair(
+                event, "source_generation", "mode_epoch")
+        elif event["kind"] == "packet":
+            generation_pairs[id(event)] = generation_pair(
+                event, "pdu_source_generation", "pdu_mode_epoch")
     for x in board:
         k = x["kind"]
         boot = x.get("boot")
@@ -421,27 +449,33 @@ def evaluate(scenario, events):
             # Each sample must use newer generations than the most recent
             # same-boot STOP ACK. Within one ARM interval, generation changes
             # without another authorization boundary are unexplained and fail.
-            present = all(field in x for field in ("source_generation", "mode_epoch"))
-            generations = ((int(x["source_generation"]), int(x["mode_epoch"]))
-                           if present else (0, 0))
+            generations = generation_pairs[id(x)]
             stopped = last_stopped.get(boot)
-            stopped_present = stopped is None or all(
-                field in stopped for field in ("source_generation", "mode_epoch"))
-            newer_than_stop = bool(
-                stopped_present and (stopped is None or (
-                    generations[0] > int(stopped["source_generation"])
-                    and generations[1] > int(stopped["mode_epoch"]))))
+            stopped_generations = generation_pairs.get(id(stopped)) if stopped else None
+            # M-18: src/signal_v2_can_owner.h:182-186 increments BOTH
+            # uint32 counters once on each authorization-epoch transition;
+            # include/signal_v2_can_samples.h:17 initializes BOTH to 1.
+            # A first ARM therefore yields exactly (2,2). After the same-
+            # boot STOP ACK, the next ARM yields exactly STOP+(1,1), not an
+            # arbitrary larger pair. No counter changes during a single ARM.
+            expected = ((stopped_generations[0] + 1,
+                         stopped_generations[1] + 1)
+                        if stopped and stopped_generations else
+                        (2, 2) if stopped is None else None)
             epoch_key = (boot, arm["seq"]) if arm else None
             initial = epoch_sample_generations.get(epoch_key)
             continuous = initial is None or generations == initial
             last_sample = last_sample_by_boot.get(boot)
             newer_than_previous_epoch = bool(
                 last_sample is None or last_sample[0] == epoch_key or
-                (generations[0] > last_sample[1][0] and
+                (generations is not None and
+                 generations[0] > last_sample[1][0] and
                  generations[1] > last_sample[1][1]))
             generation_valid = bool(
-                arm and present and min(generations) > 0 and
-                newer_than_stop and continuous and newer_than_previous_epoch)
+                arm and generations is not None and expected is not None
+                and expected[0] <= 0xFFFFFFFF and expected[1] <= 0xFFFFFFFF
+                and generations == expected and generations[0] == generations[1]
+                and continuous and newer_than_previous_epoch)
             sample_generation_ok &= generation_valid
             valid = bool(
                 active_group and arm and last_cf
@@ -589,11 +623,15 @@ def evaluate(scenario, events):
         closed = [x for x in stops if x["seq"] < e["seq"] and x.get("boot") == e.get("boot")]
         packet_ok &= bool(active) and int(e.get("epoch", 0)) == int(active[-1].get("epoch", -1))
         # Compare the generations carried in the notified PDU itself (B-03).
-        packet_ok &= all(k in e for k in ("pdu_source_generation", "pdu_mode_epoch", "pdu_source", "pdu_mixed"))
+        pdu_generations = generation_pairs.get(id(e))
+        packet_ok &= bool(pdu_generations)
         packet_ok &= e.get("pdu_mixed") == "0" and e.get("pdu_source") == "%08X" % ECU_RX
         if closed:
-            packet_ok &= (int(e.get("pdu_source_generation", 0)) > int(closed[-1].get("source_generation", 0)) and
-                          int(e.get("pdu_mode_epoch", 0)) > int(closed[-1].get("mode_epoch", 0)))
+            stopped_generations = generation_pairs.get(id(closed[-1]))
+            packet_ok &= bool(
+                pdu_generations and stopped_generations and
+                pdu_generations[0] > stopped_generations[0] and
+                pdu_generations[1] > stopped_generations[1])
         boundary = next((x for x in reversed(board) if
                          x.get("boot") == e.get("boot") and x["seq"] < e["seq"]
                          and x["kind"] in ("arm", "stop_request", "stopped", "fault", "disconnect")), None)
@@ -602,8 +640,8 @@ def evaluate(scenario, events):
             and sample.get("boot") == e.get("boot")
             and sample.get("epoch") == e.get("epoch")
             and sample.get("source") == e.get("pdu_source")
-            and sample.get("source_generation") == e.get("pdu_source_generation")
-            and sample.get("mode_epoch") == e.get("pdu_mode_epoch")
+            and pdu_generations is not None
+            and generation_pairs.get(id(sample)) == pdu_generations
             for sample in completed_samples) if boundary and boundary["kind"] == "arm" else False
         packet_ok &= matching
     for e in samples + [x for x in kind("packet") if int(x.get("fresh", 0))]:
@@ -654,8 +692,11 @@ def evaluate(scenario, events):
         snapshots = [e for e in kind("packet") if e.get("type") == "33"]
         rearm_ok &= any(stops[0]["t"] < e["t"] < arms[-1]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)
         rearm_ok &= any(e["t"]>arms[-1]["t"] and int(e.get("epoch",0))==epochs[-1] and int(e.get("fresh",0))>0
-                        and int(e.get("pdu_source_generation",0))>int(stops[0].get("source_generation",0))
-                        and int(e.get("pdu_mode_epoch",0))>int(stops[0].get("mode_epoch",0)) for e in snapshots)
+                        and generation_pairs.get(id(e)) is not None
+                        and generation_pairs.get(id(stops[0])) is not None
+                        and generation_pairs[id(e)][0] > generation_pairs[id(stops[0])][0]
+                        and generation_pairs[id(e)][1] > generation_pairs[id(stops[0])][1]
+                        for e in snapshots)
         rearm_ok &= all(int(e["epoch"]) == max(int(a["epoch"]) for a in arms if a["t"] <= e["t"]) for e in samples)
     # Reboot cannot be inferred from an ordinary STOP. A new boot identity and
     # reconnected secured central are separate evidence supplied by the operator.
