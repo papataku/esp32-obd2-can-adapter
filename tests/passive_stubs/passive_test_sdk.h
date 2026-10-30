@@ -161,6 +161,10 @@ inline void simulate_wire_begin() {
 // Model Arduino-ESP32 2.0.17 SPI2 MISO=-1 -> GPIO13.
 inline int lcd_spi_host=-1;
 inline bool mock_display_dma_fail=false;
+// A successful M5GFX init is not proof of IDF SPI3 device registration.
+inline bool mock_m5gfx_device_add_fail=false;
+inline bool mock_m5gfx_second_bus_invalid_state=false;
+inline int mock_spi3_registered_devices=0;
 inline bool lcd_auto_attached_gpio13=false;
 namespace lgfx {
 struct Bus_SPI {
@@ -203,6 +207,10 @@ class LGFX_Device {
       pad_high=false;
       lcd_auto_attached_gpio13=true;
     }
+    // M5GFX second spi_bus_initialize sees already-initialized SPI3.
+    // It ignores INVALID_STATE and separately attempts spi_bus_add_device.
+    if (mock_m5gfx_second_bus_invalid_state) assert(spi_bus_init_calls==1);
+    if (!mock_m5gfx_device_add_fail) ++mock_spi3_registered_devices;
     if (mock_i2c_begin) simulate_wire_begin();
     if (display_disables_gpio13) {
       if (display_clobber_external_low) stuck_pad_low=true;

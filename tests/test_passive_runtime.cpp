@@ -8,6 +8,10 @@ int main(int argc,char** argv) {
   const std::string fault=argv[1];
   lgfx::display_ok=fault!="display";
   install_fail=fault=="install"; start_fail=fault=="start"; task_fail=fault=="task";
+  if (fault=="m5gfx-device-add-fail" ||
+      fault=="m5gfx-second-bus-reinit-add-fail") mock_m5gfx_device_add_fail=true;
+  if (fault=="m5gfx-second-bus-reinit-add-fail")
+    mock_m5gfx_second_bus_invalid_state=true;
   if (fault=="bus-init-fail") mock_spi_bus_fail=true;
   if (fault=="dma-alloc-fail") mock_dma_alloc_fail=true;
   if (fault=="display-dma-fail") mock_display_dma_fail=true;
@@ -34,7 +38,9 @@ int main(int argc,char** argv) {
       fault=="display-low" || fault=="display-route" ||
       fault=="display-clobber" || fault=="display-clobber-stuck" ||
       fault=="bus-init-fail" || fault=="dma-alloc-fail" ||
-      fault=="display-dma-fail" || fault=="i2c-begin");
+      fault=="display-dma-fail" || fault=="i2c-begin" ||
+      fault=="m5gfx-device-add-fail" ||
+      fault=="m5gfx-second-bus-reinit-add-fail");
   if (early) {
     assert(stats.fault && !stats.verified && !installed);
     assert(fault_evidence.captured);
@@ -51,6 +57,10 @@ int main(int argc,char** argv) {
     else if (fault=="bus-init-fail") { stage="spi3_bus_init"; field="spi_bus_initialize"; }
     else if (fault=="dma-alloc-fail") { stage="spi3_dma_probe"; field="dma_alloc"; }
     else if (fault=="display-dma-fail") { stage="spi3_dma_buffer"; field="reserveDMABuffer"; }
+    else if (fault=="m5gfx-device-add-fail" ||
+             fault=="m5gfx-second-bus-reinit-add-fail") {
+      stage="spi3_device_registration"; field="m5gfx_spi_device";
+    }
     else if (fault=="i2c-begin") { stage="post_display_unsafe"; field="txd_gpio"; }
     else if (fault=="display-clobber-stuck") { stage="post_display_unsafe"; field="txd_gpio"; }
     else if (fault=="display-clobber") { stage="post_display_unsafe"; field="txd_gpio"; }
@@ -62,7 +72,9 @@ int main(int argc,char** argv) {
       if (fault=="before-input") field="txd_input_enabled";
     }
     assert(stage==fault_evidence.stage && field==fault_evidence.field);
-    if (fault=="bus-init-fail" || fault=="dma-alloc-fail")
+    if (fault=="bus-init-fail" || fault=="dma-alloc-fail" ||
+        fault=="m5gfx-device-add-fail" ||
+        fault=="m5gfx-second-bus-reinit-add-fail")
       assert(calls.empty()); // TWAI install forbidden on failed LCD preflight.
     if (fault=="i2c-begin") {
       assert(i2c_begin_calls==1 && i2c_scl_gpio15_driven);
@@ -102,6 +114,7 @@ int main(int argc,char** argv) {
     return 0;
   }
   assert(fresh(readStats()) && calls.back()=="task");
+  assert(mock_spi3_registered_devices==1);
   assert(spi_bus_init_calls==1 && dma_alloc_calls==1);
   assert(i2c_begin_calls==0);
   assert(!display_reasserted);
