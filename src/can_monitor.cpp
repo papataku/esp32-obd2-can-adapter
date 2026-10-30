@@ -219,6 +219,9 @@ void CanMonitor::processAuditCloseOnOwner() {
   twai_status_info_t last{};
   if (!drained || twai_get_status_info(&last)!=ESP_OK || last.msgs_to_rx)
     certified=false;
+  // Refresh missed/overrun/bus fault evidence at the actual owner barrier,
+  // not at the last periodic status poll.
+  updateDriverStats();
   portENTER_CRITICAL(&stats_mux_);
   if (audit_close_requested_.load(std::memory_order_acquire) &&
       audit_generation_.load(std::memory_order_acquire)==generation) {
