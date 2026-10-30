@@ -168,6 +168,9 @@ int main(int argc,char** argv) {
       [](const lgfx::DisplayDraw& d) {
         return d.text=="PASSIVE (TX ISOLATED)" && d.color==TFT_GREEN;
       }));
+  // loop() advances the fake clock by 1 ms; restore the historical
+  // check timestamp so the 200 ms watchdog boundary stays unchanged.
+  fake_ms=100;
   assert(check()); assert(stats.bus_errors==7 && stats.arb_lost==9);
   fake_ms=200;
   if (fault.rfind("route",0)==0) GPIO.func_out_sel_cfg[std::stoi(fault.substr(5))].func_sel=TWAI_TX_IDX;
