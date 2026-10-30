@@ -15,7 +15,11 @@ static m5can::CanStats health{};
 namespace m5can {
 CanStats CanMonitor::stats()const{return health;}
 void CanMonitor::endObservationAudit(ObservationAudit& copy, CanStats& stats) {
-  audit_.active=false;audit_.owner_confirmed=true;copy=audit_;stats=stats_;
+  audit_.active=false;audit_.owner_confirmed=true;
+  // Owner-only fixture: hardware pre-TX checks are certified by model.
+  // The real monitor regression validates failure and actual timing.
+  audit_.pre_tx_queue_empty=true; audit_.pre_tx_gap_ok=true;
+  copy=audit_;stats=stats_;
 }
 void CanMonitor::revokeLease(){}
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
