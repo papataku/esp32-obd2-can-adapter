@@ -11,6 +11,9 @@ static std::vector<m5can::DiagnosticRequest> requests;
 static std::vector<uint32_t> starts;
 namespace m5can {
 CanStats CanMonitor::stats()const{return health;}
+void CanMonitor::endObservationAudit(ObservationAudit& audit,CanStats& out) {
+  audit=audit_;audit.owner_confirmed=false;out=stats_;
+}
 void CanMonitor::revokeLease(){}
 bool CanMonitor::acquireLease(uint32_t){return leaseOk;}
 bool CanMonitor::submitQuery(const DiagnosticRequest& r){requests.push_back(r);starts.push_back(g_test_millis);return submitOk;}

@@ -20,9 +20,19 @@ inline uint32_t millis(){return g_test_millis;}
 inline uint32_t micros(){return g_test_millis*1000U;}
 inline void delay(uint32_t ms){g_test_millis+=ms;}
 inline void taskYIELD(){}
+#if defined(M5CAN_TEST_S1_OWNER_BARRIER)
+void s1TestOnAuditDelay(uint32_t);
+inline void vTaskDelay(uint32_t ms){s1TestOnAuditDelay(ms);g_test_millis+=ms;}
+#else
 inline void vTaskDelay(uint32_t ms){g_test_millis+=ms;}
+#endif
 inline void portENTER_CRITICAL(portMUX_TYPE*){}
+#if defined(M5CAN_TEST_S1_STOP_RACE)
+void s1TestOnCriticalExit(portMUX_TYPE*);
+inline void portEXIT_CRITICAL(portMUX_TYPE* m){s1TestOnCriticalExit(m);}
+#else
 inline void portEXIT_CRITICAL(portMUX_TYPE*){}
+#endif
 inline QueueHandle_t xQueueCreate(size_t,size_t){return reinterpret_cast<void*>(1);}
 inline void vQueueDelete(QueueHandle_t){}
 inline int xQueueSend(QueueHandle_t,const void*,TickType_t){return pdTRUE;}
@@ -34,13 +44,19 @@ inline const char* pcTaskGetName(TaskHandle_t){return "host-test";}
 inline unsigned uxTaskPriorityGet(TaskHandle_t){return 4;}
 inline unsigned uxTaskGetStackHighWaterMark(TaskHandle_t){return 4096;}
 struct SerialStub {
+#if __cplusplus >= 201703L
   inline static bool capture=false;
   inline static std::string lines{};
   inline static std::string& captured=lines;
+#else
+  static bool capture;
+  static std::string lines;
+  static std::string& captured;
+#endif
   void begin(uint32_t){}
   int printf(const char* fmt,...) {
     if(!capture)return 0;
-    char buffer[512]{};
+    char buffer[1024]{};
     va_list args;va_start(args,fmt);
     const int n=std::vsnprintf(buffer,sizeof(buffer),fmt,args);
     va_end(args);
