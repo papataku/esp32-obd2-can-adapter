@@ -31,10 +31,14 @@ using gpio_num_t=int;
 #define GPIO_PULLUP_ENABLE 1
 #define GPIO_PULLDOWN_DISABLE 0
 struct gpio_config_t { uint64_t pin_bit_mask=0; int mode=0,pull_up_en=0,pull_down_en=0; };
+// Startup stubs deliberately model GPIO13 reset-/RTC-side anomalies that the
+// old all-zeros register initialization could not exercise.
 inline bool pad_high=true;
+inline bool stuck_rtc_mux=false,stuck_sleep=false,bad_iomux=false,bad_input=false;
+inline bool bad_rx_on_install=false,skip_listen_on_start=false;
 inline int gpio_set_level(int pin,int value) { if (pin<32) GPIO.out=(GPIO.out&~(1U<<pin))|(value<<pin); return 0; }
-inline int rtc_gpio_deinit(int) { registers[1000]=0; return 0; }
-inline int gpio_config(gpio_config_t*) { GPIO.enable|=1U<<13; registers[13]=(PIN_FUNC_GPIO<<MCU_SEL_S)|FUN_IE; return 0; }
+inline int rtc_gpio_deinit(int) { registers[1000]=stuck_rtc_mux ? RTC_IO_TOUCH_PAD13_MUX_SEL : 0; return 0; }
+inline int gpio_config(gpio_config_t*) { GPIO.enable|=1U<<13; registers[13]=((bad_iomux ? 0U : PIN_FUNC_GPIO)<<MCU_SEL_S)|(bad_input ? 0U : FUN_IE)|(stuck_sleep ? SLP_SEL : 0U); return 0; }
 inline int gpio_get_level(int) { return pad_high; }
 inline void esp_rom_gpio_connect_out_signal(unsigned pin,unsigned sig,bool,bool) { GPIO.func_out_sel_cfg[pin].val=sig; }
 inline int gpio_set_direction(int,int) { return 0; }
@@ -66,13 +70,13 @@ inline int twai_driver_install(const twai_general_config_t* g,const twai_timing_
   assert(GPIO.out&(1U<<13)); calls.push_back("install");
   if (install_fail) return ESP_FAIL;
   GPIO.func_out_sel_cfg[39].func_sel=TWAI_TX_IDX;
-  GPIO.func_in_sel_cfg[TWAI_RX_IDX].val=15|(1U<<7);
+  GPIO.func_in_sel_cfg[TWAI_RX_IDX].val=(bad_rx_on_install ? 14 : 15)|(1U<<7);
   return ESP_OK;
 }
 inline int twai_start() {
   for (auto& route:GPIO.func_out_sel_cfg) assert(route.func_sel!=TWAI_TX_IDX);
   assert(GPIO.out&(1U<<13)); assert(GPIO.enable&(1U<<13));
-  TWAI.mode_reg.lom=true; calls.push_back("start"); return start_fail?ESP_FAIL:ESP_OK;
+  TWAI.mode_reg.lom=!skip_listen_on_start; calls.push_back("start"); return start_fail?ESP_FAIL:ESP_OK;
 }
 inline int twai_stop() { calls.push_back("stop"); return ESP_OK; }
 inline int twai_driver_uninstall() { calls.push_back("uninstall"); return ESP_OK; }
