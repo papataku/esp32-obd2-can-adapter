@@ -166,6 +166,7 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   if (frame.extended) ++stats_.ext_frames;
   else ++stats_.std_frames;
   if (frame.rtr) ++stats_.rtr_frames;
+  audit_.note(frame.identifier, frame.extended, frame.rtr, frame.dlc, frame.data);
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(!frame.extended && !frame.rtr && frame.identifier>=0x7E8 &&
       frame.identifier<=0x7EF)++stats_.std_obd_responses;

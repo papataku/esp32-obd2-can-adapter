@@ -80,6 +80,13 @@ c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
   -o /tmp/m5can-v22-bounded-discovery
 /tmp/m5can-v22-bounded-discovery
+c++ -std=c++17 -Wall -Wextra -Werror \
+  -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 -DM5CAN_SIGNAL_V2_RP8_PROFILE=1 \
+  -Itests/host_stubs -Iinclude -Isrc \
+  tests/test_signal_v2_stage_s1.cpp src/diagnostic_policy.cpp \
+  src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
+  -o /tmp/m5can-v22-stage-s1
+/tmp/m5can-v22-stage-s1
 python3 tests/test_signal_v2_elf_policy.py
 c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   -Itests/host_stubs -Iinclude -Isrc tests/test_diagnostic_review_capacity.cpp \

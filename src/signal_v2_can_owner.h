@@ -31,6 +31,14 @@ class CanOwner {
   uint32_t probe_target_=0,discovery_started_=0;
   uint8_t probe_index_=0,verified_count_=0;
   bool discovery_running_=false;
+  // PR-C2 stage S1 (owner decision O-1): an explicitly requested, separate
+  // authorization. One physical 0C/0D request, 1,000 ms receive/count window,
+  // automatic STOP. Never pins an ECU, never publishes a value.
+  static constexpr uint32_t kS1ObservationMs=1000;
+  bool s1_requested_=false,s1_=false,s1_sent_=false,s1_reported_=false;
+  uint32_t s1_started_=0,s1_request_at_=0;
+  const char* s1_outcome_="NOT_SENT";
+  m5can::CanStats s1_base_{};
   void stop(const char* reason,uint8_t quality=10){
     samples_.invalidate(quality);
     if(!stopped_)Serial.printf("#SIGNALV2_CAN,stopped=1,reason=%s,invalid=%lu\n",
@@ -38,6 +46,66 @@ class CanOwner {
     if(!stopped_){++samples_.source_generation;++samples_.mode_epoch;}
     stopped_=true;
     if(can_)can_->revokeLease();
+    if(s1_)reportS1(reason);
+  }
+  // One parseable record per S1 epoch. complete=0 rejects the evidence.
+  void reportS1(const char* reason){
+    if(s1_reported_||!can_)return;
+    s1_reported_=true;
+    m5can::ObservationAudit audit{};
+    can_->endObservationAudit(audit);
+    const auto s=can_->stats();
+    const auto d=[](uint64_t now,uint64_t base){return now>=base?now-base:0ULL;};
+    const bool lossless=!audit.overflow && s.driver_rx_missed==s1_base_.driver_rx_missed &&
+      s.driver_rx_overrun==s1_base_.driver_rx_overrun && s.app_queue_drops==s1_base_.app_queue_drops;
+    const bool complete=lossless && !std::strcmp(reason,"S1_OBSERVATION_COMPLETE");
+    Serial.printf("#SIGNALV2_S1,epoch=%lu,start_ms=%lu,request_ms=%lu,end_ms=%lu,requests=%u,"
+      "fc=%llu,all_rx=%lu,candidate_rx=%llu,tx_attempts=%llu,tx_success=%llu,"
+      "rx_missed=%lu,rx_overrun=%lu,queue_drops=%llu,bus_error=%lu,"
+      "reserved_peak100=%lu,reserved_peak1000=%lu,charged_peak100=%lu,charged_peak1000=%lu,"
+      "id_overflow=%lu,outcome=%s,stop=%s,complete=%u\n",
+      (unsigned long)epoch_,(unsigned long)s1_started_,(unsigned long)s1_request_at_,
+      (unsigned long)millis(),s1_sent_?1U:0U,
+      (unsigned long long)d(s.signal_v2_fc,s1_base_.signal_v2_fc),(unsigned long)audit.all_rx,
+      (unsigned long long)d(s.signal_v2_rx,s1_base_.signal_v2_rx),
+      (unsigned long long)d(s.tx_attempts,s1_base_.tx_attempts),
+      (unsigned long long)d(s.tx_success,s1_base_.tx_success),
+      (unsigned long)(s.driver_rx_missed-s1_base_.driver_rx_missed),
+      (unsigned long)(s.driver_rx_overrun-s1_base_.driver_rx_overrun),
+      (unsigned long long)d(s.app_queue_drops,s1_base_.app_queue_drops),
+      (unsigned long)(s.driver_bus_error-s1_base_.driver_bus_error),
+      (unsigned long)budget_.peak100,(unsigned long)budget_.peak1000,
+      (unsigned long)s.observed_peak100,(unsigned long)s.observed_peak1000,
+      (unsigned long)audit.overflow,s1_outcome_,reason,complete?1U:0U);
+    for(unsigned i=0;i<audit.used;++i)
+      Serial.printf("#SIGNALV2_S1_ID,epoch=%lu,id=%08lX,ext=%u,sf=%lu,ff=%lu,cf=%lu,fc=%lu,other=%lu\n",
+        (unsigned long)epoch_,(unsigned long)audit.ids[i],unsigned(audit.extended[i]),
+        (unsigned long)audit.counts[i][0],(unsigned long)audit.counts[i][1],
+        (unsigned long)audit.counts[i][2],(unsigned long)audit.counts[i][3],
+        (unsigned long)audit.counts[i][4]);
+  }
+  void s1Tick(uint32_t now){
+    if(s1_sent_){
+      if(!in_flight_ && uint32_t(now-s1_request_at_)>=kS1ObservationMs)
+        stop("S1_OBSERVATION_COMPLETE",6);
+      return;
+    }
+    if(in_flight_)return; // A previous epoch's completion is discarded first.
+    if(DiscoveryProfile::kCount!=1){stop("NO_APPROVED_CANDIDATE",6);return;}
+    const EcuRoute route=DiscoveryProfile::kCandidates[0].route();
+    if(!route.enabledForThisTrial()){stop("WRONG_CAN_ADDRESSING",6);return;}
+    if(!budget_.reserve(now,CanBudget::ProbeFrames,120)){stop("LOAD_BUDGET_DISCOVERY");return;}
+    m5can::DiagnosticRequest req{};
+    req.signal_v2=true;req.timeout_ms=120;
+    req.can_id=route.request_id;req.length=3;
+    req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
+    probe_target_=route.response_id;
+    if(!can_->acquireLease(550)||!can_->submitQuery(req)){
+      stop("QUERY_ADMISSION_FAILED",10);return;
+    }
+    s1_sent_=true;s1_request_at_=now;
+    discovery_running_=true;discovery_started_=now;
+    physical_=false;essential_=false;submitted_epoch_=epoch_;in_flight_=true;
   }
   void pin(uint32_t response_id){
     if(!ecu_.pinBoundedPhysical(response_id)){stop("WRONG_CAN_ADDRESSING",6);return;}
@@ -81,6 +149,13 @@ class CanOwner {
   // the exact contract (FF/CF, extra, duplicate, negative, wrong source,
   // driver/budget error) latches STOP; never assemble a partial success.
   void probeResult(const m5can::DiagnosticResult& r){
+    if(s1_){
+      if(r.status==m5can::DiagnosticStatus::NoData &&
+         !r.response_count && !r.raw_frame_count)s1_outcome_="NO_RESPONSE";
+      else if(validProbe(r,probe_target_))s1_outcome_="SINGLE_FRAME_CONTRACT";
+      else{s1_outcome_="CONTRACT_VIOLATION";stop("DISCOVERY_RESPONSE_CONTRACT",6);}
+      return; // Observation continues; S1 never pins or requests again.
+    }
     if(r.status==m5can::DiagnosticStatus::NoData &&
        !r.response_count && !r.raw_frame_count){
     }else if(validProbe(r,probe_target_)){
@@ -156,6 +231,9 @@ class CanOwner {
   }
 public:
   void attach(m5can::CanMonitor* can){can_=can;}
+  // Called with the authorization epoch increment of `SIGV2 CAN S1` only.
+  void requestStageS1(){s1_requested_=true;}
+  bool stageS1()const{return s1_;}
   const CanSamples &samples()const{return samples_;}
   bool stopped()const{return stopped_;}
   bool busy()const{return in_flight_;}
@@ -175,6 +253,13 @@ public:
       discovery_running_=false;discovery_started_=0;
       if(armed)stopped_=false;
       had_demand_=false;next_=now;
+      // An interrupted S1 (operator STOP, expiry) still emits its record.
+      if(s1_&&!s1_reported_)reportS1("EPOCH_CHANGED");
+      // A stage request applies to exactly the next armed epoch.
+      s1_=armed&&s1_requested_;s1_requested_=false;
+      s1_sent_=s1_reported_=false;s1_outcome_="NOT_SENT";
+      s1_started_=now;s1_request_at_=0;
+      if(s1_){s1_base_=can_->stats();can_->beginObservationAudit();}
     }
     if(armed && !stopped_) {
       const auto health=can_->stats();
@@ -236,6 +321,7 @@ public:
       stop("TWAI_BUS_ERROR",10);return;
     }
     prior_bus_errors_=s.driver_bus_error;
+    if(s1_){s1Tick(now);return;} // Independent of BLE demand; never LIVE.
     bool has_demand=false;period_=10000;
     for(auto p:demand)if(p){
       has_demand=true;

@@ -188,6 +188,27 @@ void manage(const char *cmd, uint32_t now) {
       can_armed?1U:0U,can_armed?"USB_VERIFIED":"NOT_READY");
     return;
   }
+  // PR-C2 stage S1 (owner decision O-1): its own explicit authorization,
+  // never implied by ARM. Requires the same secured central and an idle
+  // owner; bounded by the 1s observation plus the 3s fail-safe.
+  if(!std::strcmp(cmd,"SIGV2 CAN S1")) {
+    bool secured=false;
+    for(unsigned i=0;i<2;++i){
+      auto l=snapshot(i);
+      if(l.active&&l.status&&l.data&&authorized(l)&&
+         peers[i].session.active(now)) secured=true;
+    }
+    const bool accepted=secured && !can_armed && !owner.busy();
+    if(accepted){
+      owner.requestStageS1();
+      ++can_authorization_epoch;
+      can_armed=true;
+      armed_until=now+5000;
+    }
+    Serial.printf("#SIGNALV2_CAN,stage=S1,armed=%u,reason=%s,ttl_ms=5000\n",
+      accepted?1U:0U,accepted?"USB_VERIFIED":(secured?"BUSY_OR_ARMED":"NOT_READY"));
+    return;
+  }
   if(!std::strncmp(cmd,"SIGV2 DEMO ",11)) {
     Serial.println("#SIGNALV2_CAN,admin=DEMO_UNAVAILABLE");
     return;
