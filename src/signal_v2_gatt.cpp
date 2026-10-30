@@ -428,14 +428,25 @@ void send(Peer &p, const Link &l, uint32_t now) {
     const uint8_t *payload=packet.payload();
     const unsigned records=packet.bytes[4]==0x21?payload[12]:payload[0];
     size_t at=packet.bytes[4]==0x21?20:2;unsigned fresh=0;
+    // Generations actually carried by the notified Fresh records (lowest
+    // value), independent of the owner's current counters (review B-03).
+    uint32_t pdu_generation=0,pdu_mode=0,pdu_source=0;bool pdu_mixed=false;
     for(unsigned i=0;i<records && at+44<=packet.size-Header;++i){
-      if(payload[at+7]<=1)++fresh;
+      if(payload[at+7]<=1){
+        const uint32_t g=u32(payload+at+14),m=u32(payload+at+18),src=u32(payload+at+22);
+        if(fresh && (g!=pdu_generation||m!=pdu_mode||src!=pdu_source))pdu_mixed=true;
+        if(!fresh||g<pdu_generation)pdu_generation=g;
+        if(!fresh||m<pdu_mode)pdu_mode=m;
+        pdu_source=src;++fresh;
+      }
       at+=u16(payload+at);
     }
-    hil::note("kind=packet,type=%u,epoch=%lu,fresh=%u,current=%u,source_generation=%lu,mode_epoch=%lu",
+    hil::note("kind=packet,type=%u,epoch=%lu,fresh=%u,current=%u,source_generation=%lu,mode_epoch=%lu,"
+      "pdu_source_generation=%lu,pdu_mode_epoch=%lu,pdu_source=%08lX,pdu_mixed=%u",
       unsigned(packet.bytes[4]),(unsigned long)can_authorization_epoch.load(),fresh,
       p.session.canPacketCurrent(now,packet,owner.samples())?1U:0U,
-      (unsigned long)owner.samples().source_generation,(unsigned long)owner.samples().mode_epoch);
+      (unsigned long)owner.samples().source_generation,(unsigned long)owner.samples().mode_epoch,
+      (unsigned long)pdu_generation,(unsigned long)pdu_mode,(unsigned long)pdu_source,pdu_mixed?1U:0U);
   }
 #endif
   p.progress = now;

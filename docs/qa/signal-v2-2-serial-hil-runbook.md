@@ -97,6 +97,13 @@ STOP and re-ARM and another after the fault; every Fresh Snapshot must carry
 the active ARM epoch and generations newer than the last STOP, independent of
 the board's `current=1`. Admitted RX must match a host write of the same
 generation, and every non-`txfail` TX (including FC) must report `ok=1`.
+The final operator STOP must be requested after every fault/disconnect and
+complete before the >=1s quiet fence. `overlap` requires the old CF to be
+admitted between the new epoch's probe and the fault. Fresh Snapshot checks use
+the generations carried in the notified PDU records (`pdu_source_generation`,
+`pdu_mode_epoch`, HIL-only telemetry), not the owner's current counters. A
+scheduled injection refused (`ok=0`) after the fault's completed STOP is the
+expected fail-closed outcome; any other refusal fails transport.
 
 ## Model boundaries and required evidence
 

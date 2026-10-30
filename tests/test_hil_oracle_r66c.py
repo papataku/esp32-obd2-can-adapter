@@ -88,4 +88,38 @@ class R66c(unittest.TestCase):
         self.assertFalse(h.evaluate('normal',e)['checks']['transport_complete'])
 
 
+class R66d(unittest.TestCase):
+    """Second independent review B-01..B-04 (ChatGPT, 2026-10-30)."""
+    def test_b01_final_operator_stop_is_required(self):
+        events=[e for e in fault_trace('noreply') if not (e['kind'] in ('stop_request','stopped') and e['t']>=60)]
+        r=h.evaluate('noreply',renumber(events))
+        self.assertFalse(r['checks']['stop_ack_and_quiet'],r)
+        unfinished=[e for e in fault_trace('noreply') if not (e['kind']=='stopped' and e['t']>=60)]
+        self.assertFalse(h.evaluate('noreply',renumber(unfinished))['checks']['stop_ack_and_quiet'])
+
+    def test_b02_old_cf_must_overlap_new_probe(self):
+        events=overlap_trace()
+        cf=next(e for e in events if e['kind']=='rx' and e['t']==1.711)
+        cf['t']=1.8;cf['t_us']='1800000'
+        self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['epoch_separation'])
+
+    def test_b03_fresh_pdu_generations_not_owner_counters(self):
+        stale=overlap_trace();add=adder(stale,3)
+        add(1.7105,'packet',type='33',epoch='3',fresh='1',current='1',source_generation='4',mode_epoch='4',
+            pdu_source_generation='2',pdu_mode_epoch='2',pdu_source='18DAF101',pdu_mixed='0')
+        self.assertFalse(h.evaluate('overlap',renumber(stale))['checks']['epoch_separation'])
+        missing=overlap_trace();add=adder(missing,3)
+        add(1.7105,'packet',type='33',epoch='3',fresh='1',current='1',source_generation='4',mode_epoch='4')
+        self.assertFalse(h.evaluate('overlap',renumber(missing))['checks']['epoch_separation'])
+
+    def test_b04_scheduled_rx_refused_after_fault_stop_is_fail_closed(self):
+        events=overlap_trace();add=adder(events,4)
+        events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.PAIR_SF,True,3),write_t=1.7249))
+        add(1.725,'rx',id=h.ECU_RX,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=0)
+        r=h.evaluate('overlap',renumber(events));self.assertTrue(r['pass'],r)
+        before=overlap_trace();add=adder(before,3)
+        before.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.PAIR_SF,True,3),write_t=1.7105))
+        add(1.7106,'rx',id=h.ECU_RX,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=0)
+        self.assertFalse(h.evaluate('overlap',renumber(before))['checks']['transport_complete'])
+
 if __name__=='__main__':unittest.main()

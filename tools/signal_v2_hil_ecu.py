@@ -215,7 +215,13 @@ def evaluate(scenario, events):
     writes = [e for e in events if e["kind"] == "write" and e["text"].startswith("HIL RX ")]
     expected = Counter("HIL RX 0 " + " ".join(e["text"].split()[3:]) for e in writes)
     accepted = Counter(rx_line(e["id"], e["data"], bool(e["ext"])) for e in rxs)
-    acknowledged = expected == accepted and all(e["ok"] for e in rxs)
+    first_fault_stop = None
+    if faults:
+        first_fault_stop = next((x for x in stops if x["seq"] > faults[0]["seq"]), None)
+    def refused_after_stop(e):
+        return bool(first_fault_stop and e["seq"] > first_fault_stop["seq"] and
+                    all(e["seq"] > f["seq"] for f in faults[:1]))
+    acknowledged = expected == accepted and all(e["ok"] or refused_after_stop(e) for e in rxs)
     # The generation is part of the injection contract: an admitted RX must
     # consume a host write bound to the board's generation at admission time.
     bound = Counter((e["text"].split()[2], " ".join(e["text"].split()[3:])) for e in writes)
@@ -241,7 +247,14 @@ def evaluate(scenario, events):
     first_arm = arms[0]["t"] if arms else 0
     # Every fault run observes 60s, including the post-fault quiet interval.
     duration = fences[-1]["t"] - (arms[-1]["t"] if scenario == "reboot" and arms else first_arm) if fences else 0
-    final_quiet = bool(stops and fences and fences[-1]["t"] - stops[-1]["t"] >= 1)
+    # The final operator STOP is separate evidence from any fault STOP: its
+    # request follows every fault/disconnect, then completes, then >=1s quiet.
+    requests_all = kind("stop_request")
+    final_request = requests_all[-1] if requests_all else None
+    final_done = next((x for x in stops if final_request and x["seq"] > final_request["seq"]), None)
+    final_quiet = bool(final_request and final_done and fences and
+                       all(f["seq"] < final_request["seq"] for f in faults + kind("disconnect")) and
+                       fences[-1]["t"] - final_done["t"] >= 1)
     sample_ok = bool(samples) and all(
         e.get("quality") == "0" and e.get("speed") == "0" and e.get("rpm") == "1000" and
         e.get("source") == "18DAF101" and 0 <= e["t"] - int(e.get("observed_us", 0))/1e6 <= .25 and
@@ -326,9 +339,11 @@ def evaluate(scenario, events):
         active = [a for a in arms if a["seq"] < e["seq"] and a.get("boot") == e.get("boot")]
         closed = [x for x in stops if x["seq"] < e["seq"] and x.get("boot") == e.get("boot")]
         packet_ok &= bool(active) and int(e.get("epoch", 0)) == int(active[-1].get("epoch", -1))
+        # Compare the generations carried in the notified PDU itself (B-03).
+        packet_ok &= "pdu_source_generation" in e and e.get("pdu_mixed") == "0"
         if closed:
-            packet_ok &= (int(e.get("source_generation", 0)) > int(closed[-1].get("source_generation", 0)) and
-                          int(e.get("mode_epoch", 0)) > int(closed[-1].get("mode_epoch", 0)))
+            packet_ok &= (int(e.get("pdu_source_generation", 0)) > int(closed[-1].get("source_generation", 0)) and
+                          int(e.get("pdu_mode_epoch", 0)) > int(closed[-1].get("mode_epoch", 0)))
     for e in samples + [x for x in kind("packet") if int(x.get("fresh", 0))]:
         previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault")]
         packet_ok &= bool(previous and previous[-1]["kind"] == "arm")
@@ -336,6 +351,12 @@ def evaluate(scenario, events):
     if scenario == "overlap":
         rearm_ok = len(arms)==2 and len(stops)>=2 and epochs[1]>int(stops[0]["epoch"])>epochs[0]
         rearm_ok &= bool(faults and faults[0]["t"]>arms[-1]["t"])
+        # The old CF must actually overlap the new epoch's probe: after that
+        # probe TX and at/before the fault, admitted under its generation.
+        new_probe = next((x for x in probe_txs if x["seq"] > arms[-1]["seq"]), None) if arms else None
+        rearm_ok &= bool(new_probe and faults and any(
+            x["data"] == GROUP_CF[0] and new_probe["seq"] < x["seq"] < faults[0]["seq"] and
+            x["ok"] and x.get("gen") == new_probe.get("gen") for x in rxs))
         # Missing Snapshot evidence prevents qualification (runbook): Invalid
         # across the first STOP before re-ARM, and Invalid after the fault.
         snapshots = [e for e in kind("packet") if e.get("type") == "33"]
@@ -352,8 +373,8 @@ def evaluate(scenario, events):
         snapshots = [e for e in kind("packet") if e.get("type") == "33"]
         rearm_ok &= any(stops[0]["t"] < e["t"] < arms[-1]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)
         rearm_ok &= any(e["t"]>arms[-1]["t"] and int(e.get("epoch",0))==epochs[-1] and int(e.get("fresh",0))>0
-                        and int(e.get("source_generation",0))>int(stops[0].get("source_generation",0))
-                        and int(e.get("mode_epoch",0))>int(stops[0].get("mode_epoch",0)) for e in snapshots)
+                        and int(e.get("pdu_source_generation",0))>int(stops[0].get("source_generation",0))
+                        and int(e.get("pdu_mode_epoch",0))>int(stops[0].get("mode_epoch",0)) for e in snapshots)
         rearm_ok &= all(int(e["epoch"]) == max(int(a["epoch"]) for a in arms if a["t"] <= e["t"]) for e in samples)
     # Reboot cannot be inferred from an ordinary STOP. A new boot identity and
     # reconnected secured central are separate evidence supplied by the operator.

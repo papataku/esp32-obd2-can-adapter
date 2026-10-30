@@ -89,7 +89,8 @@ def rearm_trace():
         if 'epoch' in e:e['epoch']=str(int(e['epoch'])+2)
         events.append(e)
         if e['kind']=='rx':events.append(dict(kind='write',text=h.rx_line(e['id'],e['data'],True,3),write_t=e['t']-.0001))
-    add(1.95,'packet',type='33',epoch='3',fresh='1',current='1',source_generation='4',mode_epoch='4')
+    add(1.95,'packet',type='33',epoch='3',fresh='1',current='1',source_generation='4',mode_epoch='4',
+        pdu_source_generation='4',pdu_mode_epoch='4',pdu_source='18DAF101',pdu_mixed='0')
     return renumber(events)
 
 
@@ -134,7 +135,7 @@ class Evidence(unittest.TestCase):
         next(e for e in accepted if e['kind']=='rx' and e['ok']==0)['ok']=1
         self.assertFalse(h.evaluate('rearm',accepted)['checks']['epoch_separation'])
         stale=copy.deepcopy(evidence)
-        next(e for e in stale if e['kind']=='packet' and e['fresh']=='1')['source_generation']='3'
+        next(e for e in stale if e['kind']=='packet' and e['fresh']=='1')['pdu_source_generation']='3'
         self.assertFalse(h.evaluate('rearm',stale)['checks']['epoch_separation'])
         late_invalid=copy.deepcopy(evidence)
         invalid=next(e for e in late_invalid if e['kind']=='packet' and e['fresh']=='0')
