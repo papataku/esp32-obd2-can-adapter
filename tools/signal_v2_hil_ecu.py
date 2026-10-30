@@ -218,9 +218,22 @@ def evaluate(scenario, events):
     first_fault_stop = None
     if faults:
         first_fault_stop = next((x for x in stops if x["seq"] > faults[0]["seq"]), None)
+    # Provenance: the runner tags each scheduled write with the board time and
+    # generation of the adapter TX that caused it.
+    scheduled_writes = [w for w in writes if "from_t" in w]
+    used = set()
     def refused_after_stop(e):
-        return bool(first_fault_stop and e["seq"] > first_fault_stop["seq"] and
-                    all(e["seq"] > f["seq"] for f in faults[:1]))
+        if not (first_fault_stop and e["seq"] > first_fault_stop["seq"]):
+            return False
+        line = rx_line(e["id"], e["data"], bool(e["ext"]))[len("HIL RX 0 "):]
+        for i, w in enumerate(scheduled_writes):
+            if i in used or " ".join(w["text"].split()[3:]) != line:
+                continue
+            cause = next((t for t in txs if t["t"] == w["from_t"] and t.get("gen") == w.get("from_gen")), None)
+            if cause and cause["seq"] < faults[0]["seq"] and w["text"].split()[2] == str(w.get("from_gen")):
+                used.add(i)
+                return True
+        return False
     acknowledged = expected == accepted and all(e["ok"] or refused_after_stop(e) for e in rxs)
     # The generation is part of the injection contract: an admitted RX must
     # consume a host write bound to the board's generation at admission time.
@@ -251,7 +264,11 @@ def evaluate(scenario, events):
     # request follows every fault/disconnect, then completes, then >=1s quiet.
     requests_all = kind("stop_request")
     final_request = requests_all[-1] if requests_all else None
-    final_done = next((x for x in stops if final_request and x["seq"] > final_request["seq"]), None)
+    # Firmware logs the incremented epoch on the request and acknowledges that
+    # same epoch once the owner is idle; a stale ACK cannot complete it.
+    final_done = next((x for x in stops if final_request and x["seq"] > final_request["seq"] and
+                       x.get("boot") == final_request.get("boot") and
+                       x.get("epoch") == final_request.get("epoch")), None)
     final_quiet = bool(final_request and final_done and fences and
                        all(f["seq"] < final_request["seq"] for f in faults + kind("disconnect")) and
                        fences[-1]["t"] - final_done["t"] >= 1)
@@ -340,7 +357,8 @@ def evaluate(scenario, events):
         closed = [x for x in stops if x["seq"] < e["seq"] and x.get("boot") == e.get("boot")]
         packet_ok &= bool(active) and int(e.get("epoch", 0)) == int(active[-1].get("epoch", -1))
         # Compare the generations carried in the notified PDU itself (B-03).
-        packet_ok &= "pdu_source_generation" in e and e.get("pdu_mixed") == "0"
+        packet_ok &= all(k in e for k in ("pdu_source_generation", "pdu_mode_epoch", "pdu_source", "pdu_mixed"))
+        packet_ok &= e.get("pdu_mixed") == "0" and e.get("pdu_source") == "%08X" % ECU_RX
         if closed:
             packet_ok &= (int(e.get("pdu_source_generation", 0)) > int(closed[-1].get("source_generation", 0)) and
                           int(e.get("pdu_mode_epoch", 0)) > int(closed[-1].get("mode_epoch", 0)))
@@ -443,14 +461,17 @@ def run(port, scenario, seconds, trace_path):
     current_generation = 0
     initial_deadline = start + 5
 
-    def send(line, record=True):
+    def send(line, record=True, cause=None):
         if line.startswith("HIL RX 0 "):
             line = line.replace("HIL RX 0 ", "HIL RX %d " % current_generation, 1)
         wire = (line + "\n").encode()
         if ser.write(wire) != len(wire):
             raise RuntimeError("short serial write")
         if record:
-            events.append({"kind":"write", "host_t":time.monotonic()-start, "text":line})
+            w = {"kind":"write", "host_t":time.monotonic()-start, "text":line}
+            if cause:
+                w["from_t"], w["from_gen"] = cause
+            events.append(w)
 
     # Bounded state machine: read the STOP ACK before fencing or arming; keep
     # reading through final STOP and a full quiet second before final fence.
@@ -465,9 +486,10 @@ def run(port, scenario, seconds, trace_path):
                 # Reissue STOP: idle firmware may already have acknowledged its
                 # boot epoch before this process opened the port.
                 send("SIGV2 CAN STOP", False); phase_at = now
-            for due,line in list(scheduled):
+            for item in list(scheduled):
+                due,line,cause = item
                 if due <= now:
-                    scheduled.remove((due,line)); send(line)
+                    scheduled.remove(item); send(line, cause=cause)
             try:
                 buf += ser.read(4096)
             except serial.SerialException:
@@ -537,7 +559,7 @@ def run(port, scenario, seconds, trace_path):
                     send("SIGV2 CAN ARM");arm_host=now;phase="running"
                 if k == "tx" and e.get("ok"):
                     for delay,line in ecu.on_tx(e["id"], e["data"]):
-                        scheduled.append((now+delay,line))
+                        scheduled.append((now+delay,line,(e["t"],e["gen"])))
                     if scenario in ("rearm", "overlap") and ecu.groups == 2 and not stopped_once:
                         race_generation=e["gen"];scheduled.clear();send("SIGV2 CAN STOP");stopped_once=True;phase="race_stop"
                 if k == "stopped":

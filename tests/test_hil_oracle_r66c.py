@@ -6,7 +6,7 @@ import unittest
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'tools'))
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import signal_v2_hil_ecu as h
-from test_hil_evidence import trace,renumber,fault_trace
+from test_hil_evidence import trace,renumber,fault_trace,rearm_trace
 
 
 def healthy_prefix(until=.241):
@@ -114,12 +114,36 @@ class R66d(unittest.TestCase):
 
     def test_b04_scheduled_rx_refused_after_fault_stop_is_fail_closed(self):
         events=overlap_trace();add=adder(events,4)
-        events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.PAIR_SF,True,3),write_t=1.7249))
+        events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.PAIR_SF,True,3),write_t=1.7249,
+                           from_t=1.71,from_gen=3))
         add(1.725,'rx',id=h.ECU_RX,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=0)
         r=h.evaluate('overlap',renumber(events));self.assertTrue(r['pass'],r)
         before=overlap_trace();add=adder(before,3)
         before.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.PAIR_SF,True,3),write_t=1.7105))
         add(1.7106,'rx',id=h.ECU_RX,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=0)
         self.assertFalse(h.evaluate('overlap',renumber(before))['checks']['transport_complete'])
+
+class R66e(unittest.TestCase):
+    """Third independent review B-05..B-07 (ChatGPT, 2026-10-30)."""
+    def test_b05_final_ack_epoch_must_match_request(self):
+        events=fault_trace('noreply')
+        next(e for e in events if e['kind']=='stopped' and e['t']==60.11)['epoch']='2'
+        self.assertFalse(h.evaluate('noreply',events)['checks']['stop_ack_and_quiet'])
+
+    def test_b06_fresh_pdu_source_must_be_pinned_ecu(self):
+        for mutation in ('wrong','missing','mixed'):
+            events=rearm_trace()
+            packet=next(e for e in events if e['kind']=='packet' and e['fresh']=='1')
+            if mutation=='wrong':packet['pdu_source']='18DAF102'
+            elif mutation=='missing':del packet['pdu_source']
+            else:packet['pdu_mixed']='1'
+            self.assertFalse(h.evaluate('rearm',events)['checks']['epoch_separation'],mutation)
+
+    def test_b07_unscheduled_refusal_is_not_fail_closed_evidence(self):
+        for write in (dict(),dict(from_t=1.9,from_gen=3),dict(from_t=1.71,from_gen=4)):
+            events=overlap_trace();add=adder(events,4)
+            events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.PAIR_SF,True,3),write_t=1.7249,**write))
+            add(1.725,'rx',id=h.ECU_RX,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=0)
+            self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['transport_complete'],write)
 
 if __name__=='__main__':unittest.main()
