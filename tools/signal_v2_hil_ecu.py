@@ -229,26 +229,47 @@ def evaluate(scenario, events):
             for _, line in model.on_tx(t["id"], t["data"]):
                 if line.startswith("HIL RX "):
                     predicted[(t["t"], t.get("gen"), " ".join(line.split()[3:]))] += 1
-    # Provenance: the runner tags each scheduled write with the board time and
-    # generation of the adapter TX that caused it.
-    scheduled_writes = [w for w in writes if "from_t" in w]
-    used = set()
-    def refused_after_stop(e):
-        if not (first_fault_stop and e["seq"] > first_fault_stop["seq"]):
-            return False
-        line = rx_line(e["id"], e["data"], bool(e["ext"]))[len("HIL RX 0 "):]
-        for i, w in enumerate(scheduled_writes):
-            if i in used or " ".join(w["text"].split()[3:]) != line:
+    # One-to-one causal reconciliation in host arrival order (B-11..B-13):
+    # every board RX consumes the earliest unconsumed preceding host write
+    # with the same payload; a runner-scheduled write also consumes one
+    # modelled response slot of its causing TX, whether admitted or refused.
+    # from_gen is the causing TX generation; the injection generation may
+    # differ after a post-STOP reinstall and is checked only for admissions.
+    def reconcile(extra_refusal=lambda e: False):
+        slots = Counter(predicted)
+        pending, ok = [], True
+        for e in events:
+            if e["kind"] == "write" and e["text"].startswith("HIL RX "):
+                pending.append(e)
                 continue
-            cause = next((t for t in txs if t["t"] == w["from_t"] and t.get("gen") == w.get("from_gen")), None)
-            key = (w["from_t"], w.get("from_gen"), line)
-            if (cause and cause["seq"] < trigger["seq"] and w["text"].split()[2] == str(w.get("from_gen"))
-                    and predicted[key] > 0):
-                predicted[key] -= 1
-                used.add(i)
-                return True
-        return False
-    acknowledged = expected == accepted and all(e["ok"] or refused_after_stop(e) for e in rxs)
+            if e["kind"] != "rx" or "seq" not in e:
+                continue
+            line = rx_line(e["id"], e["data"], bool(e["ext"]))[len("HIL RX 0 "):]
+            match = next((i for i, w in enumerate(pending) if " ".join(w["text"].split()[3:]) == line), None)
+            if match is None:
+                ok = False
+                continue
+            w = pending.pop(match)
+            cause = None
+            if "from_t" not in w:
+                # Only a deliberate operator injection (rearm) lacks a cause,
+                # and it must be refused.
+                ok &= not e["ok"] and extra_refusal(e)
+                continue
+            if True:
+                key = (w["from_t"], w.get("from_gen"), line)
+                cause = next((t for t in txs if t["t"] == w["from_t"] and t.get("gen") == w.get("from_gen")), None)
+                if cause is None or slots[key] <= 0:
+                    ok = False
+                    continue
+                slots[key] -= 1
+            if e["ok"]:
+                continue
+            fail_closed = bool(first_fault_stop and e["seq"] > first_fault_stop["seq"] and
+                               cause and cause["seq"] < trigger["seq"])
+            ok &= fail_closed or extra_refusal(e)
+        return ok and not pending
+    acknowledged = reconcile()
     # The generation is part of the injection contract: an admitted RX must
     # consume a host write bound to the board's generation at admission time.
     bound = Counter((e["text"].split()[2], " ".join(e["text"].split()[3:])) for e in writes)
@@ -406,7 +427,7 @@ def evaluate(scenario, events):
                 and stops[0]["t"] < e["t"] < arms[-1]["t"]]
         rearm_ok &= len(old_cf)==1 and old_cf[0]["ok"]==0
         # The deliberate stopped-generation RX must be refused, without loss.
-        acknowledged = expected == accepted and all(e["ok"] or stops[0]["t"] < e["t"] < arms[-1]["t"] for e in rxs)
+        acknowledged = reconcile(lambda e: stops[0]["t"] < e["t"] < arms[-1]["t"])
         rearm_ok &= any(int(e["epoch"]) == epochs[-1] for e in samples)
         snapshots = [e for e in kind("packet") if e.get("type") == "33"]
         rearm_ok &= any(stops[0]["t"] < e["t"] < arms[-1]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)

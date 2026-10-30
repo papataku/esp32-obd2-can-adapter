@@ -38,6 +38,18 @@ def trace(scenario='normal'):
     for e in events:
         if 't_us' in e:
             n+=1;e['seq']=n
+    annotate(events)
+    return events
+
+
+def annotate(events):
+    # Mirror run(): each scheduled RX write records the board time and
+    # generation of the latest successful adapter TX that caused it.
+    last=None
+    for e in events:
+        if e['kind']=='tx' and e.get('ok'):last=e
+        elif e['kind']=='write' and e['text'].startswith('HIL RX ') and not e.get('deliberate') and 'from_t' not in e and last:
+            e['from_t'],e['from_gen']=last['t'],last['gen']
     return events
 
 
@@ -70,7 +82,7 @@ def fault_trace(scenario):
     events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=60.099))
     add(60.1,'stop_request',epoch='3');add(60.11,'stopped',epoch='3')
     add(61.2,'fence',nonce='freshend')
-    return renumber(events)
+    return annotate(renumber(events))
 
 
 def rearm_trace():
@@ -81,7 +93,7 @@ def rearm_trace():
     def add(t,kind,**kw):
         events.append(dict(kind=kind,t=t,t_us=str(round(t*1e6)),boot='12345678',gen=2,lost=0,text='',**kw))
     add(.3,'stop_request',epoch='2');add(.31,'stopped',epoch='2',source_generation='3',mode_epoch='3')
-    events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_CF[0],True,1),write_t=.399))
+    events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_CF[0],True,1),write_t=.399,deliberate=True))
     add(.4,'rx',id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_CF[0],ok=0)
     add(.5,'packet',type='33',epoch='2',fresh='0',current='1',source_generation='3',mode_epoch='3')
     for e in trace():
@@ -96,7 +108,7 @@ def rearm_trace():
         if e['kind']=='rx':events.append(dict(kind='write',text=h.rx_line(e['id'],e['data'],True,3),write_t=e['t']-.0001))
     add(1.95,'packet',type='33',epoch='3',fresh='1',current='1',source_generation='4',mode_epoch='4',
         pdu_source_generation='4',pdu_mode_epoch='4',pdu_source='18DAF101',pdu_mixed='0')
-    return renumber(events)
+    return annotate(renumber(events))
 
 
 class Evidence(unittest.TestCase):

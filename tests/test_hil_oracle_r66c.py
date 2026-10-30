@@ -6,7 +6,7 @@ import unittest
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'tools'))
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import signal_v2_hil_ecu as h
-from test_hil_evidence import trace,renumber,fault_trace,rearm_trace
+from test_hil_evidence import trace,renumber,fault_trace,rearm_trace,annotate
 
 
 def healthy_prefix(until=.241):
@@ -33,7 +33,7 @@ def disconnect_trace():
     events=healthy_prefix();add=adder(events,1)
     add(.3,'disconnect',handle='1');add(.31,'stopped',epoch='2',source_generation='3',mode_epoch='3')
     final_stop(add,3,events)
-    return renumber(events)
+    return annotate(renumber(events))
 
 
 def overlap_trace():
@@ -51,7 +51,7 @@ def overlap_trace():
     add(1.72,'stopped',epoch='4',source_generation='4',mode_epoch='4')
     add(1.9,'packet',type='33',epoch='4',fresh='0',current='1',source_generation='4',mode_epoch='4')
     final_stop(add,5,events)
-    return renumber(events)
+    return annotate(renumber(events))
 
 
 class R66c(unittest.TestCase):
@@ -170,5 +170,25 @@ class R66f(unittest.TestCase):
                            from_t=.29,from_gen=1))
         add(.315,'rx',id=h.ECU_RX,ext=1,dlc=len(h.GROUP_FF),data=h.GROUP_FF,ok=0)
         r=h.evaluate('disconnect',renumber(events));self.assertTrue(r['pass'],r)
+
+class R66g(unittest.TestCase):
+    """Fifth independent review B-11..B-13 (ChatGPT, 2026-10-30)."""
+    def refused(self,cid,data,write_t,rx_t,inject_gen=3):
+        events=overlap_trace();add=adder(events,4)
+        events.append(dict(kind='write',text=h.rx_line(cid,data,True,inject_gen),write_t=write_t,
+                           from_t=1.71,from_gen=3))
+        add(rx_t,'rx',id=cid,ext=1,dlc=len(data),data=data,ok=0)
+        return h.evaluate('overlap',renumber(events))
+
+    def test_b11_admitted_response_consumes_its_slot(self):
+        # The second probe schedules exactly one old CF, already admitted at 1.711.
+        self.assertFalse(self.refused(h.ECU_RX,h.GROUP_CF[0],1.7249,1.725)['checks']['transport_complete'])
+
+    def test_b12_host_write_must_precede_board_rx(self):
+        self.assertFalse(self.refused(h.ECU_RX,h.PAIR_SF,1.730,1.725)['checks']['transport_complete'])
+
+    def test_b13_injection_generation_may_change_after_stop(self):
+        r=self.refused(h.ECU_RX,h.PAIR_SF,1.7249,1.725,inject_gen=4)
+        self.assertTrue(r['pass'],r)
 
 if __name__=='__main__':unittest.main()
