@@ -71,6 +71,10 @@ struct ObservationAudit {
   uint8_t used = 0;
   uint32_t all_rx = 0, overflow = 0;
   uint32_t accounted_rx = 0, outside_before = 0, outside_after = 0;
+  uint32_t candidate_rx = 0;
+  uint32_t pre_tx_drain_frames = 0;
+  uint64_t pre_tx_drain_end_us = 0, pre_tx_gap_us = 0;
+  bool pre_tx_queue_empty = false, pre_tx_gap_ok = false;
   uint64_t window_start_us = 0;
   bool window_set = false;
   bool owner_confirmed = false;
@@ -93,6 +97,8 @@ struct ObservationAudit {
       ++outside_after;return;
     }
     ++all_rx;
+    if (ext && !rtr && DiagnosticPolicy::allowedResponseId(id))
+      ++candidate_rx;
     unsigned slot = used;
     for (unsigned i = 0; i < used; ++i)
       if (ids[i] == id && extended[i] == (ext ? 1U : 0U)) slot = i;
@@ -250,6 +256,7 @@ class CanMonitor {
   uint32_t stage_epoch_ = 0, revoked_stage_epoch_ = 0; // tx_gate_ protected
   bool stage_authorized_ = false; // tx_gate_ protected
   bool stage_s1_consumed_ = false; // TX attempt consumes sole right
+  uint64_t stage_submit_us_ = 0;
   char last_error_[96] = "not started";
 };
 

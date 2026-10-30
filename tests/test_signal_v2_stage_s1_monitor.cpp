@@ -73,7 +73,10 @@ void s1TestOnDriverUninstall(){
   if(!tx_ms.empty())g_test_millis+=7;
 }
 esp_err_t twai_get_status_info(twai_status_info_t* info){
-  if(info)info->msgs_to_rx=static_cast<uint32_t>(rx.size());
+  if(info)info->msgs_to_rx=static_cast<uint32_t>(
+      std::count_if(rx.begin(),rx.end(),[](const Scheduled& s){
+        return s.at<=g_test_millis;
+      }));
   return ESP_OK;
 }
 esp_err_t twai_receive(twai_message_t *m,TickType_t wait){
@@ -88,7 +91,7 @@ esp_err_t twai_receive(twai_message_t *m,TickType_t wait){
     }
     return ESP_OK;
   }
-  g_test_millis+=wait;return ESP_FAIL;
+  g_test_millis+=wait;return ESP_ERR_TIMEOUT;
 }
 esp_err_t twai_transmit(const twai_message_t*,TickType_t){
   {

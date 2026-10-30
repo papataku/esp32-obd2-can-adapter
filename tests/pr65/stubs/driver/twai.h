@@ -5,6 +5,7 @@ using esp_err_t=int;
 #define ESP_OK 0
 #define ESP_FAIL -1
 #define ESP_ERR_INVALID_STATE -2
+#define ESP_ERR_TIMEOUT -3
 using twai_mode_t=int;
 #define TWAI_MODE_LISTEN_ONLY 0
 #define TWAI_MODE_NORMAL 1

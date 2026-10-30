@@ -499,6 +499,7 @@ bool CanMonitor::beginStageS1(uint32_t epoch) {
     stage_epoch_ = epoch;
     stage_authorized_ = true;
     stage_s1_consumed_ = false;
+    stage_submit_us_ = 0;
   }
   xSemaphoreGive(tx_gate_);
   return accepted;
@@ -594,12 +595,69 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
     return ESP_FAIL;
   }
   stage_s1_consumed_=true;
+  // M-11: the sole S1 TX right is consumed before any pre-TX RX drain.
+  // Acquire/check and driver submission remain on the STOP tx_gate_.
+  // Never call the complete RX accounting path while holding that gate:
+  // RX faults must be allowed to revoke the lease without recursion.
+  uint32_t pre_drain_count=0;
+  bool queue_drained=false;
+  for (uint32_t i=0;i<=cfg::kTwaiRxQueueLen;++i) {
+    twai_message_t pending{};
+    const esp_err_t rc=twai_receive(&pending,0);
+    if (rc==ESP_ERR_TIMEOUT) {queue_drained=true;break;}
+    if (rc!=ESP_OK || i==cfg::kTwaiRxQueueLen) break;
+    ++pre_drain_count;
+    xSemaphoreGive(tx_gate_);
+    captureMessage(pending,static_cast<uint64_t>(esp_timer_get_time()));
+    if (xSemaphoreTake(tx_gate_,portMAX_DELAY)!=pdTRUE) return ESP_FAIL;
+    if (fault_locked_ || !stage_authorized_ ||
+        stage_epoch_<=revoked_stage_epoch_ || !leaseAllowsBudget(wait_ms)) {
+      xSemaphoreGive(tx_gate_);
+      return ESP_FAIL;
+    }
+  }
+  twai_status_info_t pre_status{};
+  const bool pre_status_ok=twai_get_status_info(&pre_status)==ESP_OK;
+  const uint64_t pre_drain_end_us=static_cast<uint64_t>(esp_timer_get_time());
+  const bool pre_empty=queue_drained && pre_status_ok && !pre_status.msgs_to_rx;
+  portENTER_CRITICAL(&stats_mux_);
+  if(audit_.active) {
+    audit_.pre_tx_drain_frames=pre_drain_count;
+    audit_.pre_tx_drain_end_us=pre_drain_end_us;
+    audit_.pre_tx_queue_empty=pre_empty;
+  }
+  portEXIT_CRITICAL(&stats_mux_);
+  if (!pre_empty || fault_locked_ || !stage_authorized_ ||
+      stage_epoch_<=revoked_stage_epoch_ || !leaseAllowsBudget(wait_ms)) {
+    xSemaphoreGive(tx_gate_);
+    return ESP_FAIL;
+  }
+  // A pre-submit gap over 500us fails before the driver can accept TX.
+  const uint64_t pre_submit_us=static_cast<uint64_t>(esp_timer_get_time());
+  if (pre_submit_us<pre_drain_end_us ||
+      pre_submit_us-pre_drain_end_us>500ULL) {
+    xSemaphoreGive(tx_gate_);
+    return ESP_FAIL;
+  }
 #endif
   portENTER_CRITICAL(&stats_mux_);
   ++stats_.tx_attempts;
   portEXIT_CRITICAL(&stats_mux_);
   const esp_err_t result =
       twai_transmit(&message, pdMS_TO_TICKS(wait_ms));
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+  if(result==ESP_OK) {
+    stage_submit_us_=static_cast<uint64_t>(esp_timer_get_time());
+    const uint64_t gap=stage_submit_us_>=pre_drain_end_us ?
+        stage_submit_us_-pre_drain_end_us : UINT64_MAX;
+    portENTER_CRITICAL(&stats_mux_);
+    if(audit_.active) {
+      audit_.pre_tx_gap_us=gap;
+      audit_.pre_tx_gap_ok=gap<=500ULL;
+    }
+    portEXIT_CRITICAL(&stats_mux_);
+  }
+#endif
   if (tx_gate_) xSemaphoreGive(tx_gate_);
   // A TX result is one software submission event, not a physical wire
   // timestamp. Cache responses and dry-run TX are never fabricated as TX.
@@ -756,7 +814,11 @@ void CanMonitor::performQuery(
       diagnostic_pacer_.noteSuccessfulTx(request, tx_us);
       // Taken after the driver accepted the frame (twai_transmit may wait
       // up to 20 ms), so an observation window never starts before it.
-      submitted_us = static_cast<uint64_t>(esp_timer_get_time());
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+      submitted_us=stage_submit_us_;
+#else
+      submitted_us=static_cast<uint64_t>(esp_timer_get_time());
+#endif
       if (request.signal_v2 && request.length==3)
         setObservationWindow(submitted_us);
     }
