@@ -253,6 +253,16 @@ void printStats(const Stats& s, uint32_t fps) {
 void setup() {
   holdTxdHigh(); // First application action. Never sample before asserting HIGH.
   first_hold_observation=snapshot(false);
+  auto hold_policy=first_hold_observation;
+  hold_policy.rx_route=true;
+  hold_policy.controller_listen_only=true;
+  hold_policy.running=true;
+  if (!passive::safe(hold_policy)) {
+    Serial.begin(115200);
+    Serial.setTxTimeoutMs(10);
+    failClosed("first_hold",unsafeField(hold_policy),0,first_hold_observation);
+    return;
+  }
   // Dial's HOLD pin keeps power on; display touches only GPIO4..9.
   gpio_set_level(static_cast<gpio_num_t>(46),1);
   gpio_set_direction(static_cast<gpio_num_t>(46),GPIO_MODE_OUTPUT);
