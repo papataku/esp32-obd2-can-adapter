@@ -106,7 +106,7 @@ int main(int argc,char** argv) {
   fake_ms=100; assert(check()); assert(stats.bus_errors==7 && stats.arb_lost==9);
   fake_ms=200;
   if (fault.rfind("route",0)==0) GPIO.func_out_sel_cfg[std::stoi(fault.substr(5))].func_sel=TWAI_TX_IDX;
-  else if (fault=="output") GPIO.out=0;
+  else if (fault=="output" || fault=="display-clobber") GPIO.out=0;
   else if (fault=="pad") pad_high=false;
   else if (fault=="enable") GPIO.enable=0;
   else if (fault=="inversion") GPIO.func_out_sel_cfg[13].inv_sel=1;
