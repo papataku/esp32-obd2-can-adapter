@@ -241,16 +241,26 @@ def evaluate(scenario, events):
     # cannot admit (M-02/M-04/M-06). No driver events since the fence means
     # the driver was started before the trace began.
     admissible = {}
+    tx_running = {}
     life = {}
     for x in board:
         boot = x.get("boot")
         st = life.setdefault(boot, {"auth": None, "state": "running", "gen": None, "broken": False})
         k = "busoff" if x["kind"] == "command" and x.get("command") == "BUSOFF" else x["kind"]
+        if k in ("install", "start", "stop", "uninstall", "busoff"):
+            # M-07: every lifecycle event carries the current driver
+            # generation; install must advance it. A driver started before the
+            # fence adopts the first observed event's generation.
+            if k == "install":
+                st["broken"] |= st["state"] != "uninstalled" or (
+                    st["gen"] is not None and x.get("gen", 0) <= st["gen"])
+                st["state"], st["gen"] = "stopped", x.get("gen")
+                continue
+            if st["gen"] is None:
+                st["gen"] = x.get("gen")
+            st["broken"] |= x.get("gen") != st["gen"]
         if k in ("arm", "stopped"):
             st["auth"] = k
-        elif k == "install":
-            st["broken"] |= st["state"] != "uninstalled"
-            st["state"], st["gen"] = "stopped", x.get("gen")
         elif k == "start":
             st["broken"] |= st["state"] != "stopped"
             st["state"] = "running"
@@ -262,9 +272,13 @@ def evaluate(scenario, events):
             st["state"] = "uninstalled"
         elif k == "busoff":
             st["state"] = "busoff"
-        elif k == "rx":
-            admissible[x["seq"]] = (st["auth"] == "arm" and not st["broken"] and st["state"] == "running"
-                                    and (st["gen"] is None or x.get("gen") == st["gen"]))
+        elif k in ("rx", "tx"):
+            running = (not st["broken"] and st["state"] == "running"
+                       and (st["gen"] is None or x.get("gen") == st["gen"]))
+            if k == "rx":
+                admissible[x["seq"]] = st["auth"] == "arm" and running
+            else:
+                tx_running[x["seq"]] = running
     def admitted_while_running(e):
         return admissible.get(e["seq"], False)
     def reconcile(extra_refusal=lambda e, w: False):
@@ -312,7 +326,8 @@ def evaluate(scenario, events):
     admitted = Counter((str(e.get("gen")), rx_line(e["id"], e["data"], bool(e["ext"]))[len("HIL RX 0 "):])
                        for e in rxs if e["ok"])
     generation_bound = not (admitted - bound)
-    tx_allowed = all(e.get("ext") == 1 and e["id"] == ECU_TX and e.get("dlc") == 8 and
+    tx_allowed = all(tx_running.get(e["seq"], False) for e in txs if e["ok"])
+    tx_allowed &= all(e.get("ext") == 1 and e["id"] == ECU_TX and e.get("dlc") == 8 and
                      e["data"] in (PROBE.ljust(8, b"\0"), GROUP.ljust(8, b"\0"), b"\x30" + b"\0"*7)
                      for e in txs)
     probe_txs = [e for e in txs if e["data"][:4] == PROBE]

@@ -252,10 +252,10 @@ class R66j(unittest.TestCase):
         events=rearm_trace()
         # The second group completes (final CF + sample) before the race STOP.
         add=adder(events,1)
-        events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_CF[1],True,1),write_t=.2599,
-                           from_t=.251,from_gen=1))
-        add(.26,'rx',id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_CF[1],ok=1)
-        add(.261,'sample',epoch='1',quality='0',speed='0',rpm='1000',source='18DAF101',observed_us='260000')
+        events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_CF[1],True,1),write_t=.4229,
+                           from_t=.421,from_gen=1))
+        add(.423,'rx',id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_CF[1],ok=1)
+        add(.424,'sample',epoch='1',quality='0',speed='0',rpm='1000',source='18DAF101',observed_us='423000')
         self.assertFalse(h.evaluate('rearm',renumber(events))['checks']['epoch_separation'])
 
     def test_m06_admission_uses_the_installed_generation(self):
@@ -269,5 +269,31 @@ class R66j(unittest.TestCase):
         for t,k in ((1.7101,'stop'),(1.7102,'install'),(1.7103,'start')):
             adder(events,3)(t,k)
         self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['transport_complete'])
+
+class R66k(unittest.TestCase):
+    """Ninth independent review M-07, M-08 (ChatGPT, 2026-10-30)."""
+    def restart(self,start_gen):
+        events=overlap_trace()
+        for t,k,g in ((1.69,'stop',2),(1.691,'uninstall',2),(1.692,'install',3),(1.693,'start',start_gen)):
+            adder(events,g)(t,k)
+        return h.evaluate('overlap',renumber(events))
+
+    def test_m07_lifecycle_event_generation_must_match(self):
+        self.assertTrue(self.restart(3)['pass'])
+        self.assertFalse(self.restart(2)['checks']['transport_complete'])
+
+    def test_m07_install_must_advance_generation(self):
+        events=overlap_trace()
+        for t,k,g in ((1.69,'stop',3),(1.691,'uninstall',3),(1.692,'install',3),(1.693,'start',3)):
+            adder(events,g)(t,k)
+        self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['transport_complete'])
+
+    def test_m08_successful_tx_requires_running_driver(self):
+        events=overlap_trace()
+        adder(events,3)(1.709,'stop');adder(events,3)(1.7105,'start')
+        self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['tx_allowlist'])
+        ok=overlap_trace()
+        adder(ok,3)(1.708,'stop');adder(ok,3)(1.709,'start')
+        r=h.evaluate('overlap',renumber(ok));self.assertTrue(r['pass'],r)
 
 if __name__=='__main__':unittest.main()
