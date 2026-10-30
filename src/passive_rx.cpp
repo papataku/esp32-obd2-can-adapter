@@ -108,8 +108,10 @@ passive::Snapshot snapshot(bool running) {
   s.txd_mux_gpio=((iomux >> MCU_SEL_S) & MCU_SEL_V) == PIN_FUNC_GPIO;
   s.txd_input_enabled=(iomux & FUN_IE) != 0;
   s.txd_push_pull=!GPIO.pin[passive::kTxd].pad_driver;
-  s.txd_awake=!(iomux & SLP_SEL) &&
-      !(REG_READ(RTC_IO_TOUCH_PAD13_REG) & RTC_IO_TOUCH_PAD13_MUX_SEL);
+  s.iomux_sleep_sel=(iomux & SLP_SEL)!=0;
+  s.rtc_touch13_mux_sel=
+      (REG_READ(RTC_IO_TOUCH_PAD13_REG) & RTC_IO_TOUCH_PAD13_MUX_SEL)!=0;
+  s.txd_awake=!s.iomux_sleep_sel && !s.rtc_touch13_mux_sel;
   const auto input=GPIO.func_in_sel_cfg[TWAI_RX_IDX].val;
   s.rx_route=(input & 0xFFU) == (passive::kRx | (1U<<7));
   s.controller_listen_only=installed && TWAI.mode_reg.lom && !TWAI.mode_reg.stm && !TWAI.mode_reg.rm;
@@ -213,12 +215,14 @@ void printFault(const FaultEvidence& f) {
       "#PASSIVE_FAULT,stage=%s,field=%s,code=%d,no_tx_routes=%u,txd_gpio=%u,"
       "txd_enabled=%u,txd_latch_high=%u,txd_pad_high=%u,txd_mux_gpio=%u,"
       "txd_input_enabled=%u,txd_push_pull=%u,txd_awake=%u,rx_route=%u,"
-      "controller_listen_only=%u,running=%u\n",
+      "controller_listen_only=%u,running=%u,iomux_sleep_sel=%u,"
+      "rtc_touch13_mux_sel=%u\n",
       f.stage,f.field,f.code,
       unsigned(s.no_tx_routes),unsigned(s.txd_gpio),unsigned(s.txd_enabled),
       unsigned(s.txd_latch_high),unsigned(s.txd_pad_high),unsigned(s.txd_mux_gpio),
       unsigned(s.txd_input_enabled),unsigned(s.txd_push_pull),unsigned(s.txd_awake),
-      unsigned(s.rx_route),unsigned(s.controller_listen_only),unsigned(s.running));
+      unsigned(s.rx_route),unsigned(s.controller_listen_only),unsigned(s.running),
+      unsigned(s.iomux_sleep_sel),unsigned(s.rtc_touch13_mux_sel));
 }
 Stats readStats() {
   portENTER_CRITICAL(&mux); const Stats s=stats; portEXIT_CRITICAL(&mux);
