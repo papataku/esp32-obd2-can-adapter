@@ -37,6 +37,40 @@ class PassiveProfile(unittest.TestCase):
         self.assertIn('spi_bus_initialize(SPI3_HOST',source)
         self.assertIn('heap_caps_malloc(512',source)
         self.assertIn('display.dmaReady()',source)
+    def test_i2c_elf_link_guard_negative_injections(self):
+        # The actual linked Arduino core contains harmless Wire singleton,
+        # TwoWire::end, and i2cIsInit: only pin-init/attach must fail.
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            fake_elf=root/'firmware.elf'
+            fake_elf.write_bytes(b'elf-symbol-guard-test')
+            sym=root/'nm-symbols.txt'
+            mock_nm=root/'mock-nm'
+            mock_nm.write_text('#!/bin/sh\\ncat "'+str(sym)+'"\\n')
+            mock_nm.chmod(0o755)
+            required=('twai_driver_install','twai_start','twai_stop',
+                      'twai_driver_uninstall','twai_receive','twai_get_status_info')
+            clean=[f'00000000 T {name}' for name in required]
+            clean.extend(('00000000 B Wire', '00000000 T TwoWire::end()',
+                          '00000000 T i2cIsInit'))
+            def invoke(extra):
+                sym.write_text('\\n'.join(clean+extra)+'\\n')
+                return subprocess.run(
+                    ['python3',str(ROOT/'tools/check_passive_elf.py'),
+                     str(fake_elf),'--nm',str(mock_nm)],
+                    capture_output=True,text=True)
+            result=invoke([])
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            for symbol in ('TwoWire::begin(int, int)', 'TwoWire::setPins(int, int)',
+                           'i2cInit', 'i2c_driver_install',
+                           'i2c_param_config', 'i2c_new_master_bus',
+                           'lgfx::v1::i2c::init(int)'):
+                with self.subTest(symbol=symbol):
+                    result=invoke(['00000000 T '+symbol])
+                    self.assertNotEqual(result.returncode,0,symbol)
+                    self.assertIn('FORBIDDEN passive ELF symbol',
+                                  result.stdout+result.stderr)
+
     def test_forbidden_sdk_paths_fail_even_in_dead_code(self):
         # The fake SDK declaration verifies poisoning AFTER the SDK include.
         with tempfile.TemporaryDirectory() as d:
