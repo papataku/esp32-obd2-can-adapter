@@ -176,8 +176,8 @@ void manage(const char *cmd, uint32_t now) {
     return;
   }
   if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {
-#if defined(M5CAN_SIGNAL_V2_RP8_PROFILE)
-    // Owner decision O-1 (review B-02): in the vehicle-capable RP8 build a
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+    // Owner decision O-1 (review B-02): in the vehicle-capable staged build a
     // generic ARM is not a vehicle-stage authorization. S1 has its own
     // command; S2/S3 stay unreachable until their explicit stages exist.
     Serial.println("#SIGNALV2_CAN,armed=0,reason=STAGE_AUTHORIZATION_REQUIRED");

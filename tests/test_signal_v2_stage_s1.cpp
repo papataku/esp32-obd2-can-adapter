@@ -93,6 +93,14 @@ int main(){
     o.tick(0,none,true,1);
     assert(!o.stageS1()&&!o.busy()); // ARM without demand does nothing
   }
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+  {// B-04: in the staged build a generic ARM with demand never transmits.
+    m5can::CanMonitor m;CanOwner o;o.attach(&m);
+    const auto n=submits;
+    for(uint32_t t=0;t<3000;t+=100)o.tick(t,demand,true,1);
+    assert(!o.busy()&&submits==n&&o.samples().acquired==0);
+  }
+#endif
   {// Combined SF: recorded, never pinned, never followed by a group request.
     m5can::CanMonitor m;CanOwner o;o.attach(&m);s1(o);
     const auto n=submits;

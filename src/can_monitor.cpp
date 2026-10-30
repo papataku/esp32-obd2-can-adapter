@@ -166,17 +166,11 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   if (frame.extended) ++stats_.ext_frames;
   else ++stats_.std_frames;
   if (frame.rtr) ++stats_.rtr_frames;
-  audit_.note(frame.identifier, frame.extended, frame.rtr, frame.dlc, frame.data);
-  const bool audit_overflowed = audit_.overflowed_now;
-  audit_.overflowed_now = false;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(!frame.extended && !frame.rtr && frame.identifier>=0x7E8 &&
       frame.identifier<=0x7EF)++stats_.std_obd_responses;
 #endif
   portEXIT_CRITICAL(&stats_mux_);
-  // An unaccounted RX ID ends the S1 evidence: forbid any further TX at
-  // the lower gate immediately, not on the next owner tick (review M-04).
-  if (audit_overflowed) revokeLease();
 
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(frame.extended &&
@@ -214,6 +208,17 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
     enterFaultLocked("V2 RX queue loss");
 #endif
   }
+  // S1 audit last (review M-07): a frame enters the observation window only
+  // after all of its counters (candidate RX, drops) are updated, so an
+  // audit snapshot never contains a frame whose loss is not yet counted.
+  portENTER_CRITICAL(&stats_mux_);
+  audit_.note(frame.identifier, frame.extended, frame.rtr, frame.dlc, frame.data);
+  const bool audit_overflowed = audit_.overflowed_now;
+  audit_.overflowed_now = false;
+  portEXIT_CRITICAL(&stats_mux_);
+  // An unaccounted RX ID ends the S1 evidence: latch TX off at the lower
+  // gate so no lease can be re-acquired (reviews M-04/B-05).
+  if (audit_overflowed) enterFaultLocked("S1 observation audit overflow");
   return frame;
 }
 

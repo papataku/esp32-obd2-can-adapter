@@ -80,7 +80,7 @@ struct ObservationAudit {
       ids[slot] = id; extended[slot] = ext ? 1U : 0U; ++used;
     }
     const unsigned pci = (!rtr && dlc) ? (data[0] >> 4) : 0xF;
-    ++counts[slot][pci <= 3 ? pci : Other];
+    ++counts[slot][pci <= 3 ? pci : static_cast<unsigned>(Other)];
   }
 };
 

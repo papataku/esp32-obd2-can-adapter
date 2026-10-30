@@ -361,6 +361,13 @@ public:
     }
     prior_bus_errors_=s.driver_bus_error;
     if(s1_){s1Tick(now);return;} // Independent of BLE demand; never LIVE.
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+    // Owner decision O-1 / review B-04: in the vehicle-capable staged build the
+    // owner itself refuses any non-S1 transmission, independent of how the
+    // armed flag and epoch were observed by the caller.
+    can_->revokeLease();
+    return;
+#endif
     bool has_demand=false;period_=10000;
     for(auto p:demand)if(p){
       has_demand=true;
