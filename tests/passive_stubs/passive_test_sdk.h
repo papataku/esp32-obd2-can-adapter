@@ -133,7 +133,7 @@ class LGFX_Device {
   void setPanel(Panel_GC9A01*) {}
   bool init() { return display_ok; }
   void setBrightness(int) {}
-  void fillScreen(int) {} void setTextDatum(int) {} void setTextColor(int,int) {}
+  void fillScreen(int) { assert(display_ok); } void setTextDatum(int) {} void setTextColor(int,int) {}
   void drawString(const char*,int,int,int*) {}
 };
 }
