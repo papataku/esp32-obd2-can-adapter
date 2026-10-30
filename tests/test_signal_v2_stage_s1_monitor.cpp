@@ -191,12 +191,18 @@ int main(){
   {
     CanMonitor monitor;assert(monitor.begin());g_test_millis=100;
     tx_ms.clear();assert(monitor.beginStageS1(7));assert(monitor.acquireLease(550));
+    DiagnosticRequest grouped=probe();grouped.length=5;grouped.data[1]=0x0D;
+    assert(!monitor.submitQuery(grouped));
+    twai_message_t flow_control=frame(0x18DA01F1U,{0x30,0,0,0,0,0,0,0});
+    assert(signal_v2::CanOwnerTestAccess::transmit(monitor,flow_control)!=ESP_OK);
     twai_message_t group=frame(0x18DA01F1U,{5,1,0x0D,0x0C,5,0x5B,0,0});
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,group)!=ESP_OK);
     assert(tx_ms.empty());
     const twai_message_t s1=frame(0x18DA01F1U,{3,1,0x0C,0x0D,0,0,0,0});
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)==ESP_OK);
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)!=ESP_OK);
+    assert(!monitor.submitQuery(probe()));
+    assert(!monitor.acquireLease(550));
     assert(tx_ms.size()==1);
   }
 
@@ -211,6 +217,30 @@ int main(){
     audit.note(0x0CF00400U,true,false,8,data,1200000); // exclusive
     assert(audit.accounted_rx==4 && audit.all_rx==2);
     assert(audit.outside_before==1 && audit.outside_after==1);
+  }
+
+  // M-09: ambient RX before driver submission and after the 1s boundary
+  // cannot be silently included when the owner's final tick is delayed.
+  {
+    CanMonitor monitor;assert(monitor.begin());signal_v2::CanOwner owner;
+    owner.attach(&monitor);SerialStub::lines.clear();rx.clear();tx_ms.clear();
+    g_test_millis=0;owner.requestStageS1(1);owner.tick(0,none,true,1);
+    g_test_millis=199;
+    signal_v2::CanOwnerTestAccess::capture(
+      monitor,frame(0x0CF00400U,{0xFF,0,0,0,0,0,0,0}));
+    g_test_millis=200;audit_owner=&monitor;
+    DiagnosticResult result{};signal_v2::CanOwnerTestAccess::perform(monitor,probe(),result);
+    signal_v2::CanOwnerTestAccess::complete(owner,result);
+    g_test_millis=1200;
+    signal_v2::CanOwnerTestAccess::capture(
+      monitor,frame(0x0CF00400U,{0xFF,0,0,0,0,0,0,0}));
+    owner.tick(1300,none,true,1);
+    const std::string line=record();
+    assert(owner.stopped());
+    assert(line.find("outside_pre=1")!=std::string::npos);
+    assert(line.find("outside_post=1")!=std::string::npos);
+    assert(line.find("all_rx=0")!=std::string::npos);
+    assert(line.find("complete=1")!=std::string::npos);
   }
   // M-08 A: driver RX returned successfully, CAN owner paused before
   // captureMessage. The Arduino STOP cannot certify the snapshot.
