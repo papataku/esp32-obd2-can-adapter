@@ -28,7 +28,7 @@ int main(int argc,char** argv) {
       fault=="before-sleep" || fault=="before-mux" || fault=="before-input" ||
       fault=="stopped-rx" || fault=="start-nolom" || fault=="status-boot" ||
       fault=="display-low" || fault=="display-route" ||
-      fault=="display-clobber-stuck");
+      fault=="display-clobber" || fault=="display-clobber-stuck");
   if (early) {
     assert(stats.fault && !stats.verified && !installed);
     assert(fault_evidence.captured);
@@ -43,6 +43,7 @@ int main(int argc,char** argv) {
     else if (fault=="display-low") { stage="post_display_unsafe"; field="txd_latch_high"; }
     else if (fault=="display-route") { stage="post_display_unsafe"; field="txd_gpio"; }
     else if (fault=="display-clobber-stuck") { stage="post_display_unsafe"; field="txd_gpio"; }
+    else if (fault=="display-clobber") { stage="post_display_unsafe"; field="txd_gpio"; }
     else {
       stage="first_hold";
       if (fault=="before-pad") field="txd_pad_high";
@@ -83,16 +84,13 @@ int main(int argc,char** argv) {
     return 0;
   }
   assert(fresh(readStats()) && calls.back()=="task");
-  if (fault=="display-clobber") {
-    assert(display_reasserted);
-    assert(first_hold_observation.txd_gpio && first_hold_observation.txd_enabled);
-    assert(!display_observation.txd_gpio && !display_observation.txd_enabled);
-    assert(display_observation.txd_latch_high && display_observation.txd_pad_high);
-    const auto final_snapshot=snapshot(true);
-    assert(passive::safe(final_snapshot));
-    printBootEvidence();
-    assert(Serial.output.find("reassert=1")!=std::string::npos);
-  } else assert(!display_reasserted);
+  assert(!display_reasserted);
+  assert(!lcd_auto_attached_gpio13);
+  assert(lcd_spi_host==SPI3_HOST);
+  // Successful LCD init never changed the GPIO13 output/pad.
+  assert(display_observation.txd_gpio && display_observation.txd_enabled);
+  assert(display_observation.txd_pad_high && display_observation.txd_latch_high);
+  assert(first_hold_observation.txd_gpio && first_hold_observation.txd_enabled);
   Serial.input="SIGV2 CAN ARM\nARM\nLEASE 1000\nATM5TX1\nSTATS\n";
   loop();
   assert(Serial.output.find("#REJECT,PASSIVE_IMMUTABLE")!=std::string::npos);
@@ -106,7 +104,7 @@ int main(int argc,char** argv) {
   fake_ms=100; assert(check()); assert(stats.bus_errors==7 && stats.arb_lost==9);
   fake_ms=200;
   if (fault.rfind("route",0)==0) GPIO.func_out_sel_cfg[std::stoi(fault.substr(5))].func_sel=TWAI_TX_IDX;
-  else if (fault=="output" || fault=="display-clobber") GPIO.out=0;
+  else if (fault=="output") GPIO.out=0;
   else if (fault=="pad") pad_high=false;
   else if (fault=="enable") GPIO.enable=0;
   else if (fault=="inversion") GPIO.func_out_sel_cfg[13].inv_sel=1;

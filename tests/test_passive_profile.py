@@ -23,6 +23,10 @@ class PassiveProfile(unittest.TestCase):
         self.assertNotIn('M5Dial.begin(',source)
         self.assertNotIn('M5.begin(',source)
         self.assertIn('display.init()',source)
+        # Guard the exact M5GFX SPI2/default-MISO path that reset TXD.
+        self.assertIn('b.spi_host=SPI3_HOST',source)
+        self.assertNotIn('b.spi_host=SPI2_HOST',source)
+        self.assertIn('b.pin_miso=-1',source)
         self.assertIn('general.tx_queue_len=0',source)
     def test_forbidden_sdk_paths_fail_even_in_dead_code(self):
         # The fake SDK declaration verifies poisoning AFTER the SDK include.

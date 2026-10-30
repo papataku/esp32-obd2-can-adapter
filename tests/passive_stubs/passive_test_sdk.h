@@ -115,11 +115,21 @@ namespace fonts { inline int Font2=0; }
 #define TFT_WHITE 3
 #define middle_center 0
 #define SPI2_HOST 2
+#define SPI3_HOST 3
 #define SPI_DMA_CH_AUTO 3
+// Model Arduino-ESP32 2.0.17 SPI2 MISO=-1 -> GPIO13.
+inline int lcd_spi_host=-1;
+inline bool lcd_auto_attached_gpio13=false;
 namespace lgfx {
 struct Bus_SPI {
   struct Config { int spi_host,spi_mode,freq_write,freq_read,dma_channel,pin_sclk,pin_mosi,pin_miso,pin_dc; bool spi_3wire,use_lock; };
-  Config config() { return {}; } void config(Config) {}
+  Config config() { return {}; }
+  void config(Config c) {
+    assert(c.spi_host==SPI2_HOST || c.spi_host==SPI3_HOST);
+    assert(c.pin_sclk==6 && c.pin_mosi==5 && c.pin_miso==-1 &&
+           c.pin_dc==4 && c.spi_3wire);
+    lcd_spi_host=c.spi_host;
+  }
 };
 struct Light_PWM {
   struct Config { int pin_bl,freq,pwm_channel; bool invert; };
@@ -135,6 +145,15 @@ class LGFX_Device {
  public:
   void setPanel(Panel_GC9A01*) {}
   bool init() {
+    assert(lcd_spi_host==SPI2_HOST || lcd_spi_host==SPI3_HOST);
+    if (lcd_spi_host==SPI2_HOST) {
+      // Arduino SPIClass::begin(6,-1,5) invokes spiAttachMISO(-1).
+      // On ESP32-S3 FSPI -1 selects GPIO13 and pinMode(INPUT).
+      GPIO.enable &= ~(1U<<13);
+      GPIO.func_out_sel_cfg[13].val=0;
+      pad_high=false;
+      lcd_auto_attached_gpio13=true;
+    }
     if (display_disables_gpio13) {
       if (display_clobber_external_low) stuck_pad_low=true;
       assert(GPIO.out & (1U<<13));
