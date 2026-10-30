@@ -33,6 +33,10 @@ def flags_by_env():
 def active(flags,name):
     return any(re.fullmatch("-D"+re.escape(name)+r"(?:=.+)?",x) for x in flags)
 
+def stage_one(flags):
+    return (flags.count("-DM5CAN_SIGNAL_V2_STAGE_GATED=1")==1 and
+            not any(x.startswith("-U" + "M5CAN_SIGNAL_V2_STAGE_GATED") for x in flags))
+
 class SerialHilB01(unittest.TestCase):
     def test_b01_serial_hil_is_isolated_unstaged(self):
         config,flags=flags_by_env()
@@ -64,12 +68,12 @@ class SerialHilB01(unittest.TestCase):
                 self.assertEqual(env,HIL,"serial HIL flag must not leak")
                 self.assertTrue(v2)
             elif v2 and not disabled:
-                self.assertTrue(active(defs,"M5CAN_SIGNAL_V2_STAGE_GATED"),
-                                (env,"vehicle-capable V2 missing stage gate"))
+                self.assertTrue(stage_one(defs),
+                                (env,"vehicle-capable V2 must define STAGE_GATED=1"))
         self.assertEqual(exceptions,[HIL])
         for env in ("env:m5dial_signal_v2_can_29bit_5hz_lab",
                     "env:m5dial_signal_v2_can_29bit_10hz_lab"):
-            self.assertTrue(active(flags[env],"M5CAN_SIGNAL_V2_STAGE_GATED"))
+            self.assertTrue(stage_one(flags[env]))
 
     def test_b01_compiled_real_owner_arm_group_fresh(self):
         _,flags=flags_by_env()
