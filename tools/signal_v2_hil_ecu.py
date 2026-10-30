@@ -276,11 +276,16 @@ def evaluate(scenario, events):
             running = (not st["broken"] and st["state"] == "running"
                        and (st["gen"] is None or x.get("gen") == st["gen"]))
             if k == "rx":
-                admissible[x["seq"]] = st["auth"] == "arm" and running
+                # M-12: the shim admits whenever its driver is RUNNING with
+                # the current generation, independent of the logical CAN
+                # authorization; a late frame after STOP may be received but
+                # must never become Fresh data (sample/packet checks below).
+                admissible[x["seq"]] = running
             else:
                 tx_running[x["seq"]] = running
     def admitted_while_running(e):
         return admissible.get(e["seq"], False)
+    order = {id(x): i for i, x in enumerate(events)}
     def reconcile(extra_refusal=lambda e, w: False):
         slots = Counter(predicted)
         pending, ok, deliberate = [], True, 0
@@ -306,6 +311,9 @@ def evaluate(scenario, events):
             if True:
                 key = (w["from_t"], w.get("from_gen"), line)
                 cause = next((t for t in txs if t["t"] == w["from_t"] and t.get("gen") == w.get("from_gen")), None)
+                # M-11: the causing TX must be recorded before the write.
+                if cause is not None and order[id(cause)] > order[id(w)]:
+                    cause = None
                 if cause is None or slots[key] <= 0:
                     ok = False
                     continue
@@ -338,6 +346,17 @@ def evaluate(scenario, events):
     epochs = [int(e.get("epoch", 0)) for e in arms]
     epoch_ok = bool(arms) and all(e.get("ok") == "1" for e in arms) and all(epochs)
     epoch_ok &= len(set((e.get("boot"), e.get("epoch")) for e in arms)) == len(epochs)
+    # M-09: discovery runs from each ARM until that epoch's first group TX;
+    # an FC there is never valid, whatever the scenario.
+    discovery_fc = False
+    in_discovery = False
+    for x in board:
+        if x["kind"] == "arm":
+            in_discovery = True
+        elif x["kind"] == "tx" and x["data"][:7] == GROUP:
+            in_discovery = False
+        elif x["kind"] == "tx" and x["data"][:1] == b"\x30" and in_discovery:
+            discovery_fc = True
     tx_after_stop = 0
     for e in txs:
         previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault")]
@@ -433,7 +452,21 @@ def evaluate(scenario, events):
         retry_ok &= all(e["ok"] == 1 for e in txs)
     for gate in ("owner","monitor"):
         retry_ok &= len([e for e in gates if e.get("gate") == gate]) == len(txs)-len(fc_txs)
-    gate_ok = all(e.get("cost") in ("800", "2400") and int(e.get("used100", 99999)) <= 5000 and
+    # M-10: each non-FC TX is preceded (since the previous non-FC TX) by
+    # exactly one owner and one monitor reservation of the request's cost:
+    # 800 bits for a probe/essential read, 2,400 bits for a group.
+    pending_gates = []
+    paired_gates = True
+    for x in board:
+        if x["kind"] == "gate":
+            pending_gates.append(x)
+        elif x["kind"] == "tx" and x["data"][:1] != b"\x30":
+            cost = "800" if x["data"][:4] == PROBE else "2400"
+            got = sorted((g.get("gate"), g.get("cost")) for g in pending_gates)
+            paired_gates &= got == [("monitor", cost), ("owner", cost)]
+            pending_gates = []
+    paired_gates &= not pending_gates or scenario == "admission"
+    gate_ok = paired_gates and all(e.get("cost") in ("800", "2400") and int(e.get("used100", 99999)) <= 5000 and
                   int(e.get("used1000", 99999)) <= 25000 for e in gates)
     for boot in {e.get("boot") for e in arms}:
         for gate in ("owner", "monitor"):
@@ -529,7 +562,7 @@ def evaluate(scenario, events):
         "no_tx_after_stop": tx_after_stop == 0,
         "no_functional_tx": not any(e["id"] in (0x7DF, 0x18DB33F1) for e in raw_txs),
         "tx_allowlist": tx_allowed,
-        "no_fc_on_probe_ff": scenario not in ("ff_probe", "cf_probe", "malformed", "extra", "duplicate", "wrong_src", "eleven_bit", "negative", "late", "noreply") or not fc_txs,
+        "no_fc_on_probe_ff": (scenario not in ("ff_probe", "cf_probe", "malformed", "extra", "duplicate", "wrong_src", "eleven_bit", "negative", "late", "noreply") or not fc_txs) and not discovery_fc,
         "positive_acquisition": (sample_ok and healthy_first and bool(group_txs) and bool(fc_txs)) if not expect_stop or after_healthy else not samples,
         "sustained_cadence": sustained if scenario in ("normal", "split", "rearm") else True,
         "both_admission_gates": gate_ok and retry_ok,

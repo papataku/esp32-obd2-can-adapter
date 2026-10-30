@@ -201,12 +201,17 @@ class R66h(unittest.TestCase):
         write['text']=h.rx_line(h.ECU_RX,h.GROUP_CF[0],True,2)
         self.assertFalse(h.evaluate('rearm',events)['checks']['transport_complete'])
 
-    def test_m02_no_admission_after_completed_stop(self):
+    def test_m02_m12_late_rx_after_stop_is_received_but_never_fresh(self):
+        # M-12 supersedes M-02: the shim admits while its driver runs, even
+        # after the logical STOP; that frame must never become Fresh data.
         events=overlap_trace();add=adder(events,4)
         events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.PAIR_SF,True,4),write_t=1.7249,
                            from_t=1.71,from_gen=3))
         add(1.725,'rx',id=h.ECU_RX,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=1)
-        self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['transport_complete'])
+        r=h.evaluate('overlap',renumber(copy.deepcopy(events)));self.assertTrue(r['pass'],r)
+        add(1.73,'packet',type='33',epoch='4',fresh='1',current='1',source_generation='5',mode_epoch='5',
+            pdu_source_generation='5',pdu_mode_epoch='5',pdu_source='18DAF101',pdu_mixed='0')
+        self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['epoch_separation'])
 
     def test_m01b_only_one_deliberate_rearm_injection(self):
         events=rearm_trace();add=adder(events,2)
@@ -295,5 +300,29 @@ class R66k(unittest.TestCase):
         ok=overlap_trace()
         adder(ok,3)(1.708,'stop');adder(ok,3)(1.709,'start')
         r=h.evaluate('overlap',renumber(ok));self.assertTrue(r['pass'],r)
+
+class R66l(unittest.TestCase):
+    """Tenth independent review M-09..M-11 (ChatGPT, 2026-10-30)."""
+    def test_m09_fc_during_discovery_fails_in_every_scenario(self):
+        events=trace();add=adder(events,1)
+        add(.03,'tx',id=h.ECU_TX,ext=1,dlc=8,data=b'\x30'+b'\0'*7,ok=1)
+        self.assertFalse(h.evaluate('normal',renumber(events))['checks']['no_fc_on_probe_ff'])
+
+    def test_m10_group_reservation_must_be_2400_before_its_tx(self):
+        events=trace()
+        for g in [e for e in events if e['kind']=='gate' and e['cost']=='2400'][:2]:
+            g['cost']='800'
+        self.assertFalse(h.evaluate('normal',events)['checks']['both_admission_gates'])
+        late=trace()
+        g=next(e for e in late if e['kind']=='gate' and e['cost']=='2400' and e['gate']=='owner')
+        tx=next(e for e in late if e['kind']=='tx' and e['seq']>g['seq'])
+        g['t']=tx['t']+.0001;g['t_us']=str(round(g['t']*1e6))
+        self.assertFalse(h.evaluate('normal',renumber(late))['checks']['both_admission_gates'])
+
+    def test_m11_write_before_its_cause_tx_fails(self):
+        events=trace()
+        w=next(e for e in events if e['kind']=='write' and e.get('from_t')==.02)
+        events.remove(w);events.insert(0,w)
+        self.assertFalse(h.evaluate('normal',events)['checks']['transport_complete'])
 
 if __name__=='__main__':unittest.main()
