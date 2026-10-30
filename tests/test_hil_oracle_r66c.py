@@ -448,4 +448,47 @@ class R66n(unittest.TestCase):
 
 
 
+
+class R66o(unittest.TestCase):
+    """M-17: sample source/mode generations must be causally fresh after STOP."""
+
+    def test_m17_rearm_post_stop_sample_generation_must_exceed_stop_ack(self):
+        events=rearm_trace()
+        samples=[e for e in events if e['kind']=='sample'
+                 and e.get('epoch')=='3' and e['t']>2.0]
+        self.assertTrue(samples)
+        for e in samples:
+            e['source_generation']='2'
+            e['mode_epoch']='2'
+        r=h.evaluate('rearm',events)
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['group_sample_causality'],r)
+        self.assertFalse(r['checks']['epoch_separation'],r)
+
+    def test_m17_same_epoch_sample_generation_regression_fails(self):
+        events=trace()
+        samples=[e for e in events if e['kind']=='sample']
+        self.assertGreater(len(samples),2)
+        samples[1]['source_generation']='1'
+        samples[1]['mode_epoch']='1'
+        r=h.evaluate('normal',events)
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['group_sample_causality'],r)
+
+    def test_m17_same_epoch_unexplained_generation_jump_fails(self):
+        events=trace()
+        sample=next(e for e in events if e['kind']=='sample')
+        sample['source_generation']='9'
+        sample['mode_epoch']='9'
+        r=h.evaluate('normal',events)
+        self.assertFalse(r['pass'],r)
+        self.assertFalse(r['checks']['group_sample_causality'],r)
+
+    def test_m17_valid_rearm_new_generation_passes(self):
+        r=h.evaluate('rearm',rearm_trace())
+        self.assertTrue(r['pass'],r)
+        self.assertTrue(r['checks']['group_sample_causality'],r)
+        self.assertTrue(r['checks']['epoch_separation'],r)
+
+
 if __name__=='__main__':unittest.main()
