@@ -627,6 +627,27 @@ class R66q(unittest.TestCase):
         r=h.evaluate("rearm",renumber(events))
         self.assertTrue(r["pass"],r)
 
+    def test_m20_internal_fault_stop_ack_jump_rejected_without_sample(self):
+        events=fault_trace("noreply")
+        first=next(e for e in events if e["kind"]=="stopped" and e["t"]==.21)
+        first["source_generation"]="99";first["mode_epoch"]="99"
+        r=h.evaluate("noreply",events)
+        self.assertFalse(r["pass"],r)
+        self.assertFalse(r["checks"]["epoch_separation"],r)
+
+    def test_m20_initial_stop_proof_missing_or_mismatched_rejected(self):
+        for mutation in ("missing","nonnumeric","request_epoch","seq","boot"):
+            events=trace()
+            proof=next(e for e in events if e["kind"]=="initial_stop_evidence")
+            if mutation=="missing":proof.pop("mode_epoch")
+            elif mutation=="nonnumeric":proof["source_generation"]="oops"
+            elif mutation=="request_epoch":proof["request_epoch"]="5"
+            elif mutation=="seq":proof["ack_seq"]=proof["request_seq"]
+            else:proof["boot"]="badboot"
+            r=h.evaluate("normal",events)
+            self.assertFalse(r["pass"],(mutation,r))
+            self.assertFalse(r["checks"]["epoch_separation"],(mutation,r))
+
     def test_m19_new_boot_initial_stop_then_arm_positive(self):
         # One completed sample on boot A, followed by a new boot's complete
         # independent 60s acquisition and its own startup STOP baseline.
