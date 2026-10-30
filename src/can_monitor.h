@@ -68,6 +68,7 @@ struct ObservationAudit {
   uint32_t counts[kIds][kTypes]{};
   uint8_t used = 0;
   uint32_t all_rx = 0, overflow = 0;
+  bool overflowed_now = false; // consumed by the RX path to revoke the lease
   void note(uint32_t id, bool ext, bool rtr, uint8_t dlc, const uint8_t* data) {
     if (!active) return;
     ++all_rx;
@@ -75,7 +76,7 @@ struct ObservationAudit {
     for (unsigned i = 0; i < used; ++i)
       if (ids[i] == id && extended[i] == (ext ? 1U : 0U)) slot = i;
     if (slot == used) {
-      if (used >= kIds) { ++overflow; return; }
+      if (used >= kIds) { ++overflow; overflowed_now = true; return; }
       ids[slot] = id; extended[slot] = ext ? 1U : 0U; ++used;
     }
     const unsigned pci = (!rtr && dlc) ? (data[0] >> 4) : 0xF;
@@ -93,15 +94,24 @@ class CanMonitor {
     portENTER_CRITICAL(&stats_mux_);
     audit_ = ObservationAudit{};
     audit_.active = true;
-    baseline = stats_;
+    statsLocked(baseline);
     portEXIT_CRITICAL(&stats_mux_);
   }
   void endObservationAudit(ObservationAudit& copy, CanStats& final_stats) {
     portENTER_CRITICAL(&stats_mux_);
     audit_.active = false;
     copy = audit_;
-    final_stats = stats_;
+    statsLocked(final_stats); // includes the charged-traffic windows (M-03)
     portEXIT_CRITICAL(&stats_mux_);
+  }
+  // Caller holds stats_mux_.
+  void statsLocked(CanStats& copy) const {
+    copy = stats_;
+    observed_budget_.refresh(millis());
+    copy.observed100 = observed_budget_.used100;
+    copy.observed1000 = observed_budget_.used1000;
+    copy.observed_peak100 = observed_budget_.peak100;
+    copy.observed_peak1000 = observed_budget_.peak1000;
   }
   bool observationAuditOverflowed() const {
     portENTER_CRITICAL(&stats_mux_);

@@ -167,11 +167,16 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   else ++stats_.std_frames;
   if (frame.rtr) ++stats_.rtr_frames;
   audit_.note(frame.identifier, frame.extended, frame.rtr, frame.dlc, frame.data);
+  const bool audit_overflowed = audit_.overflowed_now;
+  audit_.overflowed_now = false;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(!frame.extended && !frame.rtr && frame.identifier>=0x7E8 &&
       frame.identifier<=0x7EF)++stats_.std_obd_responses;
 #endif
   portEXIT_CRITICAL(&stats_mux_);
+  // An unaccounted RX ID ends the S1 evidence: forbid any further TX at
+  // the lower gate immediately, not on the next owner tick (review M-04).
+  if (audit_overflowed) revokeLease();
 
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(frame.extended &&
@@ -535,6 +540,7 @@ void CanMonitor::performQuery(
   }
 
   uint64_t tx_us = 0;
+  uint64_t submitted_us = 0; // Driver-accepted submission time (0 = none).
   // N1: V2 never transmits a functional broadcast, whatever its budget.
   if(!terminal_set && request.signal_v2 && request.can_id==0x18DB33F1U){
     terminal=DiagnosticStatus::RateLimited;terminal_set=true;
@@ -575,7 +581,9 @@ void CanMonitor::performQuery(
       terminal_set = true;
     } else if (!terminal_set) {
       diagnostic_pacer_.noteSuccessfulTx(request, tx_us);
-      result.request_tx_us = tx_us;
+      // Taken after the driver accepted the frame (twai_transmit may wait
+      // up to 20 ms), so an observation window never starts before it.
+      submitted_us = static_cast<uint64_t>(esp_timer_get_time());
     }
   }
 
@@ -713,6 +721,9 @@ void CanMonitor::performQuery(
     result = transaction.result();
   }
 
+  // The transaction result copies above replace the struct; restore the
+  // submission time on every path that transmitted.
+  result.request_tx_us = submitted_us;
   probe_receiving_=false; // Keep idle guard until another admitted TX.
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   updateDriverStats();
@@ -803,13 +814,9 @@ CanStats CanMonitor::stats() const {
 
 void CanMonitor::stats(CanStats& copy) const {
   portENTER_CRITICAL(&stats_mux_);
-  copy = stats_;
-  observed_budget_.refresh(millis());
-  copy.observed100=observed_budget_.used100;
-  copy.observed1000=observed_budget_.used1000;
-  copy.observed_peak100=observed_budget_.peak100;
-  copy.observed_peak1000=observed_budget_.peak1000;
+  statsLocked(copy);
   portEXIT_CRITICAL(&stats_mux_);
 }
+
 
 }  // namespace m5can

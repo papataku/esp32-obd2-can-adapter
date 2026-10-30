@@ -205,6 +205,21 @@ int main(){
     o.tick(20,demand,true,1);assert(o.stopped());
     assert(record().find("stop=S1_AUDIT_OVERFLOW")!=std::string::npos);
   }
+  {// N-01: the first cause wins when several end events race.
+    m5can::CanMonitor m;CanOwner o;o.attach(&m);s1(o);
+    o.noteAuthorizationEnd("OPERATOR_STOP");o.noteAuthorizationEnd("CENTRAL_DISCONNECT");
+    o.tick(100,none,false,2);
+    assert(record().find("stop=OPERATOR_STOP")!=std::string::npos);
+  }
+  {// M-05: granted but superseded before the owner saw it: explicit record.
+    m5can::CanMonitor m;CanOwner o;o.attach(&m);SerialStub::lines.clear();
+    const auto n=submits;
+    o.requestStageS1(2);o.noteAuthorizationEnd("CENTRAL_DISCONNECT");
+    o.tick(10,none,false,3);
+    assert(submits==n&&!o.stageS1());
+    const auto r=record();
+    assert(r.find("#SIGNALV2_S1,epoch=2,requests=0,outcome=NOT_STARTED,stop=CENTRAL_DISCONNECT,complete=0")!=std::string::npos);
+  }
   assert(functional==0);
   std::cout<<"PR-C2 stage S1 single observation PASS\n";
 }

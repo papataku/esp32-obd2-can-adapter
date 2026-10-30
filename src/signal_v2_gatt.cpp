@@ -176,6 +176,13 @@ void manage(const char *cmd, uint32_t now) {
     return;
   }
   if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {
+#if defined(M5CAN_SIGNAL_V2_RP8_PROFILE)
+    // Owner decision O-1 (review B-02): in the vehicle-capable RP8 build a
+    // generic ARM is not a vehicle-stage authorization. S1 has its own
+    // command; S2/S3 stay unreachable until their explicit stages exist.
+    Serial.println("#SIGNALV2_CAN,armed=0,reason=STAGE_AUTHORIZATION_REQUIRED");
+    return;
+#endif
     bool secured=false;
     for(unsigned i=0;i<2;++i){
       auto l=snapshot(i);
@@ -193,6 +200,10 @@ void manage(const char *cmd, uint32_t now) {
   // never implied by ARM. Requires the same secured central and an idle
   // owner; bounded by the 1s observation plus the 3s fail-safe.
   if(!std::strcmp(cmd,"SIGV2 CAN S1")) {
+    // Snapshot the epoch before checking the secured link: a disconnect at
+    // any later point bumps it, and the compare-exchange below then refuses
+    // to authorize (review B-01, linearizes check -> grant).
+    const uint32_t seen=can_authorization_epoch.load();
     bool secured=false;
     for(unsigned i=0;i<2;++i){
       auto l=snapshot(i);
@@ -200,11 +211,14 @@ void manage(const char *cmd, uint32_t now) {
          peers[i].session.active(now)) secured=true;
     }
     bool accepted=secured && !can_armed && !owner.busy();
+    uint32_t expected=seen;
+    if(accepted && !can_authorization_epoch.compare_exchange_strong(expected,seen+1))
+      accepted=false; // a disconnect/STOP intervened after the snapshot
     if(accepted){
-      // Bind the request to the epoch it creates. A disconnect callback that
-      // runs before or during this block bumps the epoch, so the request can
-      // never be consumed and the stale arm is withdrawn (review F1).
-      const uint32_t epoch=can_authorization_epoch.fetch_add(1)+1;
+      // Bind the request to the epoch it creates; a disconnect after this
+      // point bumps the epoch, so the request is never consumed and the
+      // stale arm is withdrawn (review F1).
+      const uint32_t epoch=seen+1;
       owner.requestStageS1(epoch);
       can_armed=true;
       armed_until=now+5000;

@@ -95,6 +95,8 @@ class CanOwner {
   void s1Tick(uint32_t now){
     // Any frame beyond the fixed per-ID capacity is unaccounted evidence.
     if(can_->observationAuditOverflowed()){stop("S1_AUDIT_OVERFLOW",10);return;}
+    // (The monitor itself also revokes the lease the moment the audit
+    // overflows, so a request already queued cannot be transmitted; M-04.)
     if(s1_sent_){
       if(in_flight_){
         // A transaction ends 120 ms after TX; no completion within the
@@ -253,7 +255,10 @@ public:
   // Called with the authorization epoch increment of `SIGV2 CAN S1` only.
   void requestStageS1(uint32_t epoch){s1_requested_epoch_.store(epoch);}
   // Record why authorization is ending before the caller bumps the epoch.
-  void noteAuthorizationEnd(const char* reason){s1_end_reason_.store(reason);}
+  void noteAuthorizationEnd(const char* reason){
+    const char* none=nullptr;
+    s1_end_reason_.compare_exchange_strong(none,reason); // keep the first cause (N-01)
+  }
   bool stageS1()const{return s1_;}
   const CanSamples &samples()const{return samples_;}
   bool stopped()const{return stopped_;}
@@ -270,6 +275,13 @@ public:
       if(s1_&&!s1_reported_){
         const char* why=s1_end_reason_.load();
         reportS1(why?why:"EPOCH_CHANGED");
+      }else if(s1_requested_epoch_.load() && s1_requested_epoch_.load()!=epoch){
+        const uint32_t pending=s1_requested_epoch_.load();
+        // Granted but superseded before this task ever observed its epoch
+        // (review M-05): no TX happened; record that explicitly.
+        const char* why=s1_end_reason_.load();
+        Serial.printf("#SIGNALV2_S1,epoch=%lu,requests=0,outcome=NOT_STARTED,stop=%s,complete=0\n",
+          (unsigned long)pending,why?why:"EPOCH_CHANGED");
       }
       s1_end_reason_.store(nullptr);
       epoch_=epoch;
