@@ -12,6 +12,7 @@
 #include "twai_hil.h"
 #endif
 #include <array>
+#include <atomic>
 #include <cstring>
 namespace signal_v2 {
 // Runs only in BLE application owner task, never inside a NimBLE callback.
@@ -34,6 +35,20 @@ class CanOwner {
   uint32_t probe_target_=0,discovery_started_=0;
   uint8_t probe_index_=0,verified_count_=0;
   bool discovery_running_=false;
+  // PR-C2 stage S1 (owner decision O-1): an explicitly requested, separate
+  // authorization. One physical 0C/0D request, 1,000 ms receive/count window,
+  // automatic STOP. Never pins an ECU, never publishes a value.
+  static constexpr uint32_t kS1ObservationMs=1000;
+  bool s1_=false,s1_sent_=false,s1_reported_=false;
+  // A stage request is bound to the exact authorization epoch it created
+  // (review F1); any later epoch (disconnect, STOP) cannot consume it.
+  std::atomic<uint32_t> s1_requested_epoch_{0};
+  // Why the authorization ended, set by the GATT side before it bumps the
+  // epoch (review F3). Atomic: disconnect runs on the NimBLE task.
+  std::atomic<const char*> s1_end_reason_{nullptr};
+  uint32_t s1_started_=0,s1_enqueued_at_=0,s1_tx_ms_=0;
+  const char* s1_outcome_="NOT_SENT";
+  m5can::CanStats s1_base_{};
   void stop(const char* reason,uint8_t quality=10){
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
     if(!stopped_)hil::note("kind=fault,epoch=%lu,reason=%s",(unsigned long)epoch_,reason);
@@ -43,7 +58,117 @@ class CanOwner {
       reason,static_cast<unsigned long>(samples_.invalidations));
     if(!stopped_){++samples_.source_generation;++samples_.mode_epoch;}
     stopped_=true;
-    if(can_)can_->revokeLease();
+    if(can_){
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+      can_->revokeStageAuthorization(epoch_);
+#else
+      can_->revokeLease();
+#endif
+    }
+    if(s1_)reportS1(reason);
+  }
+  // One parseable record per S1 epoch. complete=0 rejects the evidence.
+  void reportS1(const char* reason){
+    if(s1_reported_||!can_)return;
+    s1_reported_=true;
+    m5can::ObservationAudit audit{};
+    m5can::CanStats s{};
+    can_->endObservationAudit(audit,s); // Same boundary as the per-ID counts.
+    const auto d=[](uint64_t now,uint64_t base){return now>=base?now-base:0ULL;};
+    // M-07: reject closure during a partially processed RX, or a window
+    // where the global RX counter and ID audit span different frames.
+    const bool rx_consistent=!audit.rx_inflight_at_end &&
+      s.rx_frames>=s1_base_.rx_frames &&
+      s.rx_frames-s1_base_.rx_frames==static_cast<uint64_t>(audit.accounted_rx)
+      && audit.window_set;
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+    const bool pre_tx_certified=audit.pre_tx_queue_empty && audit.pre_tx_gap_ok;
+#else
+    const bool pre_tx_certified=true;
+#endif
+    const bool lossless=pre_tx_certified && rx_consistent && audit.owner_confirmed &&
+      !audit.pending_rx_at_close && !audit.blind_open && !audit.overflow &&
+      s.driver_rx_missed==s1_base_.driver_rx_missed &&
+      s.driver_rx_overrun==s1_base_.driver_rx_overrun && s.app_queue_drops==s1_base_.app_queue_drops &&
+      s.driver_bus_error==s1_base_.driver_bus_error;
+    const bool complete=lossless && s1_tx_ms_ && !std::strcmp(reason,"S1_OBSERVATION_COMPLETE");
+    Serial.printf("#SIGNALV2_S1,epoch=%lu,start_ms=%lu,enqueue_ms=%lu,request_ms=%lu,end_ms=%lu,requests=%u,"
+      "fc=%llu,all_rx=%lu,candidate_rx=%lu,candidate_rx_total=%llu,tx_attempts=%llu,tx_success=%llu,"
+      "rx_missed=%lu,rx_overrun=%lu,queue_drops=%llu,bus_error=%lu,"
+      "reserved_peak100=%lu,reserved_peak1000=%lu,charged_peak100=%lu,charged_peak1000=%lu,"
+      "id_overflow=%lu,rx_counted=%llu,rx_inflight_end=%lu,outside_pre=%lu,outside_post=%lu,window_start_us=%llu,pre_tx_drain_frames=%lu,pre_tx_queue_empty=%u,pre_tx_drain_end_us=%llu,pre_tx_gap_us=%llu,pre_tx_gap_ok=%u,owner_confirmed=%u,rx_pending_end=%lu,blind_count=%lu,blind_start_us=%llu,blind_end_us=%llu,blind_total_us=%llu,blind_open=%u,outcome=%s,stop=%s,complete=%u\n",
+      (unsigned long)epoch_,(unsigned long)s1_started_,(unsigned long)s1_enqueued_at_,(unsigned long)s1_tx_ms_,
+      (unsigned long)millis(),s1_sent_?1U:0U,
+      (unsigned long long)d(s.signal_v2_fc,s1_base_.signal_v2_fc),(unsigned long)audit.all_rx,
+      (unsigned long)audit.candidate_rx,
+      (unsigned long long)d(s.signal_v2_rx,s1_base_.signal_v2_rx),
+      (unsigned long long)d(s.tx_attempts,s1_base_.tx_attempts),
+      (unsigned long long)d(s.tx_success,s1_base_.tx_success),
+      (unsigned long)(s.driver_rx_missed-s1_base_.driver_rx_missed),
+      (unsigned long)(s.driver_rx_overrun-s1_base_.driver_rx_overrun),
+      (unsigned long long)d(s.app_queue_drops,s1_base_.app_queue_drops),
+      (unsigned long)(s.driver_bus_error-s1_base_.driver_bus_error),
+      (unsigned long)budget_.peak100,(unsigned long)budget_.peak1000,
+      (unsigned long)s.observed_peak100,(unsigned long)s.observed_peak1000,
+      (unsigned long)audit.overflow,
+      (unsigned long long)d(s.rx_frames,s1_base_.rx_frames),
+      (unsigned long)audit.rx_inflight_at_end,
+      (unsigned long)audit.outside_before,
+      (unsigned long)audit.outside_after,
+      (unsigned long long)audit.window_start_us,
+      (unsigned long)audit.pre_tx_drain_frames,
+      audit.pre_tx_queue_empty?1U:0U,
+      (unsigned long long)audit.pre_tx_drain_end_us,
+      (unsigned long long)audit.pre_tx_gap_us,
+      audit.pre_tx_gap_ok?1U:0U,
+      audit.owner_confirmed?1U:0U,
+      (unsigned long)audit.pending_rx_at_close,
+      (unsigned long)audit.blind_count,
+      (unsigned long long)audit.blind_start_us,
+      (unsigned long long)audit.blind_end_us,
+      (unsigned long long)audit.blind_total_us,
+      audit.blind_open?1U:0U,
+      s1_outcome_,reason,complete?1U:0U);
+    for(unsigned i=0;i<audit.used;++i)
+      Serial.printf("#SIGNALV2_S1_ID,epoch=%lu,id=%08lX,ext=%u,sf=%lu,ff=%lu,cf=%lu,fc=%lu,other=%lu\n",
+        (unsigned long)epoch_,(unsigned long)audit.ids[i],unsigned(audit.extended[i]),
+        (unsigned long)audit.counts[i][0],(unsigned long)audit.counts[i][1],
+        (unsigned long)audit.counts[i][2],(unsigned long)audit.counts[i][3],
+        (unsigned long)audit.counts[i][4]);
+  }
+  void s1Tick(uint32_t now){
+    // Any frame beyond the fixed per-ID capacity is unaccounted evidence.
+    if(can_->observationAuditOverflowed()){stop("S1_AUDIT_OVERFLOW",10);return;}
+    // (The monitor itself also revokes the lease the moment the audit
+    // overflows, so a request already queued cannot be transmitted; M-04.)
+    if(s1_sent_){
+      if(in_flight_){
+        // A transaction ends 120 ms after TX; no completion within the
+        // window means the observation cannot be bounded (review F2).
+        if(uint32_t(now-s1_enqueued_at_)>=kS1ObservationMs)stop("S1_NO_COMPLETION",10);
+        return;
+      }
+      // The window is measured from the actual driver submission time.
+      if(int32_t(now-s1_tx_ms_)>=int32_t(kS1ObservationMs))
+        stop("S1_OBSERVATION_COMPLETE",6);
+      return;
+    }
+    if(in_flight_)return; // A previous epoch's completion is discarded first.
+    if(DiscoveryProfile::kCount!=1){stop("NO_APPROVED_CANDIDATE",6);return;}
+    const EcuRoute route=DiscoveryProfile::kCandidates[0].route();
+    if(!route.enabledForThisTrial()){stop("WRONG_CAN_ADDRESSING",6);return;}
+    if(!budget_.reserve(now,CanBudget::ProbeFrames,120)){stop("LOAD_BUDGET_DISCOVERY");return;}
+    m5can::DiagnosticRequest req{};
+    req.signal_v2=true;req.timeout_ms=120;
+    req.can_id=route.request_id;req.length=3;
+    req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
+    probe_target_=route.response_id;
+    if(!can_->acquireLease(550)||!can_->submitQuery(req)){
+      stop("QUERY_ADMISSION_FAILED",10);return;
+    }
+    s1_sent_=true;s1_enqueued_at_=now;
+    discovery_running_=true;discovery_started_=now;
+    physical_=false;essential_=false;submitted_epoch_=epoch_;in_flight_=true;
   }
   void pin(uint32_t response_id){
     if(!ecu_.pinBoundedPhysical(response_id)){stop("WRONG_CAN_ADDRESSING",6);return;}
@@ -87,6 +212,15 @@ class CanOwner {
   // the exact contract (FF/CF, extra, duplicate, negative, wrong source,
   // driver/budget error) latches STOP; never assemble a partial success.
   void probeResult(const m5can::DiagnosticResult& r){
+    if(s1_){
+      if(!r.request_tx_us){s1_outcome_="NOT_TRANSMITTED";stop("S1_NOT_TRANSMITTED",10);return;}
+      s1_tx_ms_=uint32_t(r.request_tx_us/1000ULL);
+      if(r.status==m5can::DiagnosticStatus::NoData &&
+         !r.response_count && !r.raw_frame_count)s1_outcome_="NO_RESPONSE";
+      else if(validProbe(r,probe_target_))s1_outcome_="SINGLE_FRAME_CONTRACT";
+      else{s1_outcome_="CONTRACT_VIOLATION";stop("DISCOVERY_RESPONSE_CONTRACT",6);}
+      return; // Observation continues; S1 never pins or requests again.
+    }
     if(r.status==m5can::DiagnosticStatus::NoData &&
        !r.response_count && !r.raw_frame_count){
     }else if(validProbe(r,probe_target_)){
@@ -170,16 +304,46 @@ class CanOwner {
   }
 public:
   void attach(m5can::CanMonitor* can){can_=can;}
+  // Called with the authorization epoch increment of `SIGV2 CAN S1` only.
+  void requestStageS1(uint32_t epoch){s1_requested_epoch_.store(epoch);}
+  // Record why authorization is ending before the caller bumps the epoch.
+  void noteAuthorizationEnd(const char* reason){
+    const char* none=nullptr;
+    s1_end_reason_.compare_exchange_strong(none,reason); // keep the first cause (N-01)
+  }
+  bool stageS1()const{return s1_;}
   const CanSamples &samples()const{return samples_;}
   bool stopped()const{return stopped_;}
   bool busy()const{return in_flight_;}
-  void revokeAuthorization(){if(can_)can_->revokeLease();}
+  void revokeAuthorization(uint32_t revoked_epoch=0){
+    if(!can_)return;
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+    if(revoked_epoch){can_->revokeStageAuthorization(revoked_epoch);return;}
+#else
+    (void)revoked_epoch;
+#endif
+    can_->revokeLease();
+  }
   void invalidate(uint8_t reason=10){samples_.invalidate(reason);if(can_)can_->revokeLease();}
   void tick(uint32_t now,const Simulator::Demand &demand,bool armed,uint32_t epoch=0){
     if(!can_)return;
     // Optional edge-derived epoch preserves callers outside the GATT boundary.
     if(!epoch)epoch=epoch_+(armed!=previously_armed_);
     if(epoch!=epoch_){
+      // An interrupted S1 (operator STOP, expiry, disconnect) emits its record
+      // with its own epoch and cause before the state is replaced (F3).
+      if(s1_&&!s1_reported_){
+        const char* why=s1_end_reason_.load();
+        reportS1(why?why:"EPOCH_CHANGED");
+      }else if(s1_requested_epoch_.load() && s1_requested_epoch_.load()!=epoch){
+        const uint32_t pending=s1_requested_epoch_.load();
+        // Granted but superseded before this task ever observed its epoch
+        // (review M-05): no TX happened; record that explicitly.
+        const char* why=s1_end_reason_.load();
+        Serial.printf("#SIGNALV2_S1,epoch=%lu,requests=0,outcome=NOT_STARTED,stop=%s,complete=0\n",
+          (unsigned long)pending,why?why:"EPOCH_CHANGED");
+      }
+      s1_end_reason_.store(nullptr);
       epoch_=epoch;
       invalidate(10);
       ++samples_.source_generation; ++samples_.mode_epoch;
@@ -189,6 +353,17 @@ public:
       discovery_running_=false;discovery_started_=0;
       if(armed)stopped_=false;
       had_demand_=false;next_=now;
+      // A stage request applies only to the epoch it created.
+      s1_=armed&&s1_requested_epoch_.load()==epoch;
+      s1_requested_epoch_.store(0);
+      s1_sent_=s1_reported_=false;s1_outcome_="NOT_SENT";
+      s1_started_=now;s1_enqueued_at_=s1_tx_ms_=0;
+      if(s1_){
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+        if(!can_->beginStageS1(epoch_)){stop("S1_AUTH_REVOKED",10);return;}
+#endif
+        can_->beginObservationAudit(s1_base_);
+      }
     }
     if(armed && !stopped_) {
       const auto health=can_->stats();
@@ -250,6 +425,14 @@ public:
       stop("TWAI_BUS_ERROR",10);return;
     }
     prior_bus_errors_=s.driver_bus_error;
+    if(s1_){s1Tick(now);return;} // Independent of BLE demand; never LIVE.
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+    // Owner decision O-1 / review B-04: in the vehicle-capable staged build the
+    // owner itself refuses any non-S1 transmission, independent of how the
+    // armed flag and epoch were observed by the caller.
+    can_->revokeLease();
+    return;
+#endif
     bool has_demand=false;period_=10000;
     for(auto p:demand)if(p){
       has_demand=true;

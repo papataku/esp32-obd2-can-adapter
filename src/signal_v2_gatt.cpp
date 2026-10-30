@@ -166,7 +166,9 @@ class Callbacks : public NimBLECharacteristicCallbacks {
 void manage(const char *cmd, uint32_t now) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(!std::strcmp(cmd,"SIGV2 CAN STOP")) {
-    can_armed=false;++can_authorization_epoch;owner.invalidate(10);
+    owner.noteAuthorizationEnd("OPERATOR_STOP");
+    can_armed=false;const uint32_t revoked=++can_authorization_epoch;
+    owner.revokeAuthorization(revoked);owner.invalidate(10);
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
     hil::note("kind=stop_request,epoch=%lu",(unsigned long)can_authorization_epoch.load());
 #endif
@@ -189,6 +191,13 @@ void manage(const char *cmd, uint32_t now) {
   }
 #endif
   if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+    // Owner decision O-1 (review B-02): in the vehicle-capable staged build a
+    // generic ARM is not a vehicle-stage authorization. S1 has its own
+    // command; S2/S3 stay unreachable until their explicit stages exist.
+    Serial.println("#SIGNALV2_CAN,armed=0,reason=STAGE_AUTHORIZATION_REQUIRED");
+    return;
+#endif
     bool secured=false;
     for(unsigned i=0;i<2;++i){
       auto l=snapshot(i);
@@ -203,6 +212,38 @@ void manage(const char *cmd, uint32_t now) {
     armed_until=now+600000;
     Serial.printf("#SIGNALV2_CAN,armed=%u,reason=%s,ttl_ms=600000\n",
       can_armed?1U:0U,can_armed?"USB_VERIFIED":"NOT_READY");
+    return;
+  }
+  // PR-C2 stage S1 (owner decision O-1): its own explicit authorization,
+  // never implied by ARM. Requires the same secured central and an idle
+  // owner; bounded by the 1s observation plus the 3s fail-safe.
+  if(!std::strcmp(cmd,"SIGV2 CAN S1")) {
+    // Snapshot the epoch before checking the secured link: a disconnect at
+    // any later point bumps it, and the compare-exchange below then refuses
+    // to authorize (review B-01, linearizes check -> grant).
+    const uint32_t seen=can_authorization_epoch.load();
+    bool secured=false;
+    for(unsigned i=0;i<2;++i){
+      auto l=snapshot(i);
+      if(l.active&&l.status&&l.data&&authorized(l)&&
+         peers[i].session.active(now)) secured=true;
+    }
+    bool accepted=secured && !can_armed && !owner.busy();
+    uint32_t expected=seen;
+    if(accepted && !can_authorization_epoch.compare_exchange_strong(expected,seen+1))
+      accepted=false; // a disconnect/STOP intervened after the snapshot
+    if(accepted){
+      // Bind the request to the epoch it creates; a disconnect after this
+      // point bumps the epoch, so the request is never consumed and the
+      // stale arm is withdrawn (review F1).
+      const uint32_t epoch=seen+1;
+      owner.requestStageS1(epoch);
+      can_armed=true;
+      armed_until=now+5000;
+      if(can_authorization_epoch.load()!=epoch){can_armed=false;accepted=false;}
+    }
+    Serial.printf("#SIGNALV2_CAN,stage=S1,armed=%u,reason=%s,ttl_ms=5000\n",
+      accepted?1U:0U,accepted?"USB_VERIFIED":(secured?"BUSY_OR_ARMED":"NOT_READY"));
     return;
   }
   if(!std::strncmp(cmd,"SIGV2 DEMO ",11)) {
@@ -538,9 +579,10 @@ void disconnected(uint16_t handle) {
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
   hil::note("kind=disconnect,handle=%u",unsigned(handle));
 #endif
+  owner.noteAuthorizationEnd("CENTRAL_DISCONNECT");
   can_armed=false; // New connection requires a new local USB arm.
-  ++can_authorization_epoch; // Owner task invalidates/drains by epoch.
-  owner.revokeAuthorization(); // Thread-safe lease revoke; no sample/selector mutation.
+  const uint32_t revoked=++can_authorization_epoch;
+  owner.revokeAuthorization(revoked); // Thread-safe lease revoke; no sample/selector mutation.
 #endif
   portENTER_CRITICAL(&mux);
   for (auto &l : links)
@@ -590,7 +632,9 @@ void poll() {
   }
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(can_armed && int32_t(armed_until-now)<=0){
-    can_armed=false;++can_authorization_epoch;owner.invalidate(10);
+    owner.noteAuthorizationEnd("USB_ARM_EXPIRED");
+    can_armed=false;const uint32_t revoked=++can_authorization_epoch;
+    owner.revokeAuthorization(revoked);owner.invalidate(10);
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
     hil::note("kind=stop_request,epoch=%lu",(unsigned long)can_authorization_epoch.load());
 #endif

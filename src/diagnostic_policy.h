@@ -49,6 +49,8 @@ struct DiagnosticResult {
   // One monotonic timestamp for the ACTUAL CAN acquisition. A cache hit
   // must preserve this time, not extend freshness on each delivery.
   uint64_t completed_at_us = 0;
+  // Time the request frame was actually submitted to the driver (0 = never).
+  uint64_t request_tx_us = 0;
   uint32_t tx_to_first_response_us = 0;
   uint32_t transaction_us = 0;
   uint8_t response_count = 0;

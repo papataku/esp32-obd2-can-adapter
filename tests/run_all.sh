@@ -81,6 +81,35 @@ c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
   -o /tmp/m5can-v22-bounded-discovery
 /tmp/m5can-v22-bounded-discovery
+c++ -std=c++17 -Wall -Wextra -Werror \
+  -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 -DM5CAN_SIGNAL_V2_RP8_PROFILE=1 \
+  -Itests/host_stubs -Iinclude -Isrc \
+  tests/test_signal_v2_stage_s1.cpp src/diagnostic_policy.cpp \
+  src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
+  -o /tmp/m5can-v22-stage-s1
+/tmp/m5can-v22-stage-s1
+c++ -std=c++17 -Wall -Wextra -Werror \
+  -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 -DM5CAN_SIGNAL_V2_RP8_PROFILE=1 \
+  -DM5CAN_SIGNAL_V2_STAGE_GATED=1 \
+  -Itests/host_stubs -Iinclude -Isrc \
+  tests/test_signal_v2_stage_s1.cpp src/diagnostic_policy.cpp \
+  src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
+  -o /tmp/m5can-v22-stage-s1-gated
+/tmp/m5can-v22-stage-s1-gated
+c++ -std=c++11 -Wall -Wextra -Wno-unused-function -Werror -pthread \
+  -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 -DM5CAN_SIGNAL_V2_RP8_PROFILE=1 \
+  -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
+  -DM5CAN_TEST_S1_STOP_RACE=1 -DM5CAN_TEST_S1_BLIND_SPAN=1 \
+  -DM5CAN_TEST_S1_OWNER_BARRIER=1 \
+  -DM5CAN_SIGNAL_V2_STAGE_GATED=1 \
+  -Itests/pr65/stubs -Itests/host_stubs -Iinclude -Isrc \
+  -include tests/s1_rx_interleaving_hook.h \
+  tests/test_signal_v2_stage_s1_monitor.cpp src/can_monitor.cpp src/diagnostic_policy.cpp \
+  src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
+  src/signal_v2_can_samples.cpp src/signal_v2_discovery_profile.cpp \
+  tests/host_stubs/stubs.cpp \
+  -o /tmp/m5can-v22-stage-s1-monitor
+/tmp/m5can-v22-stage-s1-monitor
 python3 tests/test_signal_v2_elf_policy.py
 c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   -Itests/host_stubs -Iinclude -Isrc tests/test_diagnostic_review_capacity.cpp \
