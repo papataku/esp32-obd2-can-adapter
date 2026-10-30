@@ -43,6 +43,8 @@ int main(int argc,char** argv) {
     if (fault=="before-pad") assert(!fault_evidence.pins.txd_pad_high);
     if (fault=="before-rtc" || fault=="before-sleep")
       assert(!fault_evidence.pins.txd_awake);
+    if (fault=="before-rtc") assert(fault_evidence.pins.rtc_touch13_mux_sel);
+    if (fault=="before-sleep") assert(fault_evidence.pins.iomux_sleep_sel);
     if (fault=="before-mux") assert(!fault_evidence.pins.txd_mux_gpio);
     if (fault=="before-input") assert(!fault_evidence.pins.txd_input_enabled);
     if (fault=="stopped-rx") assert(!fault_evidence.pins.rx_route);
