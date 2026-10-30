@@ -27,6 +27,33 @@ identity, initialize touch/display, or probe CAN GPIO13/15. CI checks both the
 absence of **all** physical `twai_*` symbols and display autodetection symbols
 with `check_signal_v2_elf.py --hil`. Other environments keep their existing UI.
 
+**B-01 (PM decision, 2026-10-31):** The serial-HIL environment is
+deliberately separated from the vehicle-capable
+`m5dial_signal_v2_can_29bit_5hz_lab` and
+`m5dial_signal_v2_can_29bit_10hz_lab` environments. It extends the
+CAN-disabled V2 lab foundation but explicitly replaces the V2-1 hard-disabled
+build flags with the V2-2 test-only CAN owner and
+`M5CAN_SIGNAL_V2_SERIAL_HIL=1`. The serial-HIL image intentionally does
+**not** define `M5CAN_SIGNAL_V2_STAGE_GATED`, so a secured
+`SIGV2 CAN ARM` can exercise a complete GROUP/FF/FC/CF/Fresh acquisition
+**only via the USB virtual ECU**. This exception is permitted **solely if**
+the actual built serial-HIL ELF passes the mandatory CI
+`check_signal_v2_elf.py --hil` linked-symbol check, proving absence
+of linked `twai_*` physical-driver entries and display autodetection.
+A failed, omitted, skipped, or stale ELF check is NO-GO. This image
+must never be flashed to a vehicle-connected board.
+
+All V2 CAN environments with a potential physical TX route retain
+`M5CAN_SIGNAL_V2_STAGE_GATED=1`; no generic ARM can authorize physical
+CAN TX. CI evaluates the effective PlatformIO build flags of **every**
+V2 CAN environment, and the GATT source also raises a compile-time error
+for an unstaged non-HIL V2 CAN image. The host B-01 integration test compiles
+the real CanOwner with the serial-HIL environment's effective macros and
+checks ARM, physical-addressed GROUP submission, and a Fresh 5-PID sample.
+Neither the host simulation nor the ELF symbol check proves electrical
+behavior or a real BLE Central session; the latter remain separate device
+acceptance gates.
+
 The driver publishes fixed-size events into a bounded ring under the same
 spinlock as RX/lifecycle state. The CAN owner never writes USB. The USB task
 retains partial writes; full ring/truncated events latch an unrecoverable
