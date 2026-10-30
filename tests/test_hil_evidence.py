@@ -30,7 +30,7 @@ def trace(scenario='normal'):
         frame(t+.007,'tx',b'\x30'+b'\0'*7,cid=h.ECU_TX)
         frame(t+.009,'rx',h.GROUP_CF[0]);frame(t+.011,'rx',h.GROUP_CF[1])
         add(t+.02,'sample',epoch='1',quality='0',speed='0',rpm='1000',source='18DAF101',
-            observed_us=str(round((t+.011)*1e6)))
+            observed_us=str(round((t+.011)*1e6)),source_generation='2',mode_epoch='2')
     # The runner records its final operator STOP write before the request.
     events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=60.099))
     add(60.1,'stop_request',epoch='2');add(60.11,'stopped',epoch='2');add(61.2,'fence',nonce='freshend')
@@ -113,6 +113,9 @@ def rearm_trace():
         e=copy.deepcopy(e);e['t']+=1.7;e['t_us']=str(round(e['t']*1e6));e['gen']=3
         if 'observed_us' in e:e['observed_us']=str(int(e['observed_us'])+1700000)
         if 'epoch' in e:e['epoch']=str(int(e['epoch'])+2)
+        if e['kind']=='sample':
+            e['source_generation']=str(int(e['source_generation'])+2)
+            e['mode_epoch']=str(int(e['mode_epoch'])+2)
         events.append(e)
         if e['kind']=='rx':events.append(dict(kind='write',text=h.rx_line(e['id'],e['data'],True,3),write_t=e['t']-.0001))
     add(1.95,'packet',type='33',epoch='3',fresh='1',current='1',source_generation='4',mode_epoch='4',
