@@ -193,12 +193,13 @@ void CanMonitor::endObservationAudit(ObservationAudit& copy, CanStats& final_sta
   audit_.rx_inflight_at_end=rx_processing_;
   copy=audit_;
   statsLocked(final_stats);
-  portEXIT_CRITICAL(&stats_mux_);
   audit_close_requested_.store(false,std::memory_order_release);
+  portEXIT_CRITICAL(&stats_mux_);
 }
 
 void CanMonitor::processAuditCloseOnOwner() {
   if (!audit_close_requested_.load(std::memory_order_acquire)) return;
+  const uint32_t generation=audit_generation_.load(std::memory_order_acquire);
   bool certified=true;
   uint32_t pending_seen=0;
   bool drained=false;
@@ -219,11 +220,14 @@ void CanMonitor::processAuditCloseOnOwner() {
   if (!drained || twai_get_status_info(&last)!=ESP_OK || last.msgs_to_rx)
     certified=false;
   portENTER_CRITICAL(&stats_mux_);
-  audit_.owner_confirmed=certified && !pending_seen && !rx_processing_;
-  audit_.pending_rx_at_close=pending_seen+last.msgs_to_rx;
-  audit_.active=false;
+  if (audit_close_requested_.load(std::memory_order_acquire) &&
+      audit_generation_.load(std::memory_order_acquire)==generation) {
+    audit_.owner_confirmed=certified && !pending_seen && !rx_processing_;
+    audit_.pending_rx_at_close=pending_seen+last.msgs_to_rx;
+    audit_.active=false;
+    audit_close_done_.store(true,std::memory_order_release);
+  }
   portEXIT_CRITICAL(&stats_mux_);
-  audit_close_done_.store(true,std::memory_order_release);
 }
 
 void CanMonitor::rxTaskThunk(void* arg) {

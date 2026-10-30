@@ -296,7 +296,7 @@ int main(){
       std::lock_guard<std::mutex> lock(driver_mu);
       driver_block=true;driver_entered=false;driver_release=false;
     }
-    std::atomic<bool> stop_done{false};
+    std::atomic<bool> stop_entered{false},stop_done{false};
     esp_err_t tx_result=ESP_FAIL;
     std::thread tx_task([&]{
       tx_result=signal_v2::CanOwnerTestAccess::transmit(monitor,valid);
@@ -306,9 +306,12 @@ int main(){
       driver_cv.wait(lock,[] {return driver_entered;});
     }
     std::thread stop_task([&]{
+      stop_entered.store(true);
       monitor.revokeStageAuthorization(21);
       stop_done.store(true);
     });
+    // Ensure STOP actually arrived while TWAI was blocked.
+    while(!stop_entered.load())std::this_thread::yield();
     // STOP cannot complete while TWAI is still in its submission call.
     for(unsigned i=0;i<2000 && !stop_done.load();++i)std::this_thread::yield();
     assert(!stop_done.load());

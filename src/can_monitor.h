@@ -113,6 +113,7 @@ class CanMonitor {
   // boundary, so per-ID counts and counter deltas cover the same frames.
   void beginObservationAudit(CanStats& baseline) {
     portENTER_CRITICAL(&stats_mux_);
+    ++audit_generation_;
     audit_ = ObservationAudit{};
     audit_.active = true;
     statsLocked(baseline);
@@ -223,6 +224,7 @@ class CanMonitor {
   CanStats stats_{};
   uint32_t rx_processing_ = 0; // Started RX awaiting audit_.note(); stats_mux_ protected.
   ObservationAudit audit_{}; // protected by stats_mux_
+  std::atomic<uint32_t> audit_generation_{0};
   std::atomic<bool> audit_close_requested_{false};
   std::atomic<bool> audit_close_done_{false};
   RawCanCapture raw_capture_{}; // CAN-owner producer, Arduino writer consumer
