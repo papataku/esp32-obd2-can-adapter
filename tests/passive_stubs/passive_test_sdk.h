@@ -238,6 +238,9 @@ struct Panel_GC9A01 {
   void setBus(Bus_SPI*) {} void setLight(Light_PWM*) {}
 };
 inline bool display_ok=true;
+struct DisplayDraw { std::string text; int color; };
+inline std::vector<DisplayDraw> display_draws;
+inline int display_fill_count=0;
 class LGFX_Device {
  protected:
   Bus_SPI* bus_=nullptr;
@@ -287,7 +290,10 @@ class LGFX_Device {
     return display_ok;
   }
   void setBrightness(int) {}
-  void fillScreen(int) { assert(display_ok); } void setTextDatum(int) {} void setTextColor(int,int) {}
-  void drawString(const char*,int,int,int*) {}
+  int text_color=TFT_WHITE;
+  void fillScreen(int) { assert(display_ok); ++display_fill_count; }
+  void setTextDatum(int) {}
+  void setTextColor(int color,int) { text_color=color; }
+  void drawString(const char* str,int,int,int*) { display_draws.push_back({str,text_color}); }
 };
 }

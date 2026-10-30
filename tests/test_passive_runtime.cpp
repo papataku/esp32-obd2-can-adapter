@@ -107,6 +107,28 @@ int main(int argc,char** argv) {
     const std::string first_stage=fault_evidence.stage;
     const auto count=calls.size();
     fake_ms=1000; loop(); // CDC attaches late: fault is repeated, not boot-only.
+    const bool lcd_available=fault!="display" && fault!="before-pad" &&
+        fault!="before-rtc" && fault!="before-sleep" &&
+        fault!="before-mux" && fault!="before-input" &&
+        fault!="bus-init-fail" && fault!="dma-alloc-fail" &&
+        fault!="display-dma-fail" &&
+        fault!="m5gfx-device-add-fail" &&
+        fault!="m5gfx-second-bus-reinit-add-fail";
+    // The UI is not CAN permission: usable LCD must show a RED FAULT even
+    // when GPIO13 or CAN safety validation rejects receiving frames.
+    if (lcd_available) {
+      assert(lgfx::display_fill_count==1);
+      assert(std::any_of(lgfx::display_draws.begin(),lgfx::display_draws.end(),
+          [](const lgfx::DisplayDraw& d) {
+            return d.text=="PASSIVE FAULT" && d.color==TFT_RED;
+          }));
+      assert(std::none_of(lgfx::display_draws.begin(),lgfx::display_draws.end(),
+          [](const lgfx::DisplayDraw& d) {
+            return d.text=="PASSIVE (TX ISOLATED)";
+          }));
+    } else {
+      assert(lgfx::display_fill_count==0 && lgfx::display_draws.empty());
+    }
     const std::string line="#PASSIVE_FAULT,stage="+stage+",field="+field+",code=";
     assert(Serial.output.find(line)!=std::string::npos);
     assert(Serial.output.find("txd_pad_high=")!=std::string::npos);
@@ -141,7 +163,12 @@ int main(int argc,char** argv) {
   assert(stats.frames==2 && stats.standard==1 && stats.extended==1);
   receive_result=ESP_ERR_TIMEOUT; receiveOnce(); assert(stats.frames==2);
   fake_info.bus_error_count=7; fake_info.arb_lost_count=9;
-  fake_ms=100; assert(check()); assert(stats.bus_errors==7 && stats.arb_lost==9);
+  fake_ms=100; loop();
+  assert(std::any_of(lgfx::display_draws.begin(),lgfx::display_draws.end(),
+      [](const lgfx::DisplayDraw& d) {
+        return d.text=="PASSIVE (TX ISOLATED)" && d.color==TFT_GREEN;
+      }));
+  assert(check()); assert(stats.bus_errors==7 && stats.arb_lost==9);
   fake_ms=200;
   if (fault.rfind("route",0)==0) GPIO.func_out_sel_cfg[std::stoi(fault.substr(5))].func_sel=TWAI_TX_IDX;
   else if (fault=="output") GPIO.out=0;
@@ -170,6 +197,12 @@ int main(int argc,char** argv) {
   assert(GPIO.out&(1U<<13));
   const auto n=calls.size();
   assert(!check()); assert(calls.size()==n); // No restart, no second uninstall.
+  const auto drawn_before_fault=lgfx::display_draws.size();
   loop();
+  assert(std::any_of(lgfx::display_draws.begin()+drawn_before_fault,
+                     lgfx::display_draws.end(),
+      [](const lgfx::DisplayDraw& d) {
+        return d.text=="PASSIVE FAULT" && d.color==TFT_RED;
+      }));
   assert(Serial.output.find("#PASSIVE_FAULT,CAN_OFF_LATCHED")!=std::string::npos);
 }
