@@ -239,7 +239,35 @@ class R66i(unittest.TestCase):
         self.assertFalse(h.evaluate('overlap',self.overlap_with_driver('stop'))['checks']['transport_complete'])
 
     def test_m04_driver_restart_is_running_again(self):
-        r=h.evaluate('overlap',self.overlap_with_driver('stop','install','start'))
-        self.assertTrue(r['pass'],r)
+        # A real reinstall before the re-ARM: stop -> uninstall (gen 2),
+        # install -> start (gen 3); admissions then carry generation 3.
+        events=overlap_trace()
+        for t,k,g in ((1.69,'stop',2),(1.691,'uninstall',2),(1.692,'install',3),(1.693,'start',3)):
+            adder(events,g)(t,k)
+        r=h.evaluate('overlap',renumber(events));self.assertTrue(r['pass'],r)
+
+class R66j(unittest.TestCase):
+    """Eighth independent review M-05, M-06 (ChatGPT, 2026-10-30)."""
+    def test_m05_race_group_must_be_pending_at_race_stop(self):
+        events=rearm_trace()
+        # The second group completes (final CF + sample) before the race STOP.
+        add=adder(events,1)
+        events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_CF[1],True,1),write_t=.2599,
+                           from_t=.251,from_gen=1))
+        add(.26,'rx',id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_CF[1],ok=1)
+        add(.261,'sample',epoch='1',quality='0',speed='0',rpm='1000',source='18DAF101',observed_us='260000')
+        self.assertFalse(h.evaluate('rearm',renumber(events))['checks']['epoch_separation'])
+
+    def test_m06_admission_uses_the_installed_generation(self):
+        events=overlap_trace()
+        for t,k,g in ((1.7101,'stop',3),(1.7102,'uninstall',3),(1.7103,'install',4),(1.7104,'start',4)):
+            adder(events,g)(t,k)
+        self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['transport_complete'])
+
+    def test_m06_impossible_driver_transition_cannot_admit(self):
+        events=overlap_trace()
+        for t,k in ((1.7101,'stop'),(1.7102,'install'),(1.7103,'start')):
+            adder(events,3)(t,k)
+        self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['transport_complete'])
 
 if __name__=='__main__':unittest.main()

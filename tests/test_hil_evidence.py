@@ -92,6 +92,18 @@ def rearm_trace():
         if e['kind']=='rx':events.append(dict(kind='write',text=h.rx_line(e['id'],e['data'],True,1),write_t=e['t']-.0001))
     def add(t,kind,**kw):
         events.append(dict(kind=kind,t=t,t_us=str(round(t*1e6)),boot='12345678',gen=2,lost=0,text='',**kw))
+    # run(): the second group TX is followed immediately by the race STOP,
+    # so that group is still pending (FF received, no FC/CFs, no sample).
+    for g in ('owner','monitor'):
+        events.append(dict(kind='gate',t=.249,t_us='249000',boot='12345678',gen=1,lost=0,text='',
+                           gate=g,epoch='1',cost='2400',used100='2400',used1000='17600',discovery='0'))
+    events.append(dict(kind='tx',t=.251,t_us='251000',boot='12345678',gen=1,lost=0,text='',
+                       id=h.ECU_TX,ext=1,dlc=8,data=h.GROUP.ljust(8,b'\0'),ok=1))
+    events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_FF,True,1),write_t=.2559,
+                       from_t=.251,from_gen=1))
+    events.append(dict(kind='rx',t=.256,t_us='256000',boot='12345678',gen=1,lost=0,text='',
+                       id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_FF,ok=1))
+    events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=.27))
     add(.3,'stop_request',epoch='2');add(.31,'stopped',epoch='2',source_generation='3',mode_epoch='3')
     events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_CF[0],True,1),write_t=.399,deliberate=True))
     add(.4,'rx',id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_CF[0],ok=0)

@@ -235,18 +235,38 @@ def evaluate(scenario, events):
     # modelled response slot of its causing TX, whether admitted or refused.
     # from_gen is the causing TX generation; the injection generation may
     # differ after a post-STOP reinstall and is checked only for admissions.
+    # One pass per boot: authorization (arm/stopped) and the shim's driver
+    # lifecycle (install -> start -> stop -> uninstall, BUS_OFF) at each RX.
+    # An impossible transition or a generation other than the installed one
+    # cannot admit (M-02/M-04/M-06). No driver events since the fence means
+    # the driver was started before the trace began.
+    admissible = {}
+    life = {}
+    for x in board:
+        boot = x.get("boot")
+        st = life.setdefault(boot, {"auth": None, "state": "running", "gen": None, "broken": False})
+        k = "busoff" if x["kind"] == "command" and x.get("command") == "BUSOFF" else x["kind"]
+        if k in ("arm", "stopped"):
+            st["auth"] = k
+        elif k == "install":
+            st["broken"] |= st["state"] != "uninstalled"
+            st["state"], st["gen"] = "stopped", x.get("gen")
+        elif k == "start":
+            st["broken"] |= st["state"] != "stopped"
+            st["state"] = "running"
+        elif k == "stop":
+            st["broken"] |= st["state"] != "running"
+            st["state"] = "stopped"
+        elif k == "uninstall":
+            st["broken"] |= st["state"] not in ("stopped", "busoff")
+            st["state"] = "uninstalled"
+        elif k == "busoff":
+            st["state"] = "busoff"
+        elif k == "rx":
+            admissible[x["seq"]] = (st["auth"] == "arm" and not st["broken"] and st["state"] == "running"
+                                    and (st["gen"] is None or x.get("gen") == st["gen"]))
     def admitted_while_running(e):
-        # The shim admits only while installed and running: an ok=1 RX
-        # after a completed STOP and before the next ARM breaks that contract.
-        before = [x for x in board if x["seq"] < e["seq"] and x.get("boot") == e.get("boot")]
-        life = [x for x in before if x["kind"] in ("arm", "stopped")]
-        if not life or life[-1]["kind"] != "arm":
-            return False
-        # Driver state is separate from authorization (review M-04): after a
-        # driver stop/uninstall/BUS_OFF only a later start makes it RUNNING.
-        driver = [x for x in before if x["kind"] in ("install", "start", "stop", "uninstall") or
-                  (x["kind"] == "command" and x.get("command") == "BUSOFF")]
-        return not driver or driver[-1]["kind"] == "start"
+        return admissible.get(e["seq"], False)
     def reconcile(extra_refusal=lambda e, w: False):
         slots = Counter(predicted)
         pending, ok, deliberate = [], True, 0
@@ -447,8 +467,18 @@ def evaluate(scenario, events):
         # pending at the race STOP and is written after that STOP completed
         # and before the re-ARM (host order), then refused in the same interval.
         position = {id(x): i for i, x in enumerate(events)}
-        race_tx = [t for t in txs if t["seq"] < stops[0]["seq"] and t["data"][:7] == GROUP]
+        race_tx = [t for t in txs if t["seq"] < stops[0]["seq"] and t["data"][:7] == GROUP and t["ok"]]
         race_gen = str(race_tx[-1].get("gen")) if race_tx else None
+        # M-05: run() stops right after the second group TX. Require that
+        # group to be still pending at the recorded race STOP write: no final
+        # CF and no sample between it and that write.
+        race_writes = [i for i, x in enumerate(events) if x["kind"] == "write" and x["text"] == "SIGV2 CAN STOP"
+                       and race_tx and position[id(race_tx[-1])] < i < position[id(stops[0])]]
+        pending = bool(len(race_tx) >= 2 and race_writes) and not any(
+            position[id(race_tx[-1])] < position[id(x)] < race_writes[0] and
+            (x["kind"] == "sample" or (x["kind"] == "rx" and x["data"] == GROUP_CF[-1]))
+            for x in board)
+        rearm_ok &= pending
         acknowledged = reconcile(lambda e, w: e["id"] == ECU_RX and e["ext"] == 1 and e["data"] == GROUP_CF[0]
                                  and stops[0]["t"] < e["t"] < arms[-1]["t"]
                                  and w["text"].split()[2] == race_gen
