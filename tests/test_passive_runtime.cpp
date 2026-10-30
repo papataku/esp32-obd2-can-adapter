@@ -62,7 +62,7 @@ int main(int argc,char** argv) {
     assert(Serial.output.find("txd_awake=")!=std::string::npos);
     assert(Serial.output.find("controller_listen_only=")!=std::string::npos);
     assert(Serial.output.find("#PASSIVE,git=")==std::string::npos);
-    Serial.output.clear(); Serial.input="STATS\\n"; loop();
+    Serial.output.clear(); Serial.input="STATS\n"; loop();
     assert(Serial.output.find(line)!=std::string::npos);
     assert(calls.size()==count && first_stage==fault_evidence.stage);
     return 0;
