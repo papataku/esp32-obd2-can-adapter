@@ -233,6 +233,21 @@ void printFault(const FaultEvidence& f) {
       unsigned(s.rx_route),unsigned(s.controller_listen_only),unsigned(s.running),
       unsigned(s.iomux_sleep_sel),unsigned(s.rtc_touch13_mux_sel));
 }
+void printBootEvidence() {
+  Serial.printf(
+      "#PASSIVE_BOOT,first_gpio=%u,first_enabled=%u,first_pad=%u,"
+      "display_gpio=%u,display_enabled=%u,display_latch=%u,"
+      "display_pad=%u,display_no_tx_routes=%u,reassert=%u\n",
+      unsigned(first_hold_observation.txd_gpio),
+      unsigned(first_hold_observation.txd_enabled),
+      unsigned(first_hold_observation.txd_pad_high),
+      unsigned(display_observation.txd_gpio),
+      unsigned(display_observation.txd_enabled),
+      unsigned(display_observation.txd_latch_high),
+      unsigned(display_observation.txd_pad_high),
+      unsigned(display_observation.no_tx_routes),
+      unsigned(display_reasserted));
+}
 Stats readStats() {
   portENTER_CRITICAL(&mux); const Stats s=stats; portEXIT_CRITICAL(&mux);
   return s;
@@ -351,6 +366,7 @@ void loop() {
   if (uint32_t(now-report_ms)>=1000) {
     fps=uint32_t((s.frames-previous_frames)*1000ULL/uint32_t(now-report_ms));
     report_ms=now; previous_frames=s.frames; printStats(s,fps);
+    printBootEvidence();
     if (s.fault) printFault(readFaultEvidence());
   }
   // Fixed-length command buffer, bounded work per loop. Overlong input is
