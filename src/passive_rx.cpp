@@ -122,10 +122,12 @@ passive::Snapshot snapshot(bool running) {
   return s;
 }
 bool displayOutputWasHighImpedance(const passive::Snapshot& s) {
-  // All other conditions must still hold. An enabled, misrouted output
-  // cannot be silently repaired because it might have driven LOW.
+  // GPIO.enable=0 alone does not prove high-Z if GPIO Matrix output
+  // enable is peripheral-controlled. Require the sampled pad HIGH too.
+  // A sampled LOW or enabled/misrouted output is never auto-recovered.
   return s.no_tx_routes && !s.txd_enabled && s.txd_latch_high &&
-      s.txd_mux_gpio && s.txd_input_enabled && s.txd_push_pull && s.txd_awake;
+      s.txd_pad_high && s.txd_mux_gpio && s.txd_input_enabled &&
+      s.txd_push_pull && s.txd_awake;
 }
 const char* unsafeField(const passive::Snapshot& s) {
   if (!s.no_tx_routes) return "no_tx_routes";
