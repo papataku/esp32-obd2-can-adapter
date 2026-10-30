@@ -46,7 +46,7 @@ class PassiveProfile(unittest.TestCase):
             fake_elf.write_bytes(b'elf-symbol-guard-test')
             sym=root/'nm-symbols.txt'
             mock_nm=root/'mock-nm'
-            mock_nm.write_text('#!/bin/sh\\ncat "'+str(sym)+'"\\n')
+            mock_nm.write_text('#!/bin/sh\ncat "'+str(sym)+'"\n')
             mock_nm.chmod(0o755)
             required=('twai_driver_install','twai_start','twai_stop',
                       'twai_driver_uninstall','twai_receive','twai_get_status_info')
@@ -54,7 +54,7 @@ class PassiveProfile(unittest.TestCase):
             clean.extend(('00000000 B Wire', '00000000 T TwoWire::end()',
                           '00000000 T i2cIsInit'))
             def invoke(extra):
-                sym.write_text('\\n'.join(clean+extra)+'\\n')
+                sym.write_text('\n'.join(clean+extra)+'\n')
                 return subprocess.run(
                     ['python3',str(ROOT/'tools/check_passive_elf.py'),
                      str(fake_elf),'--nm',str(mock_nm)],
