@@ -8,10 +8,63 @@ int main(int argc,char** argv) {
   const std::string fault=argv[1];
   lgfx::display_ok=fault!="display";
   install_fail=fault=="install"; start_fail=fault=="start"; task_fail=fault=="task";
+  if (fault=="before-pad") pad_high=false;
+  if (fault=="before-rtc") stuck_rtc_mux=true;
+  if (fault=="before-sleep") stuck_sleep=true;
+  if (fault=="before-mux") bad_iomux=true;
+  if (fault=="before-input") bad_input=true;
+  if (fault=="stopped-rx") bad_rx_on_install=true;
+  if (fault=="start-nolom") skip_listen_on_start=true;
+  if (fault=="status-boot") status_fail=true;
   setup();
-  if (!lgfx::display_ok || install_fail || start_fail || task_fail) {
+  const bool early=(fault=="display" || fault=="install" || fault=="start" ||
+      fault=="task" || fault=="before-pad" || fault=="before-rtc" ||
+      fault=="before-sleep" || fault=="before-mux" || fault=="before-input" ||
+      fault=="stopped-rx" || fault=="start-nolom" || fault=="status-boot");
+  if (early) {
     assert(stats.fault && !stats.verified && !installed);
-    if (lgfx::display_ok && !install_fail) assert(calls.back()=="uninstall");
+    assert(fault_evidence.captured);
+    std::string stage,field;
+    if (fault=="display") { stage="display_init"; field="display.init"; }
+    else if (fault=="install") { stage="driver_install"; field="twai_driver_install"; }
+    else if (fault=="start") { stage="driver_start"; field="twai_start"; }
+    else if (fault=="task") { stage="task_create"; field="xTaskCreatePinnedToCore"; }
+    else if (fault=="stopped-rx") { stage="stopped_snapshot"; field="rx_route"; }
+    else if (fault=="start-nolom") { stage="initial_check"; field="controller_listen_only"; }
+    else if (fault=="status-boot") { stage="initial_check"; field="twai_status"; }
+    else {
+      stage="before_snapshot";
+      if (fault=="before-pad") field="txd_pad_high";
+      if (fault=="before-rtc" || fault=="before-sleep") field="txd_awake";
+      if (fault=="before-mux") field="txd_mux_gpio";
+      if (fault=="before-input") field="txd_input_enabled";
+    }
+    assert(stage==fault_evidence.stage && field==fault_evidence.field);
+    if (fault=="before-pad") assert(!fault_evidence.pins.txd_pad_high);
+    if (fault=="before-rtc" || fault=="before-sleep")
+      assert(!fault_evidence.pins.txd_awake);
+    if (fault=="before-mux") assert(!fault_evidence.pins.txd_mux_gpio);
+    if (fault=="before-input") assert(!fault_evidence.pins.txd_input_enabled);
+    if (fault=="stopped-rx") assert(!fault_evidence.pins.rx_route);
+    // Prior to start there is no controller/running status to claim.
+    if (stage=="before_snapshot") {
+      assert(!fault_evidence.pins.controller_listen_only);
+      assert(!fault_evidence.pins.running);
+    }
+    if (stage!="before_snapshot" && stage!="display_init" &&
+        stage!="driver_install") assert(calls.back()=="uninstall");
+    const std::string first_stage=fault_evidence.stage;
+    const auto count=calls.size();
+    fake_ms=1000; loop(); // CDC attaches late: fault is repeated, not boot-only.
+    const std::string line="#PASSIVE_FAULT,stage="+stage+",field="+field+",code=";
+    assert(Serial.output.find(line)!=std::string::npos);
+    assert(Serial.output.find("txd_pad_high=")!=std::string::npos);
+    assert(Serial.output.find("txd_awake=")!=std::string::npos);
+    assert(Serial.output.find("controller_listen_only=")!=std::string::npos);
+    assert(Serial.output.find("#PASSIVE,git=")==std::string::npos);
+    Serial.output.clear(); Serial.input="STATS\\n"; loop();
+    assert(Serial.output.find(line)!=std::string::npos);
+    assert(calls.size()==count && first_stage==fault_evidence.stage);
     return 0;
   }
   assert(fresh(readStats()) && calls.back()=="task");
@@ -48,6 +101,7 @@ int main(int argc,char** argv) {
   else assert(false);
   assert(!check());
   assert(stats.fault && !stats.verified && !installed);
+  assert(std::string(fault_evidence.stage)=="periodic_check");
   assert(calls[calls.size()-2]=="stop" && calls.back()=="uninstall");
   for (auto& r:GPIO.func_out_sel_cfg) assert(r.func_sel!=TWAI_TX_IDX);
   assert(GPIO.out&(1U<<13));
