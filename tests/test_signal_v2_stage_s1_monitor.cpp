@@ -142,6 +142,24 @@ int main(){
     assert(line.find("blind_open=0")!=std::string::npos);
     assert(line.find("complete=1")!=std::string::npos);
   }
+  // M-11 RED: a frame already in TWAI before physical S1 TX must NOT
+  // be relabeled as in-window just because twai_receive() returns after TX.
+  {
+    CanMonitor monitor;assert(monitor.begin());signal_v2::CanOwner owner;
+    owner.attach(&monitor);SerialStub::lines.clear();rx.clear();tx_ms.clear();
+    g_test_millis=0;owner.requestStageS1(1);owner.tick(0,none,true,1);
+    g_test_millis=200;audit_owner=&monitor;
+    rx={{200,frame(0x0CF00400U,{0xFF,0,0,0,0,0,0,0})}};
+    DiagnosticResult result{};
+    signal_v2::CanOwnerTestAccess::perform(monitor,probe(),result);
+    assert(result.request_tx_us!=0);
+    signal_v2::CanOwnerTestAccess::complete(owner,result);
+    owner.tick(1200,none,true,1);
+    const std::string evidence=record();
+    assert(owner.stopped());
+    assert(evidence.find("outside_pre=1")!=std::string::npos);
+    assert(evidence.find("all_rx=0,")!=std::string::npos);
+  }
   // M-07: a CAN frame has begun, but its audit note has not yet run.
   // A host callback emulates preemption at frame_queue_ delivery, and
   // causes the Arduino owner to close the audit before RX resumes.
