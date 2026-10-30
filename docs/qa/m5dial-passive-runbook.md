@@ -11,3 +11,10 @@
 6. `PASSIVE FAULT`、self_check異常/停止/古いSTATS、リセット、連続するbus_error/arb_lost増加、RX欠落増加、車両警告/異常があれば直ちに停車状態を確保しCANを外す。FAULTは再開不可。CAN接続中にreset/flash/ARM操作をせず、机上へ戻して原因レビューする。
 
 実装担当はflash・reset・車両接続を実施していない。ホスト試験とbuildは実機UI/配線/受信試験の代わりではない。
+
+
+## 2026-10-30 startup FAULT diagnostic addendum
+
+On a **USB-only, vehicle/CAN-disconnected bench** record the first 60–75 seconds of 115200 serial. A terminal may attach after reset; unlike the one-shot `#PASSIVE,git` greeting, an initial fault is now repeated each second as `#PASSIVE_FAULT,stage=...,field=...,code=...,` followed by the 12 snapshot booleans. `STATS` also prints the latched first fault. Copy the complete line and corresponding `#STATS` and note whether the U179 was actually present/powered; no CAN ID, payload, VIN or identity is printed. `stage=before_snapshot,field=txd_pad_high` means observed GPIO13 pad LOW; `field=txd_awake` may mean sleep or RTC mux. `stage=display_init` is an LCD init return failure. `stage=initial_check` identifies the first post-start controller/status/route check. Never infer a root cause from `checks=0` alone.
+
+A `#PASSIVE_FAULT` of any stage, or no serial/no screen, is a **NO-GO** and must not be cleared by disabling checks, retrying TX, or attaching a vehicle. Follow the original app-only/backup/hash gates for any owner-led retry. The implementation agent has not flashed or reset hardware.
