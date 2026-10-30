@@ -39,7 +39,8 @@ bool installed=false;
 uint32_t last_check=0;
 bool display_ready=false;
 // Observation only: compare GPIO13 immediately after hold with post-display.
-passive::Snapshot first_hold_observation{};
+passive::Snapshot first_hold_observation{}, display_observation{};
+bool display_reasserted=false;
 // The first fault is immutable and contains only GPIO/controller booleans.
 // It is replayed over USB because a CDC monitor can attach after setup().
 struct FaultEvidence {
@@ -119,6 +120,12 @@ passive::Snapshot snapshot(bool running) {
   s.controller_listen_only=installed && TWAI.mode_reg.lom && !TWAI.mode_reg.stm && !TWAI.mode_reg.rm;
   s.running=running;
   return s;
+}
+bool displayOutputWasHighImpedance(const passive::Snapshot& s) {
+  // All other conditions must still hold. An enabled, misrouted output
+  // cannot be silently repaired because it might have driven LOW.
+  return s.no_tx_routes && !s.txd_enabled && s.txd_latch_high &&
+      s.txd_mux_gpio && s.txd_input_enabled && s.txd_push_pull && s.txd_awake;
 }
 const char* unsafeField(const passive::Snapshot& s) {
   if (!s.no_tx_routes) return "no_tx_routes";
