@@ -21,6 +21,13 @@
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && defined(M5CAN_CAN_TX_HARD_DISABLED)
 #error "V2-2 TX-enabled image conflicts with V2-1 hard-disabled"
 #endif
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && \
+    !defined(M5CAN_SIGNAL_V2_STAGE_GATED) && !defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+#error "Vehicle-capable V2 CAN must retain S1 STAGE_GATED authorization"
+#endif
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL) && defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+#error "Serial-HIL ARM/GROUP requires an unstaged, ELF-isolated USB-only image"
+#endif
 namespace signal_v2 {
 namespace {
 struct Link {
