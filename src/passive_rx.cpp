@@ -37,6 +37,15 @@ passive::Latch latch; // Accessed only by setup, then the CAN owner.
 std::atomic<bool> request_fault{false};
 bool installed=false;
 uint32_t last_check=0;
+// The first fault is immutable and contains only GPIO/controller booleans.
+// It is replayed over USB because a CDC monitor can attach after setup().
+struct FaultEvidence {
+  bool captured=false;
+  const char* stage="none";
+  const char* field="none";
+  int code=0;
+  passive::Snapshot pins{};
+} fault_evidence;
 // Exact Dial schematic pins. Never call M5.begin / display autodetection:
 // cached or failed board detection can probe PORT.A and pulse CAN TXD.
 class DialDisplay : public lgfx::LGFX_Device {
@@ -106,7 +115,23 @@ passive::Snapshot snapshot(bool running) {
   s.running=running;
   return s;
 }
-void failClosed() {
+const char* unsafeField(const passive::Snapshot& s) {
+  if (!s.no_tx_routes) return "no_tx_routes";
+  if (!s.txd_gpio) return "txd_gpio";
+  if (!s.txd_enabled) return "txd_enabled";
+  if (!s.txd_latch_high) return "txd_latch_high";
+  if (!s.txd_pad_high) return "txd_pad_high";
+  if (!s.txd_mux_gpio) return "txd_mux_gpio";
+  if (!s.txd_input_enabled) return "txd_input_enabled";
+  if (!s.txd_push_pull) return "txd_push_pull";
+  if (!s.txd_awake) return "txd_awake";
+  if (!s.rx_route) return "rx_route";
+  if (!s.controller_listen_only) return "controller_listen_only";
+  if (!s.running) return "running";
+  return "none";
+}
+void failClosed(const char* stage, const char* field, int code,
+                const passive::Snapshot& observed) {
   latch.fail();
   // Contain a detected routing fault BEFORE touching the driver. A periodic
   // check cannot retroactively prevent a transient or arbitrary memory fault.
@@ -119,16 +144,30 @@ void failClosed() {
     installed=false;
   }
   portENTER_CRITICAL(&mux);
+  if (!fault_evidence.captured) {
+    fault_evidence.captured=true;
+    fault_evidence.stage=stage;
+    fault_evidence.field=field;
+    fault_evidence.code=code;
+    fault_evidence.pins=observed;  // Captured BEFORE detaching/teardown.
+  }
   stats.fault=true; stats.verified=false; stats.state=TWAI_STATE_STOPPED;
   stats.stop_result=stopped; stats.uninstall_result=uninstalled;
   portEXIT_CRITICAL(&mux);
 }
-bool check() {
+bool check(const char* stage="periodic_check") {
   twai_status_info_t info{};
-  const bool ok=installed && twai_get_status_info(&info) == ESP_OK;
+  const esp_err_t status=installed ? twai_get_status_info(&info) : ESP_ERR_INVALID_STATE;
+  const bool ok=installed && status==ESP_OK;
   const uint32_t now=millis();
-  if (request_fault.load() || !latch.check(snapshot(ok && info.state==TWAI_STATE_RUNNING), now)) {
-    failClosed(); return false;
+  const auto observed=snapshot(ok && info.state==TWAI_STATE_RUNNING);
+  const bool requested=request_fault.load();
+  if (requested || !latch.check(observed, now)) {
+    const char* field=requested ? "request_fault" :
+        !ok ? "twai_status" : !passive::safe(observed) ?
+        unsafeField(observed) : latch.fault() ? "check_gap_or_latched" : "unknown";
+    failClosed(stage,field,status==ESP_OK ? 0 : status,observed);
+    return false;
   }
   last_check=now;
   portENTER_CRITICAL(&mux);
@@ -150,13 +189,35 @@ void receiveOnce() {
     ++stats.frames;
     if (frame.extd) ++stats.extended; else ++stats.standard;
     portEXIT_CRITICAL(&mux);
-  } else if (result!=ESP_ERR_TIMEOUT) failClosed();
+  } else if (result!=ESP_ERR_TIMEOUT)
+    failClosed("receive","twai_receive",result,snapshot(false));
 }
 void owner(void*) {
   for (;;) {
     receiveOnce();
     if (latch.fault()) vTaskDelay(pdMS_TO_TICKS(10));
   }
+}
+FaultEvidence readFaultEvidence() {
+  portENTER_CRITICAL(&mux);
+  const FaultEvidence f=fault_evidence;
+  portEXIT_CRITICAL(&mux);
+  return f;
+}
+void printFault(const FaultEvidence& f) {
+  if (!f.captured) return;
+  const auto& s=f.pins;
+  // No CAN IDs, data, VIN, device identity or build string in this record.
+  Serial.printf(
+      "#PASSIVE_FAULT,stage=%s,field=%s,code=%d,no_tx_routes=%u,txd_gpio=%u,"
+      "txd_enabled=%u,txd_latch_high=%u,txd_pad_high=%u,txd_mux_gpio=%u,"
+      "txd_input_enabled=%u,txd_push_pull=%u,txd_awake=%u,rx_route=%u,"
+      "controller_listen_only=%u,running=%u\\n",
+      f.stage,f.field,f.code,
+      unsigned(s.no_tx_routes),unsigned(s.txd_gpio),unsigned(s.txd_enabled),
+      unsigned(s.txd_latch_high),unsigned(s.txd_pad_high),unsigned(s.txd_mux_gpio),
+      unsigned(s.txd_input_enabled),unsigned(s.txd_push_pull),unsigned(s.txd_awake),
+      unsigned(s.rx_route),unsigned(s.controller_listen_only),unsigned(s.running));
 }
 Stats readStats() {
   portENTER_CRITICAL(&mux); const Stats s=stats; portEXIT_CRITICAL(&mux);
@@ -176,7 +237,7 @@ void printStats(const Stats& s, uint32_t fps) {
 }
 } // namespace
 void setup() {
-  holdTxdHigh(); // First application action; no TWAI signal has been attached.
+  holdTxdHigh(); // First application action. Never sample before asserting HIGH.
   // Dial's HOLD pin keeps power on; display touches only GPIO4..9.
   gpio_set_level(static_cast<gpio_num_t>(46),1);
   gpio_set_direction(static_cast<gpio_num_t>(46),GPIO_MODE_OUTPUT);
@@ -184,31 +245,53 @@ void setup() {
   display.setBrightness(128);
   Serial.begin(115200);
   Serial.setTxTimeoutMs(10);
-  // A display failure or changed TXD must never allow a verified boot.
-  auto before=snapshot(true); before.rx_route=true; before.controller_listen_only=true;
-  if (!display_ok || !passive::safe(before)) { failClosed(); return; }
+  // Pre-install, RX route and controller state do not exist yet. Keep raw
+  // evidence intact; substitute only these precondition N/A fields for safe().
+  const auto before=snapshot(false);
+  auto before_policy=before;
+  before_policy.rx_route=true;
+  before_policy.controller_listen_only=true;
+  before_policy.running=true;
+  if (!display_ok) {
+    failClosed("display_init","display.init",0,before); return;
+  }
+  if (!passive::safe(before_policy)) {
+    failClosed("before_snapshot",unsafeField(before_policy),0,before); return;
+  }
   twai_general_config_t general=TWAI_GENERAL_CONFIG_DEFAULT(sink, rx, TWAI_MODE_LISTEN_ONLY);
   general.tx_queue_len=0; general.rx_queue_len=128;
   general.alerts_enabled=TWAI_ALERT_BUS_ERROR | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_OFF;
   const twai_timing_config_t timing=TWAI_TIMING_CONFIG_500KBITS();
   const twai_filter_config_t filter=TWAI_FILTER_CONFIG_ACCEPT_ALL();
-  if (twai_driver_install(&general, &timing, &filter)!=ESP_OK) {
-    failClosed(); return;
+  const esp_err_t install_result=twai_driver_install(&general,&timing,&filter);
+  if (install_result!=ESP_OK) {
+    failClosed("driver_install","twai_driver_install",install_result,snapshot(false));
+    return;
   }
   installed=true;
-  // IDF requires a real tx_io for install. GPIO39 goes only to the unused
-  // header P4.10 on Dial; remove that route while the controller is stopped.
-  // GPIO13 is NEVER supplied to the TWAI driver.
+  // IDF needs a real tx_io during install. GPIO39 leads only to unused P4.10.
+  // Detach while stopped. GPIO13 is NEVER supplied to the TWAI driver.
   detachTx();
   gpio_set_direction(sink, GPIO_MODE_INPUT);
-  auto stopped=snapshot(true); stopped.controller_listen_only=true;
-  if (!passive::safe(stopped) || twai_start()!=ESP_OK || !check()) {
-    failClosed(); return;
+  const auto stopped=snapshot(false);
+  auto stopped_policy=stopped;
+  stopped_policy.controller_listen_only=true;
+  stopped_policy.running=true;
+  if (!passive::safe(stopped_policy)) {
+    failClosed("stopped_snapshot",unsafeField(stopped_policy),0,stopped); return;
   }
-  if (xTaskCreatePinnedToCore(owner,"passive-can",4096,nullptr,configMAX_PRIORITIES-3,nullptr,0)!=pdPASS) {
-    failClosed(); return;
+  const esp_err_t start_result=twai_start();
+  if (start_result!=ESP_OK) {
+    failClosed("driver_start","twai_start",start_result,snapshot(false)); return;
   }
-  Serial.printf("#PASSIVE,git=%s,baud=500000,filter=ALL,tx=ISOLATED\n", M5CAN_BUILD_SHA);
+  if (!check("initial_check")) return;
+  const BaseType_t task_result=xTaskCreatePinnedToCore(
+      owner,"passive-can",4096,nullptr,configMAX_PRIORITIES-3,nullptr,0);
+  if (task_result!=pdPASS) {
+    failClosed("task_create","xTaskCreatePinnedToCore",task_result,snapshot(false));
+    return;
+  }
+  Serial.printf("#PASSIVE,git=%s,baud=500000,filter=ALL,tx=ISOLATED\\n", M5CAN_BUILD_SHA);
 }
 void loop() {
   static uint32_t report_ms=0, draw_ms=0, fps=0;
@@ -224,6 +307,7 @@ void loop() {
   if (uint32_t(now-report_ms)>=1000) {
     fps=uint32_t((s.frames-previous_frames)*1000ULL/uint32_t(now-report_ms));
     report_ms=now; previous_frames=s.frames; printStats(s,fps);
+    if (s.fault) printFault(readFaultEvidence());
   }
   // Fixed-length command buffer, bounded work per loop. Overlong input is
   // discarded through newline, never interpreted as a suffix command.
@@ -233,7 +317,10 @@ void loop() {
     if (c=='\r') continue;
     if (c=='\n') {
       command[used]='\0';
-      if (!overflow && !std::strcmp(command,"STATS")) printStats(s,fps);
+      if (!overflow && !std::strcmp(command,"STATS")) {
+        printStats(s,fps);
+        if (s.fault) printFault(readFaultEvidence());
+      }
       else Serial.println("#REJECT,PASSIVE_IMMUTABLE,ARM_LEASE_DEMO_TX_UNAVAILABLE");
       used=0; overflow=false;
     } else if (used<sizeof(command)-1 && !overflow) command[used++]=c;
