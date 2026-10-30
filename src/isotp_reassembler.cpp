@@ -74,7 +74,11 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
   if (pci_type == 0x1) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
     // Essential 0C/0D reply is single-frame; do not FC another tester's FF.
-    if(request_.signal_v2 && request_.length==3)return event;
+    // A physical probe FF breaks the N1 two-SF contract: fail, never FC.
+    if(request_.signal_v2 && request_.length==3){
+      if(physicalProbeRoute(can_id))event.type=IsoTpEventType::Overflow;
+      return event;
+    }
 #endif
     // RPM+speed is exactly six diagnostic bytes and MUST fit one Classical
     // CAN ISO-TP Single Frame. Never issue Flow Control for a purported
@@ -135,6 +139,9 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
   }
 
   if (pci_type == 0x2) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+    if(physicalProbeRoute(can_id)){event.type=IsoTpEventType::Overflow;return event;}
+#endif
     Session* session = find(can_id);
     if (!session || dlc < 2) return event;
 

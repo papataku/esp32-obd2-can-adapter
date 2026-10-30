@@ -15,6 +15,8 @@ public:
   // Max 256 source addresses, each may send separate RPM and speed SFs.
   // A broadcast cannot be admitted under a 5000-bit/100ms cap.
   static constexpr uint16_t DiscoveryFrames = 1 + 256*2;
+  // N1 physical probe: TX 1 + RX <=2 Single Frames + 1 safety allowance.
+  static constexpr uint16_t ProbeFrames = 4;
   void refresh(uint32_t now) {
     if(saturated_ && uint32_t(now-saturated_at_)<1000){
       used100=used1000=UINT32_MAX;return;

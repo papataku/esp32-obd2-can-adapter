@@ -35,6 +35,14 @@ class EcuPhysicalSelector {
   uint32_t physicalFailed() const { return physical_failed_; }
   uint64_t rawRxFrames() const { return raw_rx_frames_; }
   void disable() { state_=State::Legacy; }
+  // N1 PR-B: pin after the approved bounded physical probe set produced
+  // exactly one RAW-verified responder this epoch. Never from NVS/functional.
+  bool pinBoundedPhysical(uint32_t response_id) {
+    if(state_!=State::Discover || chosen_ || probes_ ||
+       (response_id&0xFFFFFF00U)!=0x18DAF100U)return false;
+    chosen_=response_id;state_=State::Fixed;consecutive_bad_=0;
+    return true;
+  }
 #if defined(M5CAN_VEHICLE_HINT_EXPERIMENTAL)
   bool restoredNeedsPhysicalProof() const { return restored_unconfirmed_; }
   // Called only after an exact current-boot functional CAN/RAW fingerprint

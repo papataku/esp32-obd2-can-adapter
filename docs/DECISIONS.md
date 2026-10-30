@@ -323,6 +323,36 @@ blocking from the new one-packet bound. That model is not an RF latency proof.
 Physical two-peer full-file CRC/END/SD-vs-USB and RPM-before/during/after gates
 remain required; preserve the failed A2 .part for comparison.
 
+## 2026-10-29 — PR65 bounded discovery contract enforcement
+
+The V2 physical probe now observes the full <=120 ms response window, accepts either order of the two permitted SF PID replies, and rejects unexpected diagnostic source/format before the generic ISO-TP filter can discard it. A probe observation guard remains active during idle/pacing after completion or timeout; late diagnostic replies are charged and latch the monitor fault until recovery. Before reinstalling the driver, stop TWAI and drain its bounded RX queue so a queued query cannot erase late-response evidence. A subsequently admitted regular transaction takes ownership of its response context. Both owner scheduling and actual monitor TX admission enforce >=200 ms spacing around a probe, independently of the regular 10 Hz sample period.
+
+The owner checks loss/fault counters and the absolute discovery deadline before promoting a queued completion. Failed lease/submission and denied discovery reservations latch STOP without retrying discovery within the epoch. The lower monitor also faults on RX queue loss, nonzero TWAI RX loss/error counters or unavailable status, checking before driver reinstall can reset counters. V2 policy refuses functional discovery, including empty-profile builds. None of these software fixes establishes the physical two-SF ceiling or advances HIL/vehicle gates in the PR-A specification.
+
+
+### 2026-10-29 — R1 regular acquisition auxiliary shedding
+
+The no-fallback discovery rule forbids functional broadcast, retries, repinning
+and new candidates within an epoch; it does not forbid regular auxiliary
+shedding. After pinning, prefer the full five-PID group (12 frames), otherwise
+reserve the four-frame SF-only 0C/0D request to the same ECU. STOP with
+LOAD_BUDGET_ESSENTIAL if that entire reservation also fails. At 100ms cadence,
+full-group selection additionally leaves four frames of headroom for the next
+essential read: two consecutive 2400-bit reservations would otherwise block
+even an 800-bit read at the third start. This deterministic selection avoids
+that dead end; 5Hz still selects every admitted full group. Both layers keep
+200 bits/frame, 5000/100ms and 25000/1s caps and 120ms reservations. Essential
+results invalidate auxiliary values immediately rather than retaining stale
+samples. No essential FC is allowed.
+
+An internal request marker distinguishes regular essential reads from discovery
+for monitor pacing and post-response quiet-close only. Both retain the strict
+SF validation and late-response accounting guard. Discovery still observes its
+full 120ms window and enforces 200ms on both sides of its TX; regular essential
+reads can finish after the normal quiet period. Sustained 100ms demand tests
+cover owner scheduling and production monitor admission independently. This is
+host software evidence, not a response latency or physical vehicle qualification.
+
 ## D025 - Dedicated passive image disconnects controller TX from GPIO
 
 `m5dial_signal_v2_can_29bit_passive` compiles only a USB ambient receiver.
