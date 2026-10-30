@@ -140,7 +140,7 @@ check but before driver acceptance is still a **residual physical-time gap**.
 The residual gap is not proven empty by software and is **never** described
 as physical-bus coverage.
 
-`candidate_rx` is the number of approved candidate-response frames whose
+`candidate_rx` is the number of candidate response-ID frames (`18DAF1xx`) whose
 **software receipt timestamps** fall inside the 1-second interval.
 `candidate_rx_total` is the entire S1 audit epoch, including pre-TX and
 post-window candidate RX; these numbers must not be conflated. Record
