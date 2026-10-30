@@ -32,11 +32,17 @@ class PassiveProfile(unittest.TestCase):
         # StampS3 variant's default SDA=GPIO13 / SCL=GPIO15.
         for forbidden in ('Wire.begin(', 'Wire1.begin(', 'i2cInit(',
                           'i2c_driver_install(', 'i2c_new_master_bus(',
-                          'lgfx::i2c::init(', 'TwoWire::begin('):
+                          'i2c_set_pin(', 'lgfx::i2c::init(', 'TwoWire::begin('):
             self.assertNotIn(forbidden, source)
         self.assertIn('spi_bus_initialize(SPI3_HOST',source)
         self.assertIn('heap_caps_malloc(512',source)
         self.assertIn('display.dmaReady()',source)
+    def test_display_dma_fault_is_executed_by_runtime_runner(self):
+        script=(ROOT/'tests/run_passive_runtime.sh').read_text()
+        self.assertIn('for fault in ',script)
+        self.assertIn('display-dma-fail',script.split('for fault in ',1)[1].split('; do',1)[0])
+        self.assertIn('/tmp/m5can-passive-runtime "$fault"',script)
+
     def test_i2c_elf_link_guard_negative_injections(self):
         # The actual linked Arduino core contains harmless Wire singleton,
         # TwoWire::end, and i2cIsInit: only pin-init/attach must fail.
@@ -64,7 +70,7 @@ class PassiveProfile(unittest.TestCase):
             for symbol in ('TwoWire::begin(int, int)', 'TwoWire::setPins(int, int)',
                            'i2cInit', 'i2c_driver_install',
                            'i2c_param_config', 'i2c_new_master_bus',
-                           'lgfx::v1::i2c::init(int)'):
+                           'i2c_set_pin', 'lgfx::v1::i2c::init(int)'):
                 with self.subTest(symbol=symbol):
                     result=invoke(['00000000 T '+symbol])
                     self.assertNotEqual(result.returncode,0,symbol)

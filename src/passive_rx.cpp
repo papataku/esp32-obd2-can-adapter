@@ -43,6 +43,9 @@ passive::Latch latch; // Accessed only by setup, then the CAN owner.
 std::atomic<bool> request_fault{false};
 bool installed=false;
 uint32_t last_check=0;
+// LCD drawing capability is independent of CAN RX permission (stats.verified).
+// A visible fault must be drawn when the LCD was initialized, even when
+// the GPIO13 safety gate rejects TWAI installation.
 bool display_ready=false;
 // Observation only: compare GPIO13 immediately after hold with post-display.
 passive::Snapshot first_hold_observation{}, display_observation{};
@@ -368,6 +371,9 @@ void setup() {
     failClosed("spi3_dma_buffer","reserveDMABuffer",ESP_ERR_NO_MEM,before);
     return;
   }
+  // The LCD may be used to display RED PASSIVE FAULT even when
+  // the following GPIO13 safety gate fails. This does not authorize CAN.
+  display_ready=true;
   if (!passive::safe(before_policy)) {
     failClosed("post_display_unsafe",unsafeField(before_policy),0,before);
     return;
@@ -377,11 +383,13 @@ void setup() {
   if (lock_after!=ESP_OK || slot_after!=slot_before-1) {
     // If M5GFX silently failed spi_bus_add_device, slot_after remains 5,
     // instead of 4. No retry, no custom SPI fallback, no TWAI installation.
+    // A failed device registration is not evidence of a usable LCD.
+    // Do not send draw operations to an unregistered SPI device.
+    display_ready=false;
     failClosed("spi3_device_registration","m5gfx_spi_device",
                lock_after!=ESP_OK?lock_after:ESP_ERR_INVALID_STATE,before);
     return;
   }
-  display_ready=true;
   twai_general_config_t general=TWAI_GENERAL_CONFIG_DEFAULT(sink, rx, TWAI_MODE_LISTEN_ONLY);
   general.tx_queue_len=0; general.rx_queue_len=128;
   general.alerts_enabled=TWAI_ALERT_BUS_ERROR | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_OFF;

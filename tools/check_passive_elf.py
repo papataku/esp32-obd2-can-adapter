@@ -14,7 +14,8 @@ for name in ('twai_transmit', 'twai_initiate_recovery', 'CanMonitor::',
              'M5GFX::autodetect', 'M5Unified::',
              'TwoWire::begin(', 'TwoWire::setPins(',
              'i2cInit', 'i2c_driver_install', 'i2c_param_config',
-             'i2c_new_master_bus', 'lgfx::v1::i2c::init('):
+             'i2c_new_master_bus', 'i2c_set_pin',
+             'lgfx::v1::i2c::init('):
     if name in symbols:
         raise SystemExit('FORBIDDEN passive ELF symbol: ' + name)
 for name in ('twai_driver_install', 'twai_start', 'twai_stop',
