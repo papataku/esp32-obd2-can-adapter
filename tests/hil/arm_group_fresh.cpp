@@ -34,7 +34,10 @@ bool CanMonitor::submitQuery(const DiagnosticRequest& q) {
   requests.push_back(q); return true;
 }
 bool CanMonitor::pollQueryResult(DiagnosticResult& r) {
-  if (!ready) return false; r=response;ready=false;return true;
+  if (!ready) return false;
+  r=response;
+  ready=false;
+  return true;
 }
 void CanMonitor::endObservationAudit(ObservationAudit& a,CanStats& s){
   a=audit_;s=stats_;
