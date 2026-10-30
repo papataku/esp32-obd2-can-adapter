@@ -248,7 +248,8 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   // after all of its counters (candidate RX, drops) are updated, so an
   // audit snapshot never contains a frame whose loss is not yet counted.
   portENTER_CRITICAL(&stats_mux_);
-  audit_.note(frame.identifier, frame.extended, frame.rtr, frame.dlc, frame.data);
+  audit_.note(frame.identifier, frame.extended, frame.rtr, frame.dlc,
+              frame.data,frame.timestamp_us);
   --rx_processing_;
   const bool audit_overflowed = audit_.overflowed_now;
   audit_.overflowed_now = false;
@@ -403,6 +404,7 @@ bool CanMonitor::acquireLease(uint32_t duration_ms) {
   if (fault_locked_
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
       || !stage_authorized_ || stage_epoch_ <= revoked_stage_epoch_
+      || stage_s1_consumed_
 #endif
       ) {
     if (tx_gate_) xSemaphoreGive(tx_gate_);
@@ -435,10 +437,12 @@ void CanMonitor::revokeLease() {
 bool CanMonitor::beginStageS1(uint32_t epoch) {
   if (!tx_gate_ || xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE)
     return false;
-  const bool accepted = epoch && epoch > revoked_stage_epoch_ && !fault_locked_;
+  const bool accepted = epoch && epoch > revoked_stage_epoch_ &&
+      epoch > stage_epoch_ && !fault_locked_;
   if (accepted) {
     stage_epoch_ = epoch;
     stage_authorized_ = true;
+    stage_s1_consumed_ = false;
   }
   xSemaphoreGive(tx_gate_);
   return accepted;
@@ -514,11 +518,26 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   if (fault_locked_ || !leaseAllowsBudget(wait_ms)
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
       || !stage_authorized_ || stage_epoch_ <= revoked_stage_epoch_
+      || stage_s1_consumed_
 #endif
       ) {
     if (tx_gate_) xSemaphoreGive(tx_gate_);
     return ESP_FAIL;
   }
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+  // Sole epoch right: physical Mode01 0C/0D; never FC or group.
+  const bool valid_s1=message.extd && !message.rtr &&
+      message.identifier==0x18DA01F1U && message.data_length_code==8 &&
+      message.data[0]==3 && message.data[1]==1 &&
+      message.data[2]==0x0C && message.data[3]==0x0D &&
+      !message.data[4] && !message.data[5] &&
+      !message.data[6] && !message.data[7];
+  if (!valid_s1 || stage_s1_consumed_) {
+    if (tx_gate_) xSemaphoreGive(tx_gate_);
+    return ESP_FAIL;
+  }
+  stage_s1_consumed_=true;
+#endif
   portENTER_CRITICAL(&stats_mux_);
   ++stats_.tx_attempts;
   portEXIT_CRITICAL(&stats_mux_);
@@ -681,6 +700,8 @@ void CanMonitor::performQuery(
       // Taken after the driver accepted the frame (twai_transmit may wait
       // up to 20 ms), so an observation window never starts before it.
       submitted_us = static_cast<uint64_t>(esp_timer_get_time());
+      if (request.signal_v2 && request.length==3)
+        setObservationWindow(submitted_us);
     }
   }
 
@@ -848,6 +869,17 @@ bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
   if(!request.signal_v2)return false; // USB/V1 BLE cannot transmit in this image.
 #endif
   if (!query_queue_ || !result_queue_) return false;
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+  const bool valid_s1=request.signal_v2 && request.can_id==0x18DA01F1U &&
+      request.length==3 && request.data[0]==1 && request.data[1]==0x0C &&
+      request.data[2]==0x0D && !request.signal_v2_essential;
+  if (!valid_s1 || !tx_gate_ || xSemaphoreTake(tx_gate_,portMAX_DELAY)!=pdTRUE)
+    return false;
+  const bool stage_allows=stage_authorized_ && !stage_s1_consumed_ &&
+      stage_epoch_>revoked_stage_epoch_ && !fault_locked_;
+  xSemaphoreGive(tx_gate_);
+  if (!stage_allows) return false;
+#endif
   // Reserve the single in-flight slot atomically across USB and BLE callers.
   // IMPORTANT: never call FreeRTOS queues while holding an ESP spinlock.
   portENTER_CRITICAL(&query_mux_);

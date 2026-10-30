@@ -149,10 +149,10 @@ int main(){
   {
     CanMonitor monitor;assert(monitor.begin());g_test_millis=100;
     tx_ms.clear();assert(monitor.beginStageS1(7));assert(monitor.acquireLease(550));
-    twai_message_t group=frame(0x18DA01F1U,{5,1,0x0D,0x0C,5,0x5B});
+    twai_message_t group=frame(0x18DA01F1U,{5,1,0x0D,0x0C,5,0x5B,0,0});
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,group)!=ESP_OK);
     assert(tx_ms.empty());
-    const twai_message_t s1=frame(0x18DA01F1U,{3,1,0x0C,0x0D});
+    const twai_message_t s1=frame(0x18DA01F1U,{3,1,0x0C,0x0D,0,0,0,0});
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)==ESP_OK);
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)!=ESP_OK);
     assert(tx_ms.size()==1);

@@ -69,6 +69,9 @@ struct ObservationAudit {
   uint32_t counts[kIds][kTypes]{};
   uint8_t used = 0;
   uint32_t all_rx = 0, overflow = 0;
+  uint32_t accounted_rx = 0, outside_before = 0, outside_after = 0;
+  uint64_t window_start_us = 0;
+  bool window_set = false;
   uint32_t rx_inflight_at_end = 0; // Incomplete RX processing invalidates S1 evidence.
   // M-06: explicit receive blind interval while TWAI is reinstalled.
   uint32_t blind_count = 0;
@@ -76,8 +79,16 @@ struct ObservationAudit {
   uint64_t blind_open_since_us = 0;
   bool blind_open = false;
   bool overflowed_now = false; // consumed by the RX path to revoke the lease
-  void note(uint32_t id, bool ext, bool rtr, uint8_t dlc, const uint8_t* data) {
+  void note(uint32_t id, bool ext, bool rtr, uint8_t dlc, const uint8_t* data,
+            uint64_t timestamp_us) {
     if (!active) return;
+    ++accounted_rx;
+    if (!window_set || timestamp_us < window_start_us) {
+      ++outside_before;return;
+    }
+    if (timestamp_us-window_start_us >= 1000000ULL) {
+      ++outside_after;return;
+    }
     ++all_rx;
     unsigned slot = used;
     for (unsigned i = 0; i < used; ++i)
@@ -120,6 +131,14 @@ class CanMonitor {
     copy.observed1000 = observed_budget_.used1000;
     copy.observed_peak100 = observed_budget_.peak100;
     copy.observed_peak1000 = observed_budget_.peak1000;
+  }
+  void setObservationWindow(uint64_t tx_us) {
+    portENTER_CRITICAL(&stats_mux_);
+    if (audit_.active && tx_us && !audit_.window_set) {
+      audit_.window_start_us=tx_us;
+      audit_.window_set=true;
+    }
+    portEXIT_CRITICAL(&stats_mux_);
   }
   bool observationAuditOverflowed() const {
     portENTER_CRITICAL(&stats_mux_);
@@ -229,6 +248,7 @@ class CanMonitor {
   uint64_t lease_deadline_ms_ = 0;
   uint32_t stage_epoch_ = 0, revoked_stage_epoch_ = 0; // tx_gate_ protected
   bool stage_authorized_ = false; // tx_gate_ protected
+  bool stage_s1_consumed_ = false; // TX attempt consumes sole right
   char last_error_[96] = "not started";
 };
 
