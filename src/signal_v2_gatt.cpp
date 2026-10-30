@@ -167,7 +167,8 @@ void manage(const char *cmd, uint32_t now) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(!std::strcmp(cmd,"SIGV2 CAN STOP")) {
     owner.noteAuthorizationEnd("OPERATOR_STOP");
-    can_armed=false;++can_authorization_epoch;owner.invalidate(10);
+    can_armed=false;const uint32_t revoked=++can_authorization_epoch;
+    owner.revokeAuthorization(revoked);owner.invalidate(10);
     for(auto &p:peers) {
       p.output.size=p.dataoff=0;
       p.session.clearDemoCache(now);
@@ -534,8 +535,8 @@ void disconnected(uint16_t handle) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   owner.noteAuthorizationEnd("CENTRAL_DISCONNECT");
   can_armed=false; // New connection requires a new local USB arm.
-  ++can_authorization_epoch; // Owner task invalidates/drains by epoch.
-  owner.revokeAuthorization(); // Thread-safe lease revoke; no sample/selector mutation.
+  const uint32_t revoked=++can_authorization_epoch;
+  owner.revokeAuthorization(revoked); // Thread-safe lease revoke; no sample/selector mutation.
 #endif
   portENTER_CRITICAL(&mux);
   for (auto &l : links)
@@ -586,7 +587,8 @@ void poll() {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(can_armed && int32_t(armed_until-now)<=0){
     owner.noteAuthorizationEnd("USB_ARM_EXPIRED");
-    can_armed=false;++can_authorization_epoch;owner.invalidate(10);
+    can_armed=false;const uint32_t revoked=++can_authorization_epoch;
+    owner.revokeAuthorization(revoked);owner.invalidate(10);
     Serial.println("#SIGNALV2_CAN,armed=0,reason=USB_ARM_EXPIRED");
   }
   owner.tick(now,demand,can_armed,can_authorization_epoch.load());

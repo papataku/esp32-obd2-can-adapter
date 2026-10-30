@@ -15,6 +15,10 @@ static m5can::CanStats health{};
 namespace m5can {
 CanStats CanMonitor::stats()const{return health;}
 void CanMonitor::revokeLease(){}
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+bool CanMonitor::beginStageS1(uint32_t){return true;}
+void CanMonitor::revokeStageAuthorization(uint32_t){}
+#endif
 bool CanMonitor::acquireLease(uint32_t){return true;}
 bool CanMonitor::submitQuery(const DiagnosticRequest &r){
   if(!admit)return false;

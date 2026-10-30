@@ -400,7 +400,11 @@ bool CanMonitor::acquireLease(uint32_t duration_ms) {
 #endif
   if (tx_gate_ && xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE)
     return false;
-  if (fault_locked_) {
+  if (fault_locked_
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+      || !stage_authorized_ || stage_epoch_ <= revoked_stage_epoch_
+#endif
+      ) {
     if (tx_gate_) xSemaphoreGive(tx_gate_);
     return false;
   }
@@ -426,6 +430,31 @@ void CanMonitor::revokeLease() {
   lease_deadline_ms_ = 0;
   portEXIT_CRITICAL(&lease_mux_);
   if (tx_gate_) xSemaphoreGive(tx_gate_);
+}
+
+bool CanMonitor::beginStageS1(uint32_t epoch) {
+  if (!tx_gate_ || xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE)
+    return false;
+  const bool accepted = epoch && epoch > revoked_stage_epoch_ && !fault_locked_;
+  if (accepted) {
+    stage_epoch_ = epoch;
+    stage_authorized_ = true;
+  }
+  xSemaphoreGive(tx_gate_);
+  return accepted;
+}
+
+void CanMonitor::revokeStageAuthorization(uint32_t epoch) {
+  if (!tx_gate_ || xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE) {
+    fault_locked_ = true;
+    return;
+  }
+  if (epoch > revoked_stage_epoch_) revoked_stage_epoch_ = epoch;
+  stage_authorized_ = false;
+  portENTER_CRITICAL(&lease_mux_);
+  lease_deadline_ms_ = 0;
+  portEXIT_CRITICAL(&lease_mux_);
+  xSemaphoreGive(tx_gate_);
 }
 
 uint32_t CanMonitor::leaseRemainingMs() const {
@@ -482,7 +511,11 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
     return ESP_FAIL;
   // B-03: final lease/fault check and TWAI enqueue share the STOP mutex.
   // If STOP acquired it first, no new frame reaches the driver.
-  if (fault_locked_ || !leaseAllowsBudget(wait_ms)) {
+  if (fault_locked_ || !leaseAllowsBudget(wait_ms)
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+      || !stage_authorized_ || stage_epoch_ <= revoked_stage_epoch_
+#endif
+      ) {
     if (tx_gate_) xSemaphoreGive(tx_gate_);
     return ESP_FAIL;
   }

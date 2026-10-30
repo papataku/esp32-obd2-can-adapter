@@ -52,7 +52,13 @@ class CanOwner {
       reason,static_cast<unsigned long>(samples_.invalidations));
     if(!stopped_){++samples_.source_generation;++samples_.mode_epoch;}
     stopped_=true;
-    if(can_)can_->revokeLease();
+    if(can_){
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+      can_->revokeStageAuthorization(epoch_);
+#else
+      can_->revokeLease();
+#endif
+    }
     if(s1_)reportS1(reason);
   }
   // One parseable record per S1 epoch. complete=0 rejects the evidence.
@@ -277,7 +283,15 @@ public:
   const CanSamples &samples()const{return samples_;}
   bool stopped()const{return stopped_;}
   bool busy()const{return in_flight_;}
-  void revokeAuthorization(){if(can_)can_->revokeLease();}
+  void revokeAuthorization(uint32_t revoked_epoch=0){
+    if(!can_)return;
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+    if(revoked_epoch){can_->revokeStageAuthorization(revoked_epoch);return;}
+#else
+    (void)revoked_epoch;
+#endif
+    can_->revokeLease();
+  }
   void invalidate(uint8_t reason=10){samples_.invalidate(reason);if(can_)can_->revokeLease();}
   void tick(uint32_t now,const Simulator::Demand &demand,bool armed,uint32_t epoch=0){
     if(!can_)return;
@@ -312,7 +326,12 @@ public:
       s1_requested_epoch_.store(0);
       s1_sent_=s1_reported_=false;s1_outcome_="NOT_SENT";
       s1_started_=now;s1_enqueued_at_=s1_tx_ms_=0;
-      if(s1_)can_->beginObservationAudit(s1_base_);
+      if(s1_){
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+        if(!can_->beginStageS1(epoch_)){stop("S1_AUTH_REVOKED",10);return;}
+#endif
+        can_->beginObservationAudit(s1_base_);
+      }
     }
     if(armed && !stopped_) {
       const auto health=can_->stats();

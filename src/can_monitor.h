@@ -141,6 +141,8 @@ class CanMonitor {
   bool acquireLease(uint32_t duration_ms);
   void revokeLease();
   uint32_t leaseRemainingMs() const;
+  bool beginStageS1(uint32_t epoch);
+  void revokeStageAuthorization(uint32_t epoch);
 
   uint32_t ownerStackFreeBytes() const {
     return rx_task_ ? static_cast<uint32_t>(uxTaskGetStackHighWaterMark(rx_task_)) : 0;
@@ -225,6 +227,8 @@ class CanMonitor {
   uint64_t probe_tx_us_=0,last_v2_start_us_=0;
   bool v2_start_seen_=false,last_v2_discovery_=false;
   uint64_t lease_deadline_ms_ = 0;
+  uint32_t stage_epoch_ = 0, revoked_stage_epoch_ = 0; // tx_gate_ protected
+  bool stage_authorized_ = false; // tx_gate_ protected
   char last_error_[96] = "not started";
 };
 
