@@ -601,11 +601,11 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   // RX faults must be allowed to revoke the lease without recursion.
   uint32_t pre_drain_count=0;
   bool queue_drained=false;
-  for (uint32_t i=0;i<=cfg::kTwaiRxQueueLen;++i) {
+  for (uint32_t i=0;i<cfg::kTwaiRxQueueLen;++i) {
     twai_message_t pending{};
     const esp_err_t rc=twai_receive(&pending,0);
     if (rc==ESP_ERR_TIMEOUT) {queue_drained=true;break;}
-    if (rc!=ESP_OK || i==cfg::kTwaiRxQueueLen) break;
+    if (rc!=ESP_OK) break;
     ++pre_drain_count;
     xSemaphoreGive(tx_gate_);
     captureMessage(pending,static_cast<uint64_t>(esp_timer_get_time()));
