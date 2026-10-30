@@ -287,13 +287,13 @@ def evaluate(scenario, events):
                 # the current generation, independent of the logical CAN
                 # authorization; a late frame after STOP may be received but
                 # must never become Fresh data (sample/packet checks below).
-                admissible[x["seq"]] = running
+                admissible[(boot, x["seq"])] = running
             else:
-                tx_running[x["seq"]] = running
+                tx_running[(boot, x["seq"])] = running
     def admitted_while_running(e):
-        return admissible.get(e["seq"], False)
+        return admissible.get((e.get("boot"), e["seq"]), False)
     order = {id(x): i for i, x in enumerate(events)}
-    rx_causes = {}  # Board RX sequence -> causally paired adapter TX.
+    rx_causes = {}  # (boot, RX seq) -> causally paired adapter TX (seq resets on reboot).
     def reconcile(extra_refusal=lambda e, w: False):
         slots = Counter(predicted)
         pending, ok, deliberate = [], True, 0
@@ -327,7 +327,7 @@ def evaluate(scenario, events):
                     continue
                 slots[key] -= 1
             if e["ok"]:
-                rx_causes[e["seq"]] = cause
+                rx_causes[(e.get("boot"), e["seq"])] = cause
                 # The admitted RX must carry its own write's injection
                 # generation (M-01) and arrive while running (M-02).
                 ok &= w["text"].split()[2] == str(e.get("gen")) and admitted_while_running(e)
@@ -343,7 +343,7 @@ def evaluate(scenario, events):
     admitted = Counter((str(e.get("gen")), rx_line(e["id"], e["data"], bool(e["ext"]))[len("HIL RX 0 "):])
                        for e in rxs if e["ok"])
     generation_bound = not (admitted - bound)
-    tx_allowed = all(tx_running.get(e["seq"], False) for e in txs if e["ok"])
+    tx_allowed = all(tx_running.get((e.get("boot"), e["seq"]), False) for e in txs if e["ok"])
     tx_allowed &= all(e.get("ext") == 1 and e["id"] == ECU_TX and e.get("dlc") == 8 and
                      e["data"] in (PROBE.ljust(8, b"\0"), GROUP.ljust(8, b"\0"), b"\x30" + b"\0"*7)
                      for e in txs)
@@ -535,7 +535,7 @@ def evaluate(scenario, events):
                 active_group = None  # Essential/probe TX is not a GROUP FC.
         elif (k == "rx" and active_group is not None and x.get("ok") == 1
               and x.get("id") == ECU_RX and x.get("ext") == 1):
-            cause = rx_causes.get(x["seq"])
+            cause = rx_causes.get((x.get("boot"), x["seq"]))
             if (x["data"] == GROUP_FF and active_group["stage"] == "group"
                     and cause is active_group["tx"]):
                 active_group["stage"] = "ff"
