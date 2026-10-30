@@ -4,6 +4,20 @@ Owner decision, 2026-10-29: serial HIL replaces the external analyzer for the
 **software** obligations in PR-A §6. A build or host PASS is not a device PASS.
 No electrical, arbitration, ACK/retransmit or real-ECU claim follows from HIL.
 
+
+**m-07 scope boundary (PM decision, 2026-10-31):** The current serial-HIL
+acceptance oracle is scoped to *full physical GROUP acquisitions* with a
+causally verified FF, one FC, all CFs and a completed GROUP sample. Although the
+production CAN owner can shed auxiliary reads and perform an 800-bit
+**essential-only** (RPM/speed, no GROUP/FF/FC) acquisition when the budget is
+tight, this HIL oracle intentionally **does not qualify that path**.
+Essential-only samples are **FAIL / not qualifying HIL evidence**, even if the
+firmware obtained them correctly. This is a declared test-scope limitation,
+not a claim that the firmware must reject essential data. Extending evidence
+and a dedicated essential-path state machine requires a **separate PR**; do not
+relax the GROUP oracle or reinterpret a full-GROUP PASS as essential coverage.
+
+
 ## Image and isolation
 
 Use only `m5dial_signal_v2_can_29bit_serial_hil`, never on a vehicle. Production
