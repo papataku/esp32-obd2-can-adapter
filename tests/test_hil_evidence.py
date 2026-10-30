@@ -17,9 +17,13 @@ def trace(scenario='normal'):
         add(t,kind,id=cid,ext=1,dlc=8 if kind=='tx' else len(data),data=data,ok=ok)
     def gate(t,discovery=False):
         for g in ('owner','monitor'):
-            add(t,'gate',gate=g,epoch='1',cost='800' if discovery else '2400',
+            add(t,'gate',gate=g,epoch='3',cost='800' if discovery else '2400',
                 used100='800' if discovery else '3200',used1000='800' if discovery else '14400',discovery='1' if discovery else '0')
-    add(0,'fence',nonce='fresh');add(.01,'arm',epoch='1',ok='1')
+    events.append(dict(kind='initial_stop_evidence',boot='12345678',
+                       epoch='2',request_epoch='2',request_seq=1,ack_seq=2,
+                       request_t_us='100',ack_t_us='200',
+                       source_generation='3',mode_epoch='3'))
+    add(.001,'fence',nonce='fresh');add(.01,'arm',epoch='3',ok='1')
     gate(.015,True);frame(.02,'tx',h.PROBE.ljust(8,b'\0'),cid=h.ECU_TX)
     frame(.025,'rx',h.PAIR_SF)
     for i in range(299):
@@ -29,12 +33,12 @@ def trace(scenario='normal'):
         frame(t+.006,'rx',h.GROUP_FF)
         frame(t+.007,'tx',b'\x30'+b'\0'*7,cid=h.ECU_TX)
         frame(t+.009,'rx',h.GROUP_CF[0]);frame(t+.011,'rx',h.GROUP_CF[1])
-        add(t+.02,'sample',epoch='1',quality='0',speed='0',rpm='1000',source='18DAF101',
-            observed_us=str(round((t+.011)*1e6)),source_generation='2',mode_epoch='2')
+        add(t+.02,'sample',epoch='3',quality='0',speed='0',rpm='1000',source='18DAF101',
+            observed_us=str(round((t+.011)*1e6)),source_generation='4',mode_epoch='4')
     # The runner records its final operator STOP write before the request.
     events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=60.099))
-    add(60.1,'stop_request',epoch='2');add(60.11,'stopped',epoch='2');add(61.2,'fence',nonce='freshend')
-    n=0
+    add(60.1,'stop_request',epoch='4');add(60.11,'stopped',epoch='4',source_generation='5',mode_epoch='5');add(61.2,'fence',nonce='freshend')
+    n=3
     for e in events:
         if 't_us' in e:
             n+=1;e['seq']=n
@@ -56,7 +60,7 @@ def annotate(events):
 def renumber(events):
     # Host writes have no board clock; retain their relative insertion order.
     events.sort(key=lambda e:e.get('t',e.get('write_t',0)))
-    seq=0
+    seq=3
     for e in events:
         if 't_us' in e:
             seq+=1;e['seq']=seq
@@ -65,7 +69,7 @@ def renumber(events):
 
 def fault_trace(scenario):
     template=trace()
-    events=[e for e in template if e.get('t',99)<=.02]
+    events=[e for e in template if e['kind']=='initial_stop_evidence' or e.get('t',99)<=.02]
     def add(t,kind,**kw):
         events.append(dict(kind=kind,t=t,t_us=str(round(t*1e6)),boot='12345678',gen=1,lost=0,text='',**kw))
     ecu=h.VirtualEcu(scenario)
@@ -77,17 +81,17 @@ def fault_trace(scenario):
         _,_,_,cid,ext,data=line.split();data=bytes.fromhex(data)
         events.append(dict(kind='write',text=h.rx_line(int(cid,16),data,bool(int(ext)),1),write_t=.02+delay-.0001))
         add(.02+delay,'rx',id=int(cid,16),ext=int(ext),dlc=len(data),data=data,ok=1)
-    add(.2,'fault',epoch='1',reason=sorted(h.FAULT_REASONS[scenario])[0])
-    add(.21,'stopped',epoch='2')
+    add(.2,'fault',epoch='3',reason=sorted(h.FAULT_REASONS[scenario])[0])
+    add(.21,'stopped',epoch='4',source_generation='5',mode_epoch='5')
     events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=60.099))
-    add(60.1,'stop_request',epoch='3');add(60.11,'stopped',epoch='3')
+    add(60.1,'stop_request',epoch='5');add(60.11,'stopped',epoch='5',source_generation='7',mode_epoch='7')
     add(61.2,'fence',nonce='freshend')
     return annotate(renumber(events))
 
 
 def rearm_trace():
     base=trace()
-    events=[e for e in base if e.get('t',99)<=.241]
+    events=[e for e in base if e['kind']=='initial_stop_evidence' or e.get('t',99)<=.241]
     for e in list(events):
         if e['kind']=='rx':events.append(dict(kind='write',text=h.rx_line(e['id'],e['data'],True,1),write_t=e['t']-.0001))
     def add(t,kind,**kw):
@@ -97,15 +101,16 @@ def rearm_trace():
     # group is still pending (no FF/FC/CFs, no sample).
     for g in ('owner','monitor'):
         events.append(dict(kind='gate',t=.419,t_us='419000',boot='12345678',gen=1,lost=0,text='',
-                           gate=g,epoch='1',cost='2400',used100='2400',used1000='17600',discovery='0'))
+                           gate=g,epoch='3',cost='2400',used100='2400',used1000='17600',discovery='0'))
     events.append(dict(kind='tx',t=.421,t_us='421000',boot='12345678',gen=1,lost=0,text='',
                        id=h.ECU_TX,ext=1,dlc=8,data=h.GROUP.ljust(8,b'\0'),ok=1))
     events.append(dict(kind='write',text='SIGV2 CAN STOP',write_t=.425))
-    add(.45,'stop_request',epoch='2');add(.46,'stopped',epoch='2',source_generation='3',mode_epoch='3')
+    add(.45,'stop_request',epoch='4');add(.46,'stopped',epoch='4',source_generation='5',mode_epoch='5')
     events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.GROUP_CF[0],True,1),write_t=.549,deliberate=True))
     add(.55,'rx',id=h.ECU_RX,ext=1,dlc=8,data=h.GROUP_CF[0],ok=0)
-    add(.6,'packet',type='33',epoch='2',fresh='0',current='1',source_generation='3',mode_epoch='3')
+    add(.6,'packet',type='33',epoch='4',fresh='0',current='1',source_generation='5',mode_epoch='5')
     for e in trace():
+        if e['kind']=='initial_stop_evidence':continue
         if e['kind']=='write':
             if e['text']=='SIGV2 CAN STOP':events.append(dict(e,write_t=e['write_t']+1.7))
             continue
@@ -118,8 +123,8 @@ def rearm_trace():
             e['mode_epoch']=str(int(e['mode_epoch'])+2)
         events.append(e)
         if e['kind']=='rx':events.append(dict(kind='write',text=h.rx_line(e['id'],e['data'],True,3),write_t=e['t']-.0001))
-    add(1.95,'packet',type='33',epoch='3',fresh='1',current='1',source_generation='4',mode_epoch='4',
-        pdu_source_generation='4',pdu_mode_epoch='4',pdu_source='18DAF101',pdu_mixed='0')
+    add(1.95,'packet',type='33',epoch='5',fresh='1',current='1',source_generation='6',mode_epoch='6',
+        pdu_source_generation='6',pdu_mode_epoch='6',pdu_source='18DAF101',pdu_mixed='0')
     return annotate(renumber(events))
 
 
