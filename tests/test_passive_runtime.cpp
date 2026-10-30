@@ -96,7 +96,8 @@ int main(int argc,char** argv) {
     if (stage!="before_snapshot" && stage!="first_hold" &&
         stage!="post_display_unsafe" && stage!="display_init" &&
         stage!="spi3_dma_probe" && stage!="spi3_bus_init" &&
-        stage!="spi3_dma_buffer" &&
+        stage!="spi3_dma_buffer" && stage!="spi3_device_registration" &&
+        stage!="spi3_lock_baseline" &&
         stage!="driver_install") assert(!calls.empty() && calls.back()=="uninstall");
     const std::string first_stage=fault_evidence.stage;
     const auto count=calls.size();
