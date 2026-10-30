@@ -394,7 +394,7 @@ def evaluate(scenario, events):
     tx_after_stop = 0
     for e in txs:
         previous = [x for x in board if x.get("boot") == e.get("boot") and x["seq"] < e["seq"] and x["kind"] in ("stopped", "stop_request", "arm", "fault", "disconnect")]
-        if not previous or previous[-1]["kind"] in ("stopped", "stop_request", "fault"):
+        if not previous or previous[-1]["kind"] in ("stopped", "stop_request", "fault", "disconnect"):
             tx_after_stop += 1
     first_arm = arms[0]["t"] if arms else 0
     # Every fault run observes 60s, including the post-fault quiet interval.
