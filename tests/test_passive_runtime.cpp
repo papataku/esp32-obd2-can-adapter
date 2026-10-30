@@ -64,7 +64,10 @@ int main(int argc,char** argv) {
     assert(stage==fault_evidence.stage && field==fault_evidence.field);
     if (fault=="bus-init-fail" || fault=="dma-alloc-fail")
       assert(calls.empty()); // TWAI install forbidden on failed LCD preflight.
-    if (fault=="i2c-begin") assert(i2c_begin_calls==1);
+    if (fault=="i2c-begin") {
+      assert(i2c_begin_calls==1 && i2c_scl_gpio15_driven);
+      assert((GPIO.enable & (1U<<15))!=0 && (GPIO.out & (1U<<15))==0);
+    }
     if (fault=="before-pad") assert(!fault_evidence.pins.txd_pad_high);
     if (fault=="before-rtc" || fault=="before-sleep")
       assert(!fault_evidence.pins.txd_awake);

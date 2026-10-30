@@ -38,6 +38,7 @@ inline bool stuck_pad_low=false, display_disables_gpio13=false;
 inline bool display_drives_gpio13_low=false, display_corrupts_gpio13_route=false;
 inline bool display_clobber_external_low=false;
 inline bool mock_spi_bus_fail=false, mock_dma_alloc_fail=false, mock_i2c_begin=false;
+inline bool i2c_scl_gpio15_driven=false;
 inline int spi_bus_init_calls=0, dma_alloc_calls=0, i2c_begin_calls=0;
 inline bool stuck_rtc_mux=false,stuck_sleep=false,bad_iomux=false,bad_input=false;
 inline bool bad_rx_on_install=false,skip_listen_on_start=false;
@@ -148,9 +149,14 @@ inline void* heap_caps_malloc(size_t len,uint32_t caps) {
 inline void heap_caps_free(void* p) { assert(p==dma_probe_storage); }
 inline void simulate_wire_begin() {
   ++i2c_begin_calls;
+  // StampS3 defaults: SDA=GPIO13, SCL=GPIO15. The injected call
+  // also drives SCL so the model covers both protected physical pins.
   GPIO.enable &= ~(1U<<13);
   GPIO.func_out_sel_cfg[13].val=0;
   pad_high=false;
+  GPIO.enable |= (1U<<15);
+  GPIO.out &= ~(1U<<15);
+  i2c_scl_gpio15_driven=true;
 }
 // Model Arduino-ESP32 2.0.17 SPI2 MISO=-1 -> GPIO13.
 inline int lcd_spi_host=-1;
