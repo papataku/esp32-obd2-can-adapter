@@ -53,6 +53,7 @@ using esp_err_t=int;
 #define ESP_ERR_TIMEOUT 1
 #define ESP_FAIL 2
 #define ESP_ERR_NO_MEM 3
+#define ESP_ERR_INVALID_STATE 4
 #define SPICOMMON_BUSFLAG_MASTER 1
 #define ESP_IDF_VERSION_VAL(a,b,c) ((a)*10000+(b)*100+(c))
 #define ESP_IDF_VERSION ESP_IDF_VERSION_VAL(4,4,7)
@@ -124,6 +125,33 @@ namespace fonts { inline int Font2=0; }
 #define SPI2_HOST 2
 #define SPI3_HOST 3
 #define SPI_DMA_CH_AUTO 3
+#define DEV_NUM_MAX 6
+struct FakeSpiLock {};
+struct FakeSpiDev {};
+using spi_bus_lock_handle_t=FakeSpiLock*;
+using spi_bus_lock_dev_handle_t=FakeSpiDev*;
+struct spi_bus_lock_dev_config_t { unsigned flags=0; };
+inline FakeSpiLock mock_spi3_lock;
+inline FakeSpiDev mock_spi3_dev;
+inline int mock_spi3_registered_devices;
+inline spi_bus_lock_handle_t spi_bus_lock_get_by_id(int host) {
+  assert(host==SPI3_HOST);
+  return &mock_spi3_lock;
+}
+inline int spi_bus_lock_register_dev(spi_bus_lock_handle_t lock,
+                                     spi_bus_lock_dev_config_t* cfg,
+                                     spi_bus_lock_dev_handle_t* out) {
+  assert(lock==&mock_spi3_lock && cfg && cfg->flags==0 && out);
+  *out=&mock_spi3_dev;
+  return ESP_OK;
+}
+inline int spi_bus_lock_get_dev_id(spi_bus_lock_dev_handle_t dev) {
+  assert(dev==&mock_spi3_dev);
+  return DEV_NUM_MAX-1-mock_spi3_registered_devices;
+}
+inline void spi_bus_lock_unregister_dev(spi_bus_lock_dev_handle_t dev) {
+  assert(dev==&mock_spi3_dev);
+}
 #define MALLOC_CAP_INTERNAL 1
 #define MALLOC_CAP_DMA 2
 struct spi_bus_config_t {
@@ -164,7 +192,7 @@ inline bool mock_display_dma_fail=false;
 // A successful M5GFX init is not proof of IDF SPI3 device registration.
 inline bool mock_m5gfx_device_add_fail=false;
 inline bool mock_m5gfx_second_bus_invalid_state=false;
-inline int mock_spi3_registered_devices=0;
+// Registration belongs to the M5GFX device, never the transient probe.
 inline bool lcd_auto_attached_gpio13=false;
 namespace lgfx {
 struct Bus_SPI {

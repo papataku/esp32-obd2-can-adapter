@@ -10,6 +10,7 @@
 #include <driver/gpio.h>
 #include <driver/rtc_io.h>
 #include <driver/spi_master.h>
+#include <driver/spi_common_internal.h>
 #include <esp_heap_caps.h>
 #include <esp_idf_version.h>
 #include <esp_rom_gpio.h>
@@ -24,6 +25,8 @@
 #endif
 static_assert(CONFIG_IDF_TARGET_ESP32S3, "register checks require ESP32-S3");
 static_assert(SOC_GPIO_PIN_COUNT == 49, "review GPIO matrix coverage for new SoC");
+// Pinned ESP-IDF 4.4 IDF SPI3 bus lock has six device slots. Re-review on upgrade.
+static_assert(DEV_NUM_MAX == 6, "SPI3 lock-slot verification needs IDF review");
 namespace {
 constexpr gpio_num_t txd = static_cast<gpio_num_t>(passive::kTxd);
 constexpr gpio_num_t rx = static_cast<gpio_num_t>(passive::kRx);
@@ -88,6 +91,24 @@ class DialDisplay : public lgfx::LGFX_Device {
   }
 } display;
 
+// Read the first free SPI3 device ID without touching any GPIO or sending SPI.
+// ESP-IDF 4.4 reserves IDs from 5 down. M5GFX's spics_io_num=-1
+// registration consumes exactly one slot when spi_bus_add_device succeeds.
+// Unlike Bus_SPI::init() or DMA buffer presence, this observes the actual
+// IDF registration outcome. A temporary lock-only probe is immediately
+// released and never issues an SPI transaction.
+esp_err_t nextFreeSpi3DeviceId(int* id) {
+  const auto lock=spi_bus_lock_get_by_id(SPI3_HOST);
+  if (!lock) return ESP_ERR_INVALID_STATE;
+  spi_bus_lock_dev_config_t cfg{};
+  spi_bus_lock_dev_handle_t probe=nullptr;
+  const esp_err_t status=spi_bus_lock_register_dev(lock,&cfg,&probe);
+  if (status!=ESP_OK) return status;
+  if (!probe) return ESP_ERR_INVALID_STATE;
+  *id=spi_bus_lock_get_dev_id(probe);
+  spi_bus_lock_unregister_dev(probe);
+  return (*id>=0) ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
 void holdTxdHigh() {
   // Set the output latch BEFORE enabling the pad. Reset-time high impedance
   // is biased recessive by the TJA1051T/3's internal TXD pull-up (datasheet 7.2.2).
@@ -318,12 +339,20 @@ void setup() {
     failClosed("spi3_bus_init","spi_bus_initialize",bus_status,snapshot(false));
     return;
   }
-  // The M5GFX SPI3 path can reuse this initialized IDF bus. Its own
-  // redundant bus-init reports ALREADY_INITIALIZED but adds LCD device.
+  // No other code registers SPI3 devices in the dedicated passive image.
+  // Probe the *actual IDF device lock*, not M5GFX's bool return.
+  int slot_before=-1;
+  const esp_err_t lock_before=nextFreeSpi3DeviceId(&slot_before);
+  if (lock_before!=ESP_OK || slot_before!=DEV_NUM_MAX-1) {
+    failClosed("spi3_lock_baseline","spi3_device_slot",
+               lock_before!=ESP_OK?lock_before:ESP_ERR_INVALID_STATE,snapshot(false));
+    return;
+  }
+  // M5GFX's redundant spi_bus_initialize returns INVALID_STATE because
+  // we already own the bus. Its spi_bus_add_device must still succeed.
   const bool display_ok=display.init();
   const bool dma_ready=display_ok && display.dmaReady();
-  display_ready=display_ok && dma_ready;
-  if (display_ready) display.setBrightness(128);
+  if (dma_ready) display.setBrightness(128);
   // SPI3 LCD init must not touch CAN TXD GPIO13. Preserve the raw
   // post-LCD snapshot and reject any mismatch without repair/retry.
   display_observation=snapshot(false);
@@ -343,6 +372,16 @@ void setup() {
     failClosed("post_display_unsafe",unsafeField(before_policy),0,before);
     return;
   }
+  int slot_after=-1;
+  const esp_err_t lock_after=nextFreeSpi3DeviceId(&slot_after);
+  if (lock_after!=ESP_OK || slot_after!=slot_before-1) {
+    // If M5GFX silently failed spi_bus_add_device, slot_after remains 5,
+    // instead of 4. No retry, no custom SPI fallback, no TWAI installation.
+    failClosed("spi3_device_registration","m5gfx_spi_device",
+               lock_after!=ESP_OK?lock_after:ESP_ERR_INVALID_STATE,before);
+    return;
+  }
+  display_ready=true;
   twai_general_config_t general=TWAI_GENERAL_CONFIG_DEFAULT(sink, rx, TWAI_MODE_LISTEN_ONLY);
   general.tx_queue_len=0; general.rx_queue_len=128;
   general.alerts_enabled=TWAI_ALERT_BUS_ERROR | TWAI_ALERT_ARB_LOST | TWAI_ALERT_BUS_OFF;
