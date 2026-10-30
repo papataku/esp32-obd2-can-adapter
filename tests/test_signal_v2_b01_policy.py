@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""B-01 effective PlatformIO config and real CanOwner ARM/GROUP/Fresh."""
+import configparser
+import pathlib
+import re
+import subprocess
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+HIL = "env:m5dial_signal_v2_can_29bit_serial_hil"
+
+def flags_by_env():
+    p=configparser.ConfigParser(interpolation=None)
+    p.read(ROOT/"platformio.ini")
+    cache={}
+    def resolve(env,ancestors=()):
+        if env in ancestors:raise AssertionError("cyclic flag reference: "+env)
+        if env in cache:return cache[env]
+        tokens=[]
+        for line in p.get(env,"build_flags",fallback="").splitlines():
+            line=line.split(";",1)[0].strip()
+            for token in line.split():
+                if token.startswith(chr(36)+"{env:") and token.endswith(".build_flags}"):
+                    ref=token[2:-len(".build_flags}")]
+                    tokens+=resolve(ref,(*ancestors,env))
+                else:
+                    tokens.append(token)
+        cache[env]=tokens
+        return tokens
+    return p,{env:resolve(env) for env in p.sections() if env.startswith("env:")}
+
+def active(flags,name):
+    return any(re.fullmatch("-D"+re.escape(name)+r"(?:=.+)?",x) for x in flags)
+
+class SerialHilB01(unittest.TestCase):
+    def test_b01_serial_hil_is_isolated_unstaged(self):
+        config,flags=flags_by_env()
+        current=flags[HIL]
+        for macro in ("M5CAN_SIGNAL_V2_SERIAL_HIL","M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL",
+                      "M5CAN_SIGNAL_V2_RP8_PROFILE","M5CAN_ECU_SELECTION_EXPERIMENTAL"):
+            self.assertTrue(active(current,macro),(macro,current))
+        self.assertFalse(active(current,"M5CAN_SIGNAL_V2_STAGE_GATED"),
+                         "B-01 generic ARM cannot pass S1-only GATT")
+        self.assertFalse(active(current,"M5CAN_CAN_TX_HARD_DISABLED"))
+        self.assertNotIn("m5dial_signal_v2_can_29bit_5hz_lab",
+                         config.get(HIL,"extends",fallback=""))
+        workflow=(ROOT/".github/workflows/signal-v2-lab.yml").read_text()
+        self.assertIn("pio run -e m5dial_signal_v2_can_29bit_serial_hil",workflow)
+        self.assertRegex(workflow,
+            r"check_signal_v2_elf\.py[^\n]*m5dial_signal_v2_can_29bit_serial_hil/firmware\.elf[^\n]*--hil[^\n]*--nm")
+        self.assertIn("name.startswith('twai_')",
+                      (ROOT/"tools/check_signal_v2_elf.py").read_text())
+
+    def test_b01_vehicle_capable_v2_envs_are_all_stage_gated(self):
+        _,flags=flags_by_env()
+        exceptions=[]
+        for env,defs in flags.items():
+            v2=active(defs,"M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL")
+            hil=active(defs,"M5CAN_SIGNAL_V2_SERIAL_HIL")
+            disabled=active(defs,"M5CAN_CAN_TX_HARD_DISABLED")
+            if hil:
+                exceptions.append(env)
+                self.assertEqual(env,HIL,"serial HIL flag must not leak")
+                self.assertTrue(v2)
+            elif v2 and not disabled:
+                self.assertTrue(active(defs,"M5CAN_SIGNAL_V2_STAGE_GATED"),
+                                (env,"vehicle-capable V2 missing stage gate"))
+        self.assertEqual(exceptions,[HIL])
+        for env in ("env:m5dial_signal_v2_can_29bit_5hz_lab",
+                    "env:m5dial_signal_v2_can_29bit_10hz_lab"):
+            self.assertTrue(active(flags[env],"M5CAN_SIGNAL_V2_STAGE_GATED"))
+
+    def test_b01_compiled_real_owner_arm_group_fresh(self):
+        _,flags=flags_by_env()
+        definitions=[f for f in flags[HIL] if f.startswith("-D") or f.startswith("-U")]
+        with tempfile.TemporaryDirectory() as d:
+            exe=pathlib.Path(d)/"b01-arm-group"
+            cmd=["c++","-std=c++17","-Wall","-Wextra","-Werror",
+                 *definitions,"-Itests/hil/stubs","-Itests/host_stubs",
+                 "-Iinclude","-Isrc","tests/hil/arm_group_fresh.cpp",
+                 "src/diagnostic_policy.cpp","src/diagnostic_transaction.cpp",
+                 "src/isotp_reassembler.cpp","-o",str(exe)]
+            p=subprocess.run(cmd,cwd=ROOT,capture_output=True,text=True)
+            self.assertEqual(p.returncode,0,(p.stdout+p.stderr)[-4000:])
+            p=subprocess.run([str(exe)],cwd=ROOT,capture_output=True,text=True)
+            self.assertEqual(p.returncode,0,(p.stdout+p.stderr)[-4000:])
+            self.assertIn("PASS B-01 serial-HIL ARM -> GROUP -> Fresh",p.stdout)
+
+if __name__=="__main__":unittest.main()
