@@ -15,6 +15,8 @@ struct Snapshot {
   bool txd_latch_high = false, txd_pad_high = false, txd_mux_gpio = false;
   bool txd_input_enabled = false, txd_push_pull = false, txd_awake = false;
   bool rx_route = false, controller_listen_only = false, running = false;
+  // Diagnostic-only raw flags. Safety still gates on txd_awake (both clear).
+  bool iomux_sleep_sel = false, rtc_touch13_mux_sel = false;
 };
 inline bool safe(const Snapshot& s) {
   return s.no_tx_routes && s.txd_gpio && s.txd_enabled &&
