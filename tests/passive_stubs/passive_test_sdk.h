@@ -34,11 +34,13 @@ struct gpio_config_t { uint64_t pin_bit_mask=0; int mode=0,pull_up_en=0,pull_dow
 // Startup stubs deliberately model GPIO13 reset-/RTC-side anomalies that the
 // old all-zeros register initialization could not exercise.
 inline bool pad_high=true;
+inline bool stuck_pad_low=false, display_disables_gpio13=false;
+inline bool display_drives_gpio13_low=false, display_corrupts_gpio13_route=false;
 inline bool stuck_rtc_mux=false,stuck_sleep=false,bad_iomux=false,bad_input=false;
 inline bool bad_rx_on_install=false,skip_listen_on_start=false;
 inline int gpio_set_level(int pin,int value) { if (pin<32) GPIO.out=(GPIO.out&~(1U<<pin))|(value<<pin); return 0; }
 inline int rtc_gpio_deinit(int) { registers[1000]=stuck_rtc_mux ? RTC_IO_TOUCH_PAD13_MUX_SEL : 0; return 0; }
-inline int gpio_config(gpio_config_t*) { GPIO.enable|=1U<<13; registers[13]=((bad_iomux ? 0U : PIN_FUNC_GPIO)<<MCU_SEL_S)|(bad_input ? 0U : FUN_IE)|(stuck_sleep ? SLP_SEL : 0U); return 0; }
+inline int gpio_config(gpio_config_t*) { GPIO.enable|=1U<<13; registers[13]=((bad_iomux ? 0U : PIN_FUNC_GPIO)<<MCU_SEL_S)|(bad_input ? 0U : FUN_IE)|(stuck_sleep ? SLP_SEL : 0U); pad_high=!stuck_pad_low; return 0; }
 inline int gpio_get_level(int) { return pad_high; }
 inline void esp_rom_gpio_connect_out_signal(unsigned pin,unsigned sig,bool,bool) { GPIO.func_out_sel_cfg[pin].val=sig; }
 inline int gpio_set_direction(int,int) { return 0; }
@@ -131,7 +133,21 @@ inline bool display_ok=true;
 class LGFX_Device {
  public:
   void setPanel(Panel_GC9A01*) {}
-  bool init() { return display_ok; }
+  bool init() {
+    if (display_disables_gpio13) {
+      assert(GPIO.out & (1U<<13));
+      GPIO.enable &= ~(1U<<13);
+      GPIO.func_out_sel_cfg[13].val=0;
+      pad_high=false;
+    }
+    if (display_drives_gpio13_low) {
+      GPIO.out &= ~(1U<<13);
+      pad_high=false;
+    }
+    if (display_corrupts_gpio13_route)
+      GPIO.func_out_sel_cfg[13].val=42;
+    return display_ok;
+  }
   void setBrightness(int) {}
   void fillScreen(int) { assert(display_ok); } void setTextDatum(int) {} void setTextColor(int,int) {}
   void drawString(const char*,int,int,int*) {}
