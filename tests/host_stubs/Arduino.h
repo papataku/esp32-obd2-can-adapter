@@ -56,7 +56,7 @@ struct SerialStub {
   void begin(uint32_t){}
   int printf(const char* fmt,...) {
     if(!capture)return 0;
-    char buffer[512]{};
+    char buffer[1024]{};
     va_list args;va_start(args,fmt);
     const int n=std::vsnprintf(buffer,sizeof(buffer),fmt,args);
     va_end(args);
