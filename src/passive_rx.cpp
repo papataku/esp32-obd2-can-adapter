@@ -40,7 +40,8 @@ uint32_t last_check=0;
 bool display_ready=false;
 // Observation only: compare GPIO13 immediately after hold with post-display.
 passive::Snapshot first_hold_observation{}, display_observation{};
-bool display_reasserted=false;
+// No GPIO13 repair path: a post-display mismatch must latch FAULT.
+constexpr bool display_reasserted=false;
 // The first fault is immutable and contains only GPIO/controller booleans.
 // It is replayed over USB because a CDC monitor can attach after setup().
 struct FaultEvidence {
@@ -59,7 +60,10 @@ class DialDisplay : public lgfx::LGFX_Device {
  public:
   DialDisplay() {
     auto b=bus_.config();
-    b.spi_host=SPI2_HOST; b.spi_mode=0; b.freq_write=40000000;
+    // ESP32-S3 FSPI/SPI2 + Arduino SPI.begin(..., miso=-1, ...)
+    // implicitly attaches GPIO13 as default MISO, disabling CAN TXD.
+    // SPI3 uses M5GFX's IDF SPI bus with only the explicit LCD GPIOs.
+    b.spi_host=SPI3_HOST; b.spi_mode=0; b.freq_write=40000000;
     b.freq_read=16000000; b.spi_3wire=true; b.use_lock=true;
     b.dma_channel=SPI_DMA_CH_AUTO;
     b.pin_sclk=6; b.pin_mosi=5; b.pin_miso=-1; b.pin_dc=4;
@@ -121,15 +125,7 @@ passive::Snapshot snapshot(bool running) {
   s.running=running;
   return s;
 }
-bool displayOutputWasHighImpedance(const passive::Snapshot& s) {
-  // GPIO.enable=0 alone does not prove high-Z if GPIO Matrix output
-  // enable is peripheral-controlled. Require the sampled pad HIGH too.
-  // A sampled LOW or enabled/misrouted output is never auto-recovered.
-  return s.no_tx_routes && !s.txd_enabled && s.txd_latch_high &&
-      s.txd_pad_high && s.txd_mux_gpio && s.txd_input_enabled &&
-      s.txd_push_pull && s.txd_awake;
-}
-const char* unsafeField(const passive::Snapshot& s) {
+ const char* unsafeField(const passive::Snapshot& s) {
   if (!s.no_tx_routes) return "no_tx_routes";
   if (!s.txd_gpio) return "txd_gpio";
   if (!s.txd_enabled) return "txd_enabled";
@@ -280,7 +276,7 @@ void setup() {
     failClosed("first_hold",unsafeField(hold_policy),0,first_hold_observation);
     return;
   }
-  // Dial's HOLD pin keeps power on; display touches only GPIO4..9.
+  // Dial's HOLD pin keeps power on; LCD GPIO4..9, SPI3_HOST only.
   gpio_set_level(static_cast<gpio_num_t>(46),1);
   gpio_set_direction(static_cast<gpio_num_t>(46),GPIO_MODE_OUTPUT);
   const bool display_ok=display.init();
@@ -288,11 +284,10 @@ void setup() {
   if (display_ok) display.setBrightness(128);
   Serial.begin(115200);
   Serial.setTxTimeoutMs(10);
-  // Preserve pre-repair hardware evidence. Only reapply GPIO13 after
-  // display init if the output was disabled (high-Z) and the HIGH data
-  // latch and other safety signals remained correct.
+  // SPI3 LCD init must not touch CAN TXD GPIO13. Preserve the raw
+  // post-LCD snapshot and reject any mismatch without repair/retry.
   display_observation=snapshot(false);
-  auto before=display_observation;
+  const auto before=display_observation;
   auto before_policy=before;
   before_policy.rx_route=true;
   before_policy.controller_listen_only=true;
@@ -301,23 +296,8 @@ void setup() {
     failClosed("display_init","display.init",0,before); return;
   }
   if (!passive::safe(before_policy)) {
-    if (!displayOutputWasHighImpedance(display_observation)) {
-      failClosed("post_display_unsafe",unsafeField(before_policy),0,before);
-      return;
-    }
-    // TWAI is not installed. We never authorize a LOW latch/misrouted
-    // enabled pin: assert HIGH first, then reenable only GPIO output.
-    holdTxdHigh();
-    display_reasserted=true;
-    before=snapshot(false);
-    before_policy=before;
-    before_policy.rx_route=true;
-    before_policy.controller_listen_only=true;
-    before_policy.running=true;
-    if (!passive::safe(before_policy)) {
-      failClosed("before_snapshot",unsafeField(before_policy),0,before);
-      return;
-    }
+    failClosed("post_display_unsafe",unsafeField(before_policy),0,before);
+    return;
   }
   twai_general_config_t general=TWAI_GENERAL_CONFIG_DEFAULT(sink, rx, TWAI_MODE_LISTEN_ONLY);
   general.tx_queue_len=0; general.rx_queue_len=128;
