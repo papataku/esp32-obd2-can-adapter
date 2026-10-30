@@ -38,6 +38,8 @@ std::atomic<bool> request_fault{false};
 bool installed=false;
 uint32_t last_check=0;
 bool display_ready=false;
+// Observation only: compare GPIO13 immediately after hold with post-display.
+passive::Snapshot first_hold_observation{};
 // The first fault is immutable and contains only GPIO/controller booleans.
 // It is replayed over USB because a CDC monitor can attach after setup().
 struct FaultEvidence {
