@@ -235,9 +235,15 @@ def evaluate(scenario, events):
     # modelled response slot of its causing TX, whether admitted or refused.
     # from_gen is the causing TX generation; the injection generation may
     # differ after a post-STOP reinstall and is checked only for admissions.
+    def admitted_while_running(e):
+        # The shim admits only while installed and running: an ok=1 RX
+        # after a completed STOP and before the next ARM breaks that contract.
+        life = [x for x in board if x["seq"] < e["seq"] and x.get("boot") == e.get("boot")
+                and x["kind"] in ("arm", "stopped")]
+        return bool(life) and life[-1]["kind"] == "arm"
     def reconcile(extra_refusal=lambda e: False):
         slots = Counter(predicted)
-        pending, ok = [], True
+        pending, ok, deliberate = [], True, 0
         for e in events:
             if e["kind"] == "write" and e["text"].startswith("HIL RX "):
                 pending.append(e)
@@ -252,9 +258,10 @@ def evaluate(scenario, events):
             w = pending.pop(match)
             cause = None
             if "from_t" not in w:
-                # Only a deliberate operator injection (rearm) lacks a cause,
-                # and it must be refused.
-                ok &= not e["ok"] and extra_refusal(e)
+                # Only the single deliberate operator injection (rearm) lacks a
+                # cause, and it must be refused (review m-01).
+                deliberate += 1
+                ok &= not e["ok"] and extra_refusal(e) and deliberate == 1
                 continue
             if True:
                 key = (w["from_t"], w.get("from_gen"), line)
@@ -264,6 +271,9 @@ def evaluate(scenario, events):
                     continue
                 slots[key] -= 1
             if e["ok"]:
+                # The admitted RX must carry its own write's injection
+                # generation (M-01) and arrive while running (M-02).
+                ok &= w["text"].split()[2] == str(e.get("gen")) and admitted_while_running(e)
                 continue
             fail_closed = bool(first_fault_stop and e["seq"] > first_fault_stop["seq"] and
                                cause and cause["seq"] < trigger["seq"])
@@ -427,7 +437,8 @@ def evaluate(scenario, events):
                 and stops[0]["t"] < e["t"] < arms[-1]["t"]]
         rearm_ok &= len(old_cf)==1 and old_cf[0]["ok"]==0
         # The deliberate stopped-generation RX must be refused, without loss.
-        acknowledged = reconcile(lambda e: stops[0]["t"] < e["t"] < arms[-1]["t"])
+        acknowledged = reconcile(lambda e: e["id"] == ECU_RX and e["ext"] == 1 and e["data"] == GROUP_CF[0]
+                                 and stops[0]["t"] < e["t"] < arms[-1]["t"])
         rearm_ok &= any(int(e["epoch"]) == epochs[-1] for e in samples)
         snapshots = [e for e in kind("packet") if e.get("type") == "33"]
         rearm_ok &= any(stops[0]["t"] < e["t"] < arms[-1]["t"] and int(e.get("fresh",0)) == 0 for e in snapshots)

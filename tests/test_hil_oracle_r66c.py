@@ -191,4 +191,27 @@ class R66g(unittest.TestCase):
         r=self.refused(h.ECU_RX,h.PAIR_SF,1.7249,1.725,inject_gen=4)
         self.assertTrue(r['pass'],r)
 
+class R66h(unittest.TestCase):
+    """Sixth independent review M-01, M-02, m-01 (ChatGPT, 2026-10-30)."""
+    def test_m01_admitted_rx_uses_its_own_write_generation(self):
+        events=rearm_trace()
+        cf=next(e for e in events if e['kind']=='rx' and e['ok']==1 and e['data']==h.GROUP_CF[0])
+        write=next(w for w in events if w['kind']=='write' and w['text']==h.rx_line(h.ECU_RX,h.GROUP_CF[0],True,1)
+                   and w.get('write_t',0)<cf['t'])
+        write['text']=h.rx_line(h.ECU_RX,h.GROUP_CF[0],True,2)
+        self.assertFalse(h.evaluate('rearm',events)['checks']['transport_complete'])
+
+    def test_m02_no_admission_after_completed_stop(self):
+        events=overlap_trace();add=adder(events,4)
+        events.append(dict(kind='write',text=h.rx_line(h.ECU_RX,h.PAIR_SF,True,4),write_t=1.7249,
+                           from_t=1.71,from_gen=3))
+        add(1.725,'rx',id=h.ECU_RX,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=1)
+        self.assertFalse(h.evaluate('overlap',renumber(events))['checks']['transport_complete'])
+
+    def test_m01b_only_one_deliberate_rearm_injection(self):
+        events=rearm_trace();add=adder(events,2)
+        events.append(dict(kind='write',text=h.rx_line(0x18DAF102,h.PAIR_SF,True,1),write_t=.449,deliberate=True))
+        add(.45,'rx',id=0x18DAF102,ext=1,dlc=len(h.PAIR_SF),data=h.PAIR_SF,ok=0)
+        self.assertFalse(h.evaluate('rearm',renumber(events))['checks']['transport_complete'])
+
 if __name__=='__main__':unittest.main()
