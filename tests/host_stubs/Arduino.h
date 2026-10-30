@@ -22,7 +22,12 @@ inline void delay(uint32_t ms){g_test_millis+=ms;}
 inline void taskYIELD(){}
 inline void vTaskDelay(uint32_t ms){g_test_millis+=ms;}
 inline void portENTER_CRITICAL(portMUX_TYPE*){}
+#if defined(M5CAN_TEST_S1_STOP_RACE)
+void s1TestOnCriticalExit(portMUX_TYPE*);
+inline void portEXIT_CRITICAL(portMUX_TYPE* m){s1TestOnCriticalExit(m);}
+#else
 inline void portEXIT_CRITICAL(portMUX_TYPE*){}
+#endif
 inline QueueHandle_t xQueueCreate(size_t,size_t){return reinterpret_cast<void*>(1);}
 inline void vQueueDelete(QueueHandle_t){}
 inline int xQueueSend(QueueHandle_t,const void*,TickType_t){return pdTRUE;}

@@ -17,6 +17,10 @@ struct CanOwnerTestAccess {
   static void capture(m5can::CanMonitor &m,const twai_message_t &frame){
     m.captureMessage(frame,static_cast<uint64_t>(g_test_millis)*1000ULL);
   }
+  static esp_err_t transmit(m5can::CanMonitor &m,const twai_message_t &f){
+    return m.transmitOwnedFrame(f,20);
+  }
+  static uint64_t txAttempts(const m5can::CanMonitor &m){return m.stats_.tx_attempts;}
 };
 }
 using namespace m5can;
@@ -35,6 +39,17 @@ int s1TestFrameQueueSend(QueueHandle_t,const void*,TickType_t){
 struct Scheduled{uint32_t at;twai_message_t frame;};
 static std::vector<Scheduled> rx;
 static std::vector<uint32_t> tx_ms;
+static CanMonitor *stop_during_tx=nullptr;
+static bool stop_fired=false;
+// Inject asynchronous Arduino STOP specifically after the transmitter has
+// incremented tx_attempts but before its driver submission.
+void s1TestOnCriticalExit(portMUX_TYPE*){
+  if(stop_during_tx && signal_v2::CanOwnerTestAccess::txAttempts(*stop_during_tx)){
+    CanMonitor* m=stop_during_tx;stop_during_tx=nullptr;
+    stop_fired=true;
+    m->revokeLease(); // Actual GATT STOP's lower-layer revocation
+  }
+}
 esp_err_t twai_get_status_info(twai_status_info_t*){return ESP_OK;}
 esp_err_t twai_receive(twai_message_t *m,TickType_t wait){
   if(!rx.empty()&&rx.front().at<=g_test_millis+wait){
@@ -101,5 +116,18 @@ int main(){
     assert(line.find("rx_inflight_end=1")!=std::string::npos);
     assert(line.find("rx_counted=1")!=std::string::npos);
   }
-  std::cout<<"PR-C2 S1 window from real driver submission PASS\n";
+  // B-03: STOP races in after the earlier lease check but before physical
+  // twai_transmit. The post-STOP driver queue must remain empty.
+  {
+    CanMonitor m;assert(m.begin());g_test_millis=100;
+    tx_ms.clear();assert(m.acquireLease(550));
+    stop_fired=false;stop_during_tx=&m;
+    const esp_err_t status=signal_v2::CanOwnerTestAccess::transmit(
+        m,frame(0x18DA01F1U,{3,1,0x0C,0x0D}));
+    stop_during_tx=nullptr;
+    assert(stop_fired);
+    assert(status!=ESP_OK);
+    assert(tx_ms.empty());
+  }
+  std::cout<<"PR-C2 S1 TX/STOP race + monitor integration PASS\n";
 }
