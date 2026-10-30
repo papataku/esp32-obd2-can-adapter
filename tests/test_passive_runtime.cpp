@@ -80,7 +80,9 @@ int main(int argc,char** argv) {
     }
     if (stage!="before_snapshot" && stage!="first_hold" &&
         stage!="post_display_unsafe" && stage!="display_init" &&
-        stage!="driver_install") assert(calls.back()=="uninstall");
+        stage!="spi3_dma_probe" && stage!="spi3_bus_init" &&
+        stage!="spi3_dma_buffer" &&
+        stage!="driver_install") assert(!calls.empty() && calls.back()=="uninstall");
     const std::string first_stage=fault_evidence.stage;
     const auto count=calls.size();
     fake_ms=1000; loop(); // CDC attaches late: fault is repeated, not boot-only.
