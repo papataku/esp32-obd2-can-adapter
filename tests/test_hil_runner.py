@@ -12,6 +12,8 @@ class Clock:
 class Port:
     def __init__(self,clock,short=False):
         self.clock=clock;self.commands=[];self.pending=[];self.seq=0;self.epoch=1;self.short=short;self.closed=False
+        # CanSamples starts 1/1; first owner tick on GATT epoch 1 makes 2/2.
+        self.owner_generation=2;self.pending_fault_epoch=False
     def reset_input_buffer(self):pass
     def close(self):self.closed=True
     def event(self,delay,kind,**fields):
@@ -20,17 +22,29 @@ class Port:
         if self.short:return len(wire)-1
         line=wire.decode().strip();self.commands.append(line)
         if line=='SIGV2 CAN STOP':
-            self.epoch+=1
+            # After internal stop(), GATT increments its epoch at the end of
+            # poll(); the next idle tick consumes that one deferred increment.
+            if self.pending_fault_epoch:
+                self.owner_generation+=1;self.pending_fault_epoch=False
+            self.epoch+=1;self.owner_generation+=1
             self.event(.001,'stop_request',epoch=self.epoch)
-            self.event(.002,'stopped',epoch=self.epoch)
+            self.event(.002,'stopped',epoch=self.epoch,
+                       source_generation=self.owner_generation,
+                       mode_epoch=self.owner_generation)
         elif line.startswith('HIL FENCE '):self.event(.001,'fence',nonce=line.split()[-1])
         elif line=='SIGV2 CAN ARM':
-            self.epoch+=1;self.event(.001,'arm',ok=1,epoch=self.epoch)
+            self.epoch+=1;self.owner_generation+=1
+            self.event(.001,'arm',ok=1,epoch=self.epoch)
             for gate in ('owner','monitor'):
                 self.event(.005,'gate',gate=gate,cost=800,used100=800,used1000=800,discovery=1)
             self.event(.006,'tx',id='18DA01F1',ext=1,dlc=8,data=h.PROBE.ljust(8,b'\0').hex().upper(),ok=1)
             self.event(.14,'fault',epoch=self.epoch,reason='NO_VERIFIED_ECU')
-            self.event(.15,'stopped',epoch=self.epoch+1)
+            # Internal owner.stop() increments both once and revokes ARM. GATT
+            # then bumps its authorization epoch, consumed by the next tick.
+            self.epoch+=1;self.owner_generation+=1;self.pending_fault_epoch=True
+            self.event(.15,'stopped',epoch=self.epoch,
+                       source_generation=self.owner_generation,
+                       mode_epoch=self.owner_generation)
             self.event(.16,'raw',text='#SIGNALV2_LOAD,acquired=0,denied=0')
         return len(wire)
     def read(self,n):
