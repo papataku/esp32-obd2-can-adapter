@@ -36,6 +36,7 @@ struct gpio_config_t { uint64_t pin_bit_mask=0; int mode=0,pull_up_en=0,pull_dow
 inline bool pad_high=true;
 inline bool stuck_pad_low=false, display_disables_gpio13=false;
 inline bool display_drives_gpio13_low=false, display_corrupts_gpio13_route=false;
+inline bool display_clobber_external_low=false;
 inline bool stuck_rtc_mux=false,stuck_sleep=false,bad_iomux=false,bad_input=false;
 inline bool bad_rx_on_install=false,skip_listen_on_start=false;
 inline int gpio_set_level(int pin,int value) { if (pin<32) GPIO.out=(GPIO.out&~(1U<<pin))|(value<<pin); return 0; }
@@ -135,6 +136,7 @@ class LGFX_Device {
   void setPanel(Panel_GC9A01*) {}
   bool init() {
     if (display_disables_gpio13) {
+      if (display_clobber_external_low) stuck_pad_low=true;
       assert(GPIO.out & (1U<<13));
       GPIO.enable &= ~(1U<<13);
       GPIO.func_out_sel_cfg[13].val=0;
