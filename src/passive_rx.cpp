@@ -37,6 +37,7 @@ passive::Latch latch; // Accessed only by setup, then the CAN owner.
 std::atomic<bool> request_fault{false};
 bool installed=false;
 uint32_t last_check=0;
+bool display_ready=false;
 // The first fault is immutable and contains only GPIO/controller booleans.
 // It is replayed over USB because a CDC monitor can attach after setup().
 struct FaultEvidence {
@@ -242,7 +243,8 @@ void setup() {
   gpio_set_level(static_cast<gpio_num_t>(46),1);
   gpio_set_direction(static_cast<gpio_num_t>(46),GPIO_MODE_OUTPUT);
   const bool display_ok=display.init();
-  display.setBrightness(128);
+  display_ready=display_ok;
+  if (display_ok) display.setBrightness(128);
   Serial.begin(115200);
   Serial.setTxTimeoutMs(10);
   // Pre-install, RX route and controller state do not exist yet. Keep raw
@@ -288,7 +290,7 @@ void setup() {
   const auto task_result=xTaskCreatePinnedToCore(
       owner,"passive-can",4096,nullptr,configMAX_PRIORITIES-3,nullptr,0);
   if (task_result!=pdPASS) {
-    failClosed("task_create","xTaskCreatePinnedToCore",task_result,snapshot(false));
+    failClosed("task_create","xTaskCreatePinnedToCore",task_result,snapshot(true));
     return;
   }
   Serial.printf("#PASSIVE,git=%s,baud=500000,filter=ALL,tx=ISOLATED\n", M5CAN_BUILD_SHA);
@@ -326,7 +328,7 @@ void loop() {
     } else if (used<sizeof(command)-1 && !overflow) command[used++]=c;
     else overflow=true;
   }
-  if (uint32_t(now-draw_ms)>=100) {
+  if (display_ready && uint32_t(now-draw_ms)>=100) {
     draw_ms=now;
     auto& d=display;
     d.fillScreen(TFT_BLACK); d.setTextDatum(middle_center);
