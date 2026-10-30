@@ -118,7 +118,7 @@ def rearm_trace():
         e=copy.deepcopy(e);e['t']+=1.7;e['t_us']=str(round(e['t']*1e6));e['gen']=3
         if 'observed_us' in e:e['observed_us']=str(int(e['observed_us'])+1700000)
         if 'epoch' in e:e['epoch']=str(int(e['epoch'])+2)
-        if e['kind']=='sample':
+        if e['kind'] in ('sample','stopped'):
             e['source_generation']=str(int(e['source_generation'])+2)
             e['mode_epoch']=str(int(e['mode_epoch'])+2)
         events.append(e)
