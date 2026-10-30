@@ -95,7 +95,7 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
   -o /tmp/m5can-v22-stage-s1-gated
 /tmp/m5can-v22-stage-s1-gated
-c++ -std=c++11 -Wall -Wextra -Wno-unused-function -Werror \
+c++ -std=c++11 -Wall -Wextra -Wno-unused-function -Werror -pthread \
   -DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1 -DM5CAN_SIGNAL_V2_RP8_PROFILE=1 \
   -DM5CAN_ECU_SELECTION_EXPERIMENTAL=1 -DM5CAN_ADAPTIVE_MULTIPID_EXPERIMENTAL=1 \
   -DM5CAN_TEST_S1_STOP_RACE=1 -DM5CAN_TEST_S1_BLIND_SPAN=1 \

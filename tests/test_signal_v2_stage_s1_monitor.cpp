@@ -1,6 +1,10 @@
 // PR-C2 review M-01/M-02: the S1 window must start at the driver-accepted
 // submission time carried through the real CanMonitor::performQuery().
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <cassert>
 #include <initializer_list>
 #include <iostream>
@@ -31,6 +35,11 @@ using namespace m5can;
 static signal_v2::CanOwner *preempt_owner=nullptr;
 static CanMonitor *audit_owner=nullptr;
 static bool owner_paused=false;
+static signal_v2::CanOwner* handoff_owner=nullptr;
+static bool preempt_after_receive=false;
+static std::mutex driver_mu;
+static std::condition_variable driver_cv;
+static bool driver_block=false,driver_entered=false,driver_release=false;
 void s1TestOnAuditDelay(uint32_t){
   if (audit_owner && !owner_paused &&
       signal_v2::CanOwnerTestAccess::closePending(*audit_owner))
@@ -63,15 +72,35 @@ void s1TestOnDriverUninstall(){
   // Host-only 7ms TWAI reinstall blind interval, after physical TX.
   if(!tx_ms.empty())g_test_millis+=7;
 }
-esp_err_t twai_get_status_info(twai_status_info_t*){return ESP_OK;}
+esp_err_t twai_get_status_info(twai_status_info_t* info){
+  if(info)info->msgs_to_rx=static_cast<uint32_t>(rx.size());
+  return ESP_OK;
+}
 esp_err_t twai_receive(twai_message_t *m,TickType_t wait){
   if(!rx.empty()&&rx.front().at<=g_test_millis+wait){
     g_test_millis=std::max(g_test_millis,rx.front().at);
-    *m=rx.front().frame;rx.erase(rx.begin());return ESP_OK;
+    *m=rx.front().frame;rx.erase(rx.begin());
+    if(preempt_after_receive && handoff_owner){
+      preempt_after_receive=false;owner_paused=true;
+      const signal_v2::Simulator::Demand none{};
+      handoff_owner->tick(1200,none,true,1);
+      owner_paused=false;
+    }
+    return ESP_OK;
   }
   g_test_millis+=wait;return ESP_FAIL;
 }
-esp_err_t twai_transmit(const twai_message_t*,TickType_t){tx_ms.push_back(g_test_millis);return ESP_OK;}
+esp_err_t twai_transmit(const twai_message_t*,TickType_t){
+  {
+    std::unique_lock<std::mutex> lock(driver_mu);
+    if(driver_block){
+      driver_entered=true;driver_cv.notify_all();
+      driver_cv.wait(lock,[] {return driver_release;});
+    }
+  }
+  tx_ms.push_back(g_test_millis);
+  return ESP_OK;
+}
 static twai_message_t frame(uint32_t id,std::initializer_list<uint8_t> d){
   twai_message_t f{};f.extd=1;f.identifier=id;f.data_length_code=uint8_t(d.size());
   std::copy(d.begin(),d.end(),f.data);return f;
@@ -169,6 +198,100 @@ int main(){
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)==ESP_OK);
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)!=ESP_OK);
     assert(tx_ms.size()==1);
+  }
+
+  // M-09: [tx_us, tx_us+1_000_000us), including exact endpoints.
+  {
+    ObservationAudit audit{};audit.active=true;
+    audit.window_set=true;audit.window_start_us=200000;
+    const uint8_t data[8]={0x06,0x41,0x0C,0,0,0,0,0};
+    audit.note(0x0CF00400U,true,false,8,data,199999);  // before
+    audit.note(0x0CF00400U,true,false,8,data,200000);  // inclusive
+    audit.note(0x0CF00400U,true,false,8,data,1199999); // inclusive
+    audit.note(0x0CF00400U,true,false,8,data,1200000); // exclusive
+    assert(audit.accounted_rx==4 && audit.all_rx==2);
+    assert(audit.outside_before==1 && audit.outside_after==1);
+  }
+  // M-08 A: driver RX returned successfully, CAN owner paused before
+  // captureMessage. The Arduino STOP cannot certify the snapshot.
+  {
+    CanMonitor monitor;assert(monitor.begin());signal_v2::CanOwner owner;
+    owner.attach(&monitor);g_test_millis=0;
+    rx.clear();tx_ms.clear();SerialStub::lines.clear();
+    owner.requestStageS1(1);owner.tick(0,none,true,1);
+    g_test_millis=200;audit_owner=&monitor;
+    DiagnosticResult result{};signal_v2::CanOwnerTestAccess::perform(monitor,probe(),result);
+    signal_v2::CanOwnerTestAccess::complete(owner,result);
+    g_test_millis=1200;
+    rx={{1200,frame(0x0CF00400U,{0xFF,0,0,0,0,0,0,0})}};
+    handoff_owner=&owner;preempt_after_receive=true;
+    twai_message_t returned{};
+    assert(twai_receive(&returned,0)==ESP_OK);
+    handoff_owner=nullptr;
+    signal_v2::CanOwnerTestAccess::capture(monitor,returned);
+    assert(owner.stopped());
+    assert(record().find("owner_confirmed=0")!=std::string::npos);
+    assert(record().find("complete=0")!=std::string::npos);
+  }
+  // M-08 C: pending TWAI RX must be drained by the CAN-owner close barrier,
+  // but any pending frame makes absolute completeness unverifiable.
+  {
+    CanMonitor monitor;assert(monitor.begin());signal_v2::CanOwner owner;
+    owner.attach(&monitor);g_test_millis=0;
+    rx.clear();tx_ms.clear();SerialStub::lines.clear();
+    owner.requestStageS1(1);owner.tick(0,none,true,1);
+    g_test_millis=200;audit_owner=&monitor;
+    DiagnosticResult result{};signal_v2::CanOwnerTestAccess::perform(monitor,probe(),result);
+    signal_v2::CanOwnerTestAccess::complete(owner,result);
+    rx={{1200,frame(0x0CF00400U,{0xFF,0,0,0,0,0,0,0})}};
+    g_test_millis=1200;owner.tick(1200,none,true,1);
+    assert(owner.stopped() && rx.empty());
+    assert(record().find("rx_pending_end=1")!=std::string::npos);
+    assert(record().find("complete=0")!=std::string::npos);
+  }
+  // N-03: true two-task mutex scheduling. STOP-first means zero TX;
+  // TX-first and STOP while driver is blocked means STOP does not complete
+  // until the in-flight driver call returns.
+  {
+    CanMonitor monitor;assert(monitor.begin());g_test_millis=100;
+    tx_ms.clear();assert(monitor.beginStageS1(20));
+    assert(monitor.acquireLease(550));
+    monitor.revokeStageAuthorization(20);
+    const auto valid=frame(0x18DA01F1U,{3,1,0x0C,0x0D,0,0,0,0});
+    assert(signal_v2::CanOwnerTestAccess::transmit(monitor,valid)!=ESP_OK);
+    assert(tx_ms.empty());
+    assert(monitor.beginStageS1(21));
+    assert(monitor.acquireLease(550));
+    {
+      std::lock_guard<std::mutex> lock(driver_mu);
+      driver_block=true;driver_entered=false;driver_release=false;
+    }
+    std::atomic<bool> stop_done{false};
+    esp_err_t tx_result=ESP_FAIL;
+    std::thread tx_task([&]{
+      tx_result=signal_v2::CanOwnerTestAccess::transmit(monitor,valid);
+    });
+    {
+      std::unique_lock<std::mutex> lock(driver_mu);
+      driver_cv.wait(lock,[] {return driver_entered;});
+    }
+    std::thread stop_task([&]{
+      monitor.revokeStageAuthorization(21);
+      stop_done.store(true);
+    });
+    // STOP cannot complete while TWAI is still in its submission call.
+    for(unsigned i=0;i<2000 && !stop_done.load();++i)std::this_thread::yield();
+    assert(!stop_done.load());
+    {
+      std::lock_guard<std::mutex> lock(driver_mu);
+      driver_release=true;
+    }
+    driver_cv.notify_all();
+    tx_task.join();stop_task.join();
+    driver_block=false;
+    assert(tx_result==ESP_OK && stop_done.load());
+    assert(tx_ms.size()==1);
+    assert(signal_v2::CanOwnerTestAccess::transmit(monitor,valid)!=ESP_OK);
   }
   std::cout<<"PR-C2 S1 TX/STOP race + monitor integration PASS\n";
 }
