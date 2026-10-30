@@ -8,7 +8,13 @@ int main(int argc,char** argv) {
   const std::string fault=argv[1];
   lgfx::display_ok=fault!="display";
   install_fail=fault=="install"; start_fail=fault=="start"; task_fail=fault=="task";
-  if (fault=="before-pad") pad_high=false;
+  if (fault=="before-pad") stuck_pad_low=true;
+  if (fault=="display-clobber") display_disables_gpio13=true;
+  if (fault=="display-clobber-stuck") {
+    display_disables_gpio13=true; display_clobber_external_low=true;
+  }
+  if (fault=="display-low") display_drives_gpio13_low=true;
+  if (fault=="display-route") display_corrupts_gpio13_route=true;
   if (fault=="before-rtc") stuck_rtc_mux=true;
   if (fault=="before-sleep") stuck_sleep=true;
   if (fault=="before-mux") bad_iomux=true;
@@ -20,7 +26,9 @@ int main(int argc,char** argv) {
   const bool early=(fault=="display" || fault=="install" || fault=="start" ||
       fault=="task" || fault=="before-pad" || fault=="before-rtc" ||
       fault=="before-sleep" || fault=="before-mux" || fault=="before-input" ||
-      fault=="stopped-rx" || fault=="start-nolom" || fault=="status-boot");
+      fault=="stopped-rx" || fault=="start-nolom" || fault=="status-boot" ||
+      fault=="display-low" || fault=="display-route" ||
+      fault=="display-clobber-stuck");
   if (early) {
     assert(stats.fault && !stats.verified && !installed);
     assert(fault_evidence.captured);
@@ -32,8 +40,11 @@ int main(int argc,char** argv) {
     else if (fault=="stopped-rx") { stage="stopped_snapshot"; field="rx_route"; }
     else if (fault=="start-nolom") { stage="initial_check"; field="controller_listen_only"; }
     else if (fault=="status-boot") { stage="initial_check"; field="twai_status"; }
+    else if (fault=="display-low") { stage="post_display_unsafe"; field="txd_latch_high"; }
+    else if (fault=="display-route") { stage="post_display_unsafe"; field="txd_gpio"; }
+    else if (fault=="display-clobber-stuck") { stage="before_snapshot"; field="txd_pad_high"; }
     else {
-      stage="before_snapshot";
+      stage="first_hold";
       if (fault=="before-pad") field="txd_pad_high";
       if (fault=="before-rtc" || fault=="before-sleep") field="txd_awake";
       if (fault=="before-mux") field="txd_mux_gpio";
@@ -49,7 +60,7 @@ int main(int argc,char** argv) {
     if (fault=="before-input") assert(!fault_evidence.pins.txd_input_enabled);
     if (fault=="stopped-rx") assert(!fault_evidence.pins.rx_route);
     // Prior to start there is no controller/running status to claim.
-    if (stage=="before_snapshot") {
+    if (stage=="first_hold" || stage=="before_snapshot") {
       assert(!fault_evidence.pins.controller_listen_only);
       assert(!fault_evidence.pins.running);
     }
@@ -61,6 +72,7 @@ int main(int argc,char** argv) {
     const std::string line="#PASSIVE_FAULT,stage="+stage+",field="+field+",code=";
     assert(Serial.output.find(line)!=std::string::npos);
     assert(Serial.output.find("txd_pad_high=")!=std::string::npos);
+    assert(Serial.output.find("#PASSIVE_BOOT,first_gpio=")!=std::string::npos);
     assert(Serial.output.find("txd_awake=")!=std::string::npos);
     assert(Serial.output.find("controller_listen_only=")!=std::string::npos);
     assert(Serial.output.find("#PASSIVE,git=")==std::string::npos);
@@ -70,6 +82,17 @@ int main(int argc,char** argv) {
     return 0;
   }
   assert(fresh(readStats()) && calls.back()=="task");
+  if (fault=="display-clobber") {
+    assert(display_reasserted);
+    assert(first_hold_observation.txd_gpio && first_hold_observation.txd_enabled);
+    assert(!display_observation.txd_gpio && !display_observation.txd_enabled);
+    assert(display_observation.txd_latch_high && !display_observation.txd_pad_high);
+    const auto final_snapshot=snapshot(true);
+    assert(passive::safe(final_snapshot));
+    fake_ms=1000; loop();
+    assert(Serial.output.find("reassert=1")!=std::string::npos);
+    fake_ms=0; // Preserve original normal-path expectations.
+  } else assert(!display_reasserted);
   Serial.input="SIGV2 CAN ARM\nARM\nLEASE 1000\nATM5TX1\nSTATS\n";
   loop();
   assert(Serial.output.find("#REJECT,PASSIVE_IMMUTABLE")!=std::string::npos);
