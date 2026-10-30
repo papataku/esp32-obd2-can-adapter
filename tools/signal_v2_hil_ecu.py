@@ -403,6 +403,102 @@ def evaluate(scenario, events):
         elif event["kind"] == "packet":
             generation_pairs[id(event)] = generation_pair(
                 event, "pdu_source_generation", "pdu_mode_epoch")
+    # M-19/M-20: never infer initial generation 2. The runner supplies the
+    # pre-fence STOP request + ACK as one unsequenced evidence record; board
+    # accounting starts at the FENCE as before. Verify the entire boot-local
+    # counter lifecycle independently of whether any sample was acquired.
+    # FW: CanSamples starts (1,1) [include/signal_v2_can_samples.h:17],
+    # CAN GATT authorization starts epoch 1 [src/signal_v2_gatt.cpp:47-48],
+    # STOP/ARM increment the epoch [gatt.cpp:166-205], and each owner.tick
+    # epoch transition increments BOTH counters once [can_owner.h:182-186].
+    preludes = [e for e in events if e.get("kind") == "initial_stop_evidence"]
+    proofs = {}
+    first_fences = {}
+    for x in board:
+        if x["kind"] == "fence" and x.get("boot") not in first_fences:
+            first_fences[x["boot"]] = x
+    boot_samples = {a.get("boot") for a in arms}
+    prelude_ok = True
+    for boot in boot_samples:
+        candidates = [e for e in preludes if e.get("boot") == boot]
+        proof = candidates[0] if len(candidates) == 1 else None
+        fence = first_fences.get(boot)
+        pair = generation_pair(proof, "source_generation", "mode_epoch") if proof else None
+        epoch = uint32_generation(proof.get("epoch")) if proof else None
+        req_epoch = uint32_generation(proof.get("request_epoch")) if proof else None
+        try:
+            req_seq = int(proof["request_seq"]) if proof else -1
+            ack_seq = int(proof["ack_seq"]) if proof else -1
+            req_us = int(proof["request_t_us"]) if proof else -1
+            ack_us = int(proof["ack_t_us"]) if proof else -1
+        except (KeyError, ValueError, TypeError):
+            req_seq = ack_seq = req_us = ack_us = -1
+        ordered = bool(proof and fence and
+                       events.index(proof) < events.index(fence) and
+                       0 < req_seq < ack_seq < fence["seq"] and
+                       0 <= req_us < ack_us < int(fence["t_us"]))
+        valid = bool(ordered and pair and epoch and epoch >= 2 and
+                     req_epoch == epoch and
+                     epoch < 0xFFFFFFFF and pair == (epoch + 1, epoch + 1))
+        prelude_ok &= valid
+        if valid:
+            proofs[boot] = (pair, epoch)
+    prelude_ok &= len(preludes) == len(boot_samples)
+
+    arm_expected = {}
+    stop_generation_ok = prelude_ok
+    generation_state = {}
+    for x in board:
+        boot = x.get("boot")
+        if boot not in generation_state:
+            proof = proofs.get(boot)
+            generation_state[boot] = {
+                "generation": proof[0] if proof else None,
+                "epoch": proof[1] if proof else None,
+                "cause": None, "fault_idle_advance": False}
+        state = generation_state[boot]
+        kind_ = x["kind"]
+        if kind_ == "arm" and x.get("ok") == "1":
+            # After internal owner.stop(), the GATT epoch increments AFTER
+            # owner.tick; the next idle tick consumes that change before ARM.
+            # [src/signal_v2_gatt.cpp:599-611, can_owner.h:182-186]
+            if state["fault_idle_advance"] and state["generation"]:
+                state["generation"] = tuple(g + 1 for g in state["generation"])
+            state["fault_idle_advance"] = False
+            old = state["generation"]
+            expect = tuple(g + 1 for g in old) if old else None
+            epoch = uint32_generation(x.get("epoch"))
+            good = bool(expect and epoch and state["epoch"] and
+                        epoch == state["epoch"] + 1 and
+                        max(expect) <= 0xFFFFFFFF)
+            stop_generation_ok &= good
+            arm_expected[(boot, x["seq"])] = expect if good else None
+            state["generation"] = expect if good else None
+            state["epoch"] = epoch if good else None
+            state["cause"] = None
+        elif kind_ in ("stop_request", "disconnect", "fault"):
+            if kind_ == "stop_request" and state["fault_idle_advance"] and state["generation"]:
+                state["generation"] = tuple(g + 1 for g in state["generation"])
+                state["fault_idle_advance"] = False
+            state["cause"] = kind_
+        elif kind_ == "stopped":
+            previous = state["generation"]
+            expect = tuple(g + 1 for g in previous) if previous else None
+            pair = generation_pairs.get(id(x))
+            epoch = uint32_generation(x.get("epoch"))
+            requested = state["cause"] in ("stop_request", "disconnect", "fault")
+            good = bool(requested and expect and pair and epoch and state["epoch"] and
+                        epoch == state["epoch"] + 1 and
+                        (state["cause"] != "stop_request" or
+                         any(r.get("boot") == boot and r.get("epoch") == x.get("epoch")
+                             and r["seq"] < x["seq"] for r in kind("stop_request"))) and
+                        max(expect) <= 0xFFFFFFFF and pair == expect)
+            stop_generation_ok &= good
+            state["generation"] = pair if good else None
+            state["epoch"] = epoch if good else None
+            state["fault_idle_advance"] = bool(good and state["cause"] == "fault")
+            state["cause"] = None
+
     for x in board:
         k = x["kind"]
         boot = x.get("boot")
@@ -450,18 +546,10 @@ def evaluate(scenario, events):
             # same-boot STOP ACK. Within one ARM interval, generation changes
             # without another authorization boundary are unexplained and fail.
             generations = generation_pairs[id(x)]
-            stopped = last_stopped.get(boot)
-            stopped_generations = generation_pairs.get(id(stopped)) if stopped else None
-            # M-18: src/signal_v2_can_owner.h:182-186 increments BOTH
-            # uint32 counters once on each authorization-epoch transition;
-            # include/signal_v2_can_samples.h:17 initializes BOTH to 1.
-            # A first ARM therefore yields exactly (2,2). After the same-
-            # boot STOP ACK, the next ARM yields exactly STOP+(1,1), not an
-            # arbitrary larger pair. No counter changes during a single ARM.
-            expected_generations = ((stopped_generations[0] + 1,
-                         stopped_generations[1] + 1)
-                        if stopped and stopped_generations else
-                        (2, 2) if stopped is None else None)
+            # M-19/M-20: ARM expectation is reconstructed from the verified
+            # pre-FENCE STOP baseline and every intervening STOP ACK. Never
+            # substitute a guessed first-ARM generation.
+            expected_generations = arm_expected.get((boot, arm["seq"])) if arm else None
             epoch_key = (boot, arm["seq"]) if arm else None
             initial = epoch_sample_generations.get(epoch_key)
             continuous = initial is None or generations == initial
@@ -728,7 +816,7 @@ def evaluate(scenario, events):
         "positive_acquisition": (sample_ok and group_sample_ok and healthy_first and bool(group_txs) and bool(fc_txs)) if not expect_stop or after_healthy else not samples,
         "sustained_cadence": sustained if scenario in ("normal", "split", "rearm") else True,
         "both_admission_gates": gate_ok and retry_ok,
-        "epoch_separation": rearm_ok and packet_ok and sample_generation_ok,
+        "epoch_separation": rearm_ok and packet_ok and sample_generation_ok and stop_generation_ok,
         "within_100ms_cap": peaks["peak100_bits"] <= CAP_100MS,
         "within_1s_cap": peaks["peak1000_bits"] <= CAP_1S,
     }
