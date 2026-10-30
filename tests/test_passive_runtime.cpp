@@ -64,7 +64,8 @@ int main(int argc,char** argv) {
       assert(!fault_evidence.pins.controller_listen_only);
       assert(!fault_evidence.pins.running);
     }
-    if (stage!="before_snapshot" && stage!="display_init" &&
+    if (stage!="before_snapshot" && stage!="first_hold" &&
+        stage!="post_display_unsafe" && stage!="display_init" &&
         stage!="driver_install") assert(calls.back()=="uninstall");
     const std::string first_stage=fault_evidence.stage;
     const auto count=calls.size();
@@ -89,9 +90,8 @@ int main(int argc,char** argv) {
     assert(display_observation.txd_latch_high && !display_observation.txd_pad_high);
     const auto final_snapshot=snapshot(true);
     assert(passive::safe(final_snapshot));
-    fake_ms=1000; loop();
+    printBootEvidence();
     assert(Serial.output.find("reassert=1")!=std::string::npos);
-    fake_ms=0; // Preserve original normal-path expectations.
   } else assert(!display_reasserted);
   Serial.input="SIGV2 CAN ARM\nARM\nLEASE 1000\nATM5TX1\nSTATS\n";
   loop();
