@@ -1,3 +1,4 @@
+#if !defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
 #include "ui.h"
 
 #include <M5Dial.h>
@@ -324,3 +325,18 @@ void Ui::update(const CanMonitor& can, const BleStats& ble_stats, bool ble_ready
 }
 
 }  // namespace m5can
+
+#else
+// Headless HIL: no M5Unified/M5GFX autodetection, NVS board cache, touch or GPIO.
+#include "ui.h"
+namespace m5can {
+void Ui::begin() {}
+void Ui::showFatal(const char*, const char*) {}
+bool Ui::pollDemoToggle() { return false; }
+void Ui::update(const CanMonitor&, const BleStats&, bool, bool, bool, bool, bool
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+, const BlePeersSnapshot*
+#endif
+) {}
+}
+#endif

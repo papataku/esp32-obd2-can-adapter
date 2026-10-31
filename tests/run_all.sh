@@ -58,6 +58,7 @@ c++ -std=c++17 -Wall -Wextra -Werror \
 /tmp/m5can-v2-can-isotp
 
 python3 tests/test_signal_v2_scan_advertisement_policy.py
+python3 tests/test_signal_v2_hil_ecu.py
 
 # Independent PR63 review reproductions: bounded FC/RAW/PDU and arm epochs.
 for fixture in fc owner; do
@@ -110,6 +111,7 @@ c++ -std=c++11 -Wall -Wextra -Wno-unused-function -Werror -pthread \
   -o /tmp/m5can-v22-stage-s1-monitor
 /tmp/m5can-v22-stage-s1-monitor
 python3 tests/test_signal_v2_elf_policy.py
+python3 tests/test_signal_v2_b01_policy.py
 c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   -Itests/host_stubs -Iinclude -Isrc tests/test_diagnostic_review_capacity.cpp \
   src/diagnostic_policy.cpp src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
@@ -118,6 +120,12 @@ c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
 
 # Independent PR65 safety review: production monitor + owner, policy and C++11 ODR.
 bash tests/run_pr65_regressions.sh
+
+# PR66 stopped drain, lifecycle/admission and complete board-timed oracle.
+bash tests/run_hil_regressions.sh
+python3 tests/test_hil_evidence.py
+python3 tests/test_hil_runner.py
+python3 tests/test_hil_oracle_r66c.py
 
 # Dedicated physical-TX-isolated receiver safety policy.
 c++ -std=c++17 -Wall -Wextra -Werror -Iinclude tests/test_passive_policy.cpp -o /tmp/m5can-passive-policy

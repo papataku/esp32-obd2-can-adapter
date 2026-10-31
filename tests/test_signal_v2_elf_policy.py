@@ -3,20 +3,25 @@
 import pathlib, subprocess, sys, tempfile, unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 class LinkedPolicy(unittest.TestCase):
-    def check_symbols(self, symbols):
+    def check_symbols(self, symbols, hil=False):
         with tempfile.TemporaryDirectory() as d:
             elf=pathlib.Path(d)/'fixture.elf';elf.write_bytes(b'linked ELF fixture')
             nm=pathlib.Path(d)/'nm'
             nm.write_text('#!/bin/sh\ncat <<\'SYMBOLS\'\n'+symbols+'\nSYMBOLS\n')
             nm.chmod(0o700)
             return subprocess.run([sys.executable,str(ROOT/'tools/check_signal_v2_elf.py'),
-                str(elf),'--nm',str(nm)],capture_output=True,text=True)
+                str(elf),'--nm',str(nm)]+(['--hil'] if hil else []),capture_output=True,text=True)
     def test_defined_tx_and_init_rejected(self):
-        for symbol in ('twai_transmit','twai_driver_install','twai_start'):
+        for symbol in ('twai_transmit','twai_driver_install','twai_start','twai_stop','twai_hal_init'):
             with self.subTest(symbol=symbol):
                 result=self.check_symbols('00001234 T '+symbol)
                 self.assertNotEqual(result.returncode,0)
                 self.assertIn('FORBIDDEN',result.stderr)
+    def test_hil_rejects_board_autodetection(self):
+        for name in ('M5GFX::init','M5Unified::begin','M5Dial::begin'):
+            result=self.check_symbols('00001234 T '+name,hil=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('FORBIDDEN',result.stderr)
     def test_safe_symbols_pass(self):
         self.assertEqual(self.check_symbols('00001234 T safe_function').returncode,0)
     def test_ci_checks_v21_linked_elf(self):

@@ -21,6 +21,13 @@
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && defined(M5CAN_CAN_TX_HARD_DISABLED)
 #error "V2-2 TX-enabled image conflicts with V2-1 hard-disabled"
 #endif
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && \
+    !defined(M5CAN_SIGNAL_V2_STAGE_GATED) && !defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+#error "Vehicle-capable V2 CAN must retain S1 STAGE_GATED authorization"
+#endif
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL) && defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+#error "Serial-HIL ARM/GROUP requires an unstaged, ELF-isolated USB-only image"
+#endif
 namespace signal_v2 {
 namespace {
 struct Link {
@@ -169,6 +176,9 @@ void manage(const char *cmd, uint32_t now) {
     owner.noteAuthorizationEnd("OPERATOR_STOP");
     can_armed=false;const uint32_t revoked=++can_authorization_epoch;
     owner.revokeAuthorization(revoked);owner.invalidate(10);
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=stop_request,epoch=%lu",(unsigned long)can_authorization_epoch.load());
+#endif
     for(auto &p:peers) {
       p.output.size=p.dataoff=0;
       p.session.clearDemoCache(now);
@@ -176,6 +186,17 @@ void manage(const char *cmd, uint32_t now) {
     Serial.println("#SIGNALV2_CAN,armed=0,reason=OPERATOR_STOP,ack=REQUESTED");
     return;
   }
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  if(!std::strcmp(cmd,"SIGV2 CAN READY")) {
+    bool ready=false;
+    for(unsigned i=0;i<2;++i){
+      auto l=snapshot(i);
+      if(l.active&&l.status&&l.data&&authorized(l)&&peers[i].session.active(now))ready=true;
+    }
+    hil::note("kind=ready,ok=%u",ready?1U:0U);
+    return;
+  }
+#endif
   if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
     // Owner decision O-1 (review B-02): in the vehicle-capable staged build a
@@ -192,6 +213,9 @@ void manage(const char *cmd, uint32_t now) {
     }
     if(secured && !can_armed)++can_authorization_epoch;
     can_armed=secured;
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=arm,ok=%u,epoch=%lu",secured?1U:0U,(unsigned long)can_authorization_epoch.load());
+#endif
     armed_until=now+600000;
     Serial.printf("#SIGNALV2_CAN,armed=%u,reason=%s,ttl_ms=600000\n",
       can_armed?1U:0U,can_armed?"USB_VERIFIED":"NOT_READY");
@@ -447,6 +471,32 @@ void send(Peer &p, const Link &l, uint32_t now) {
     }
     return;
   }
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  if(!isack && off==0 && (packet.bytes[4]==0x20 || packet.bytes[4]==0x21)){
+    const uint8_t *payload=packet.payload();
+    const unsigned records=packet.bytes[4]==0x21?payload[12]:payload[0];
+    size_t at=packet.bytes[4]==0x21?20:2;unsigned fresh=0;
+    // Generations actually carried by the notified Fresh records (lowest
+    // value), independent of the owner's current counters (review B-03).
+    uint32_t pdu_generation=0,pdu_mode=0,pdu_source=0;bool pdu_mixed=false;
+    for(unsigned i=0;i<records && at+44<=packet.size-Header;++i){
+      if(payload[at+7]<=1){
+        const uint32_t g=u32(payload+at+14),m=u32(payload+at+18),src=u32(payload+at+22);
+        if(fresh && (g!=pdu_generation||m!=pdu_mode||src!=pdu_source))pdu_mixed=true;
+        if(!fresh||g<pdu_generation)pdu_generation=g;
+        if(!fresh||m<pdu_mode)pdu_mode=m;
+        pdu_source=src;++fresh;
+      }
+      at+=u16(payload+at);
+    }
+    hil::note("kind=packet,type=%u,epoch=%lu,fresh=%u,current=%u,source_generation=%lu,mode_epoch=%lu,"
+      "pdu_source_generation=%lu,pdu_mode_epoch=%lu,pdu_source=%08lX,pdu_mixed=%u",
+      unsigned(packet.bytes[4]),(unsigned long)can_authorization_epoch.load(),fresh,
+      p.session.canPacketCurrent(now,packet,owner.samples())?1U:0U,
+      (unsigned long)owner.samples().source_generation,(unsigned long)owner.samples().mode_epoch,
+      (unsigned long)pdu_generation,(unsigned long)pdu_mode,(unsigned long)pdu_source,pdu_mixed?1U:0U);
+  }
+#endif
   p.progress = now;
   if (isack) {
     p.waiting = true;
@@ -533,6 +583,9 @@ void connected(uint16_t handle) {
 }
 void disconnected(uint16_t handle) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  hil::note("kind=disconnect,handle=%u",unsigned(handle));
+#endif
   owner.noteAuthorizationEnd("CENTRAL_DISCONNECT");
   can_armed=false; // New connection requires a new local USB arm.
   const uint32_t revoked=++can_authorization_epoch;
@@ -589,6 +642,9 @@ void poll() {
     owner.noteAuthorizationEnd("USB_ARM_EXPIRED");
     can_armed=false;const uint32_t revoked=++can_authorization_epoch;
     owner.revokeAuthorization(revoked);owner.invalidate(10);
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=stop_request,epoch=%lu",(unsigned long)can_authorization_epoch.load());
+#endif
     Serial.println("#SIGNALV2_CAN,armed=0,reason=USB_ARM_EXPIRED");
   }
   owner.tick(now,demand,can_armed,can_authorization_epoch.load());
@@ -596,6 +652,10 @@ void poll() {
   static uint32_t stopped_ack_epoch=0;
   if(!can_armed && !owner.busy() && stopped_ack_epoch!=can_authorization_epoch.load()){
     stopped_ack_epoch=can_authorization_epoch.load();
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=stopped,epoch=%lu,source_generation=%lu,mode_epoch=%lu",(unsigned long)stopped_ack_epoch,
+      (unsigned long)owner.samples().source_generation,(unsigned long)owner.samples().mode_epoch);
+#endif
     Serial.printf("#SIGNALV2_CAN,ack=STOPPED,epoch=%lu,source_generation=%lu,mode_epoch=%lu\n",
       static_cast<unsigned long>(stopped_ack_epoch),
       static_cast<unsigned long>(owner.samples().source_generation),
