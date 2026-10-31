@@ -1,4 +1,5 @@
 #include "signal_v2_session.h"
+#include "signal_v2_demo.h"
 #include <algorithm>
 #include <cstring>
 namespace signal_v2 {
@@ -281,7 +282,7 @@ void Session::apply(const uint8_t *b, uint32_t now) {
   due_.fill(now);
   plan_size_ = 0;
 }
-bool Session::produce(uint32_t now, Packet &out, const Simulator *source) {
+bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool demo_enabled) {
   if (!hello_)
     return false;
   // Expiration invalidates pending snapshots as well as demand. Never reissue
@@ -343,23 +344,24 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source) {
       w32(r + 14, 1);
       w32(r + 18, 1);
       w32(r + 22, u32(e + 8));
-      auto shared = source ? source->sample(pid) : nullptr;
-      w64(r + 26, uint64_t(shared ? shared->observed_ms : now) * 1000);
-      w32(r + 34, 1000);
-      w32(r + 38, shared ? shared->sequence : ++sample_);
+      const auto shared = source ? source->sample(pid) : nullptr;
+      // Tests without an external source exercise the original active
+      // synthetic path. Physical V2 lab always provides a Simulator.
+      const bool available = demo_enabled && (!source || shared);
+      const uint32_t sample_sequence = !available ? 0 :
+          (shared ? shared->sequence : ++sample_);
+      const size_t actual_len = available
+          ? demoPayload(pid, sample_sequence, r + 44) : 0;
+      if (available && actual_len != len) return false;
+      len = static_cast<uint8_t>(actual_len);
+      size = 44 + len;
+      w16(r, static_cast<uint16_t>(size));
+      r[7] = !available ? 2 : (pid == 0x0d && r[46] == 0 ? 1 : 0);
+      w64(r + 26, available
+          ? uint64_t(shared ? shared->observed_ms : now) * 1000 : 0);
+      w32(r + 34, available ? 1000 : 0);
+      w32(r + 38, available ? sample_sequence : 0);
       r[42] = len;
-      r[44] = 0x41;
-      r[45] = pid;
-      if (pid == 0x0d)
-        r[46] = 42;
-      else if (pid == 5)
-        r[46] = 120;
-      else if (pid == 0x5b)
-        r[46] = 128;
-      else if (pid == 0x9a) {
-        r[48] = 0x64;
-        r[51] = 100;
-      }
       cache_lengths_[i] = size;
       std::copy(r, r + size, p + pos);
       pos += size;

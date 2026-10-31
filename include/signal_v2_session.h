@@ -56,6 +56,15 @@ public:
   uint8_t reservations(uint32_t now) const { return active(now) ? count_ : 0; }
   void control(const Packet &, bool authorized, uint32_t now, Packet &);
   void demand(uint32_t now, Simulator::Demand &) const;
-  bool produce(uint32_t now, Packet &, const Simulator *source = nullptr);
+  // USB DEMO mode transition: never retain an old VALID sample in a snapshot.
+  void clearDemoCache(uint32_t now) {
+    cache_lengths_.fill(0);
+    cache_count_ = 0;
+    cache_size_ = 0;
+    due_.fill(now);
+    next_ = now;
+  }
+  bool produce(uint32_t now, Packet &, const Simulator *source = nullptr,
+               bool demo_enabled = true);
 };
 } // namespace signal_v2

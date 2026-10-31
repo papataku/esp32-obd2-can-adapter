@@ -192,3 +192,35 @@ registry package `platformio/tool-esptoolpy@2.40900.250804` (esptool 4.9.0) for
 image generation in the Ring env. The board, Arduino 3.1.1, flash/PSRAM/layout
 remain the reference settings. USB ROM recovery uses separately isolated
 venv esptool 5.6.0; its version does not change the firmware toolchain.
+
+## V2-1b: paired five-signal SmartRing PRODUCT display
+
+This section is ONLY for branch `feat/m5can-v2-1b-demo5`, paired with
+`papataku/TacoTacoMeter` branch `feat/smartring-v2-client`, env
+`viewe_smartring_lvgl_signal_v2_lab`. M5Dial uses the unchanged
+`m5dial_signal_v2_can_disabled_lab` env. 200ms period; 10Hz is V2-2.
+
+The synthetic source now defaults **OFF at every boot**, regardless of the
+legacy V1 DEMO NVS setting. On M5Dial USB serial, commands are:
+```
+SIGV2 DEMO STATUS
+SIGV2 DEMO ON
+SIGV2 DEMO OFF
+```
+Only M5Dial USB SerialProtocol accepts them; they are NOT BLE/NUS commands.
+ON is volatile, not persisted, and never enables CAN. Each of RPM (010C),
+SPEED (010D), WATER (0105), SOC (015B), POWER (019A) changes as a
+deterministic, physically plausible **synthetic** raw OBD payload. All five
+records have origin DEMO (02), quality VALID/VALID_ZERO (00/01), source and
+mode generation 1. OFF clears cached values and sends NO_DATA (02), data
+length 0 and sample sequence 0; never emits zero as an unavailable sample.
+No unsolicited SNAPSHOT changes the frozen V2 wire contract.
+
+Follow the full cross-repository provisioning, enrollment, app-only image
+verification, UI and recovery checklist in
+`papataku/TacoTacoMeter/docs/qa/signal-v2-1b-product-ring-runbook.md`.
+Use a privately verified gitignored target on the SmartRing operator Mac.
+Do NOT flash, erase, or connect to a vehicle without the PM's separate
+physical authorization. Check both exact firmware hashes and measure the
+display quality states on the real SmartRing. This runbook/CI never proves
+actual 5Hz/10Hz fresh ECU observation or SOC/POWER LIVE eligibility.
