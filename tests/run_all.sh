@@ -126,3 +126,10 @@ bash tests/run_hil_regressions.sh
 python3 tests/test_hil_evidence.py
 python3 tests/test_hil_runner.py
 python3 tests/test_hil_oracle_r66c.py
+
+# Dedicated physical-TX-isolated receiver safety policy.
+c++ -std=c++17 -Wall -Wextra -Werror -Iinclude tests/test_passive_policy.cpp -o /tmp/m5can-passive-policy
+/tmp/m5can-passive-policy
+python3 tests/test_passive_profile.py
+./tests/run_passive_runtime.sh
+python3 tests/test_passive_flash_check.py

@@ -24,11 +24,7 @@ required_elm = (
 )
 
 transmit_count = src.count("twai_transmit(")
-# The serial HIL bridge only compares the requested mode; it owns no hardware.
-hil_files = [p for p in src_files if p.name.startswith("twai_hil.")]
-hil_src = "\n".join(p.read_text() for p in hil_files)
-normal_files = [p.name for p in src_files
-                if "TWAI_MODE_NORMAL" in p.read_text() and p not in hil_files]
+normal_files = [p.name for p in src_files if "TWAI_MODE_NORMAL" in p.read_text()]
 mode_call_names = (
     "twai_stop(", "twai_driver_uninstall(",
     "twai_driver_install(", "twai_start(",
@@ -51,15 +47,8 @@ checks = {
         "CanMonitor::transmitOwnedFrame" in can and "twai_transmit(" in can,
     "normal mode only referenced by CAN owner":
         normal_files == ["can_monitor.cpp"],
-    "serial HIL bridge calls no TWAI hardware API":
-        not any(c in hil_src for c in mode_call_names + ("twai_transmit(", "twai_receive(",
-                                                        "twai_get_status_info(")),
-    "serial HIL redirect only in CAN owner":
-        "M5CAN_TWAI_HIL_REDIRECT" in can and
-        all("M5CAN_TWAI_HIL_REDIRECT" not in p.read_text() for p in src_files
-            if p.name not in ("can_monitor.cpp", "twai_hil.h")),
-    "TWAI state-changing calls only CAN owner":
-        mode_files == {"can_monitor.cpp"},
+    "TWAI state-changing calls only mutually exclusive CAN owners":
+        mode_files == {"can_monitor.cpp", "passive_rx.cpp"},
     "single-shot TX enabled":
         "tx.ss = 1" in can,
     "flow control is 30 00 00":

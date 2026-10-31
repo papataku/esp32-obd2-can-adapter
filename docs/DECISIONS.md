@@ -353,21 +353,15 @@ reads can finish after the normal quiet period. Sustained 100ms demand tests
 cover owner scheduling and production monitor admission independently. This is
 host software evidence, not a response latency or physical vehicle qualification.
 
-## 2026-10-30 — PR66 serial HIL evidence is fail-closed
+## D025 - Dedicated passive image disconnects controller TX from GPIO
 
-The HIL image is headless so M5GFX board autodetection cannot probe CAN GPIOs.
-Only HIL builds queue board-timed, sequenced TX-attempt/RX-acceptance events;
-USB never runs in the CAN submission call. Evidence loss latches TX off across
-reinstalls. RX admission, installed state, generation and stopped draining share
-one nonblocking critical section, with explicit generation-tagged injections.
-Driver recreation resets driver counters but cannot reset transport loss.
-
-Qualification requires a fresh nonce fence and accepted ARM, actual scenario
-injection, two 800-bit first reservations, positive decoded acquisitions where
-applicable, expected fault category/deadline, acknowledged STOP, quiet time and
-60-second observation. Host arrival/write times cannot stand in for board times.
-STOP/re-ARM/Snapshot, old-CF overlap, deliberate queue overflow, admission and
-operator-driven disconnect/reboot have explicit phases and missing evidence
-fails. The serial model has no electrical ACK/retry/timing authority. Hardware
-stress, central receipt and vehicle gates remain separate; no budget/cap, other
-image behavior or authorization policy is changed. See the serial HIL runbook.
+`m5dial_signal_v2_can_29bit_passive` compiles only a USB ambient receiver.
+GPIO13 holds U179 TXD recessive HIGH; install uses unused GPIO39 and removes
+all controller TX routes before start. This defeats ESP32-S3 Listen-Only
+error-frame generation without relying on precompiled SDK errata settings.
+No diagnostic, NORMAL, ARM, lease, BLE or auto-recovery implementation is
+linked. Boot/100ms register and pad checks latch stop/uninstall on a fault.
+This is routing isolation, not electrical isolation against arbitrary faults.
+See [evidence and limitations](qa/m5dial-passive-design-review.md) and
+[owner/PM acceptance runbook](qa/m5dial-passive-runbook.md). Device acceptance
+remains pending; existing active/legacy gates and default env are unchanged.
