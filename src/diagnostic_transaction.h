@@ -45,6 +45,8 @@ class DiagnosticTransaction {
   bool appendRaw(const TransactionFrame& frame);
   bool appendMessage(const DiagnosticMessage& message);
 
+  bool failed_ = false;
+  uint8_t rx_count_ = 0, fc_count_ = 0, seen_pids_ = 0;
   DiagnosticRequest request_{};
   uint64_t tx_us_ = 0;
   IsoTpAssembler assembler_{};

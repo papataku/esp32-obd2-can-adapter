@@ -50,6 +50,12 @@ class IsoTpAssembler {
   Session* find(uint32_t response_id);
   Session* allocate(uint32_t response_id);
   bool initialPayloadMatches(const uint8_t* payload, size_t length) const;
+  // V2 0C/0D physical probe or essential read: only Single Frames allowed.
+  bool physicalProbeRoute(uint32_t can_id) const {
+    return request_.signal_v2 && request_.length==3 &&
+           request_.can_id!=0x18DB33F1U &&
+           DiagnosticPolicy::responseBelongsToRequest(request_,can_id);
+  }
 
   DiagnosticRequest request_{};
   uint32_t cf_timeout_ms_ = 100;

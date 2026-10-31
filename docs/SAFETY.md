@@ -200,3 +200,27 @@ host unit tests
 ```
 
 A later phase must not be used to compensate for an unverified earlier phase.
+
+## Signal V2 build and rollback boundary
+
+The default `m5dial` remains the existing request-driven, TX-capable ELM327
+adapter by explicit owner decision. It is **NOT a CAN-disabled fallback** and
+does not use the Signal V2 USB ARM lifecycle. V2-1
+`m5dial_signal_v2_can_disabled_lab` compiles out TWAI initialization and TX;
+CI checks its linked ELF for `twai_transmit`, `twai_driver_install`, `twai_start`.
+Only V2-2 environments enable the Signal V2 TX path. Legacy TX-capable
+profiles are separate and are not Signal V2 fallback images. Rollback must
+use the owner's verified original backup image, never a rebuilt default.
+
+See the [first-trial runbook](qa/signal-v2-2-29bit-vehicle-runbook.md) for
+per-board backup/readback/restore, mandatory independent isolated-bench load
+measurement, passive versus armed phases and STOP/expiry/no-TX verification.
+Current V2-2 functional discovery is deliberately refused: the maximum
+induced responder traffic cannot fit the admitted budget. This closes the
+unbounded broadcast path but does not qualify active vehicle acquisition.
+
+Dedicated ambient-only candidate: `m5dial_signal_v2_can_29bit_passive` removes
+all controller TX GPIO routes and fixes U179 TXD HIGH. It has no ARM/lease/BLE
+application. Use only its [passive acceptance runbook](qa/m5dial-passive-runbook.md)
+and exact [routing evidence](qa/m5dial-passive-design-review.md); a build alone
+is not a vehicle GO. Existing active profiles still need their own gates.

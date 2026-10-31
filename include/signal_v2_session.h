@@ -1,6 +1,7 @@
 #pragma once
 #include "signal_v2_codec.h"
 #include "signal_v2_simulator.h"
+#include "signal_v2_can_samples.h"
 namespace signal_v2 {
 // Wire permits 16 entries; admission separately checks the 486-byte snapshot budget.
 constexpr size_t MaxSubscriptions = 16;
@@ -42,6 +43,7 @@ class Session {
   size_t cache_size_ = 0;
   uint16_t period_ = 200;
   bool snapshot_ = false;
+  uint32_t snapshot_request_id_ = 0;
   uint32_t observed_ms_ = 0, heartbeat_ = 0;
   void ack(const Packet &, Result, const uint8_t *, size_t, Packet &);
 
@@ -65,6 +67,8 @@ public:
     next_ = now;
   }
   bool produce(uint32_t now, Packet &, const Simulator *source = nullptr,
-               bool demo_enabled = true);
+               bool demo_enabled = true, const CanSamples *can = nullptr);
+  // Recheck queued CAN DATA/SNAPSHOT immediately before BLE notification.
+  bool canPacketCurrent(uint32_t now,const Packet &,const CanSamples &) const;
 };
 } // namespace signal_v2

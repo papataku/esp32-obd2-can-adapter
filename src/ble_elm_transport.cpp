@@ -1,4 +1,7 @@
 #include "signal_v2_gatt.h"
+#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+#include "signal_v2_codec.h"
+#endif
 #include "ble_elm_transport.h"
 #include "diagnostic_error_catalog.h"
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
@@ -260,7 +263,15 @@ bool BleElmTransport::begin() {
   advertising_=BLEDevice::getAdvertising();
 #endif
   if (!advertising_) { setError("BLE advertising unavailable"); return false; }
+#if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
+  // One advertised 128-bit service fits legacy BLE advertisement budgets.
+  // V2 scan must NEVER infer capability from the old ELM UUID or device name.
+  // The legacy GATT service can still exist, but V2 lab discovery identifies
+  // only genuine Signal V2-capable firmware via the V2 service UUID.
+  advertising_->addServiceUUID(signal_v2::Service);
+#else
   advertising_->addServiceUUID(cfg::kBleServiceUuid);
+#endif
   advertising_->setScanResponse(true);
   advertising_->start();
   setError("OK");

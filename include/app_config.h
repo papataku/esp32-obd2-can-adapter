@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include <driver/gpio.h>
 
-namespace m5can::cfg {
+namespace m5can { namespace cfg {
 
 constexpr gpio_num_t kCanTxPin = GPIO_NUM_13;
 constexpr gpio_num_t kCanRxPin = GPIO_NUM_15;
@@ -42,4 +42,4 @@ constexpr uint8_t kNativeProtocolVersion = 1;
 constexpr const char* kFirmwareName = "M5CAN-Dial";
 constexpr const char* kFirmwareVersion = "0.4.4-phase3f-demo-touch";
 
-}  // namespace m5can::cfg
+}}  // namespace m5can::cfg

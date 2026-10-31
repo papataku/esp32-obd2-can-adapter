@@ -72,6 +72,14 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
   }
 
   if (pci_type == 0x1) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+    // Essential 0C/0D reply is single-frame; do not FC another tester's FF.
+    // A physical probe FF breaks the N1 two-SF contract: fail, never FC.
+    if(request_.signal_v2 && request_.length==3){
+      if(physicalProbeRoute(can_id))event.type=IsoTpEventType::Overflow;
+      return event;
+    }
+#endif
     // RPM+speed is exactly six diagnostic bytes and MUST fit one Classical
     // CAN ISO-TP Single Frame. Never issue Flow Control for a purported
     // multi-PID First Frame; it could belong to another diagnostic tester.
@@ -81,6 +89,14 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
     if (dlc < 4) return event;
     const uint16_t total_len =
         static_cast<uint16_t>(((data[0] & 0x0F) << 8) | data[1]);
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+    // Complete group (17 bytes), or a separate 019A reply (8 bytes).
+    // Every other large response is rejected BEFORE sending Flow Control.
+    if(request_.signal_v2 && request_.length==6 &&
+       total_len!=17 && total_len!=8){
+      event.type=IsoTpEventType::Overflow;return event;
+    }
+#endif
     const size_t available = std::min<size_t>(dlc - 2, total_len);
     if (!initialPayloadMatches(&data[2], available)) return event;
 
@@ -123,6 +139,9 @@ IsoTpEvent IsoTpAssembler::feed(uint32_t can_id, bool extended, bool rtr,
   }
 
   if (pci_type == 0x2) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+    if(physicalProbeRoute(can_id)){event.type=IsoTpEventType::Overflow;return event;}
+#endif
     Session* session = find(can_id);
     if (!session || dlc < 2) return event;
 

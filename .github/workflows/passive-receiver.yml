@@ -1,0 +1,40 @@
+name: Passive TX-isolated M5Dial receiver
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  passive-receiver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install platformio
+      - name: Hardware policy fault injection and negative compilation
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -Iinclude tests/test_passive_policy.cpp -o /tmp/passive-policy
+          /tmp/passive-policy
+          python tests/test_passive_profile.py
+          python tests/test_passive_flash_check.py
+          ./tests/run_passive_runtime.sh
+      - name: Build dedicated passive image (never upload to a device)
+        run: pio run -e m5dial_signal_v2_can_29bit_passive
+      - name: Check actual ELF RX capability and TX/ARM/lease/BLE exclusion
+        run: |
+          python tools/check_passive_elf.py .pio/build/m5dial_signal_v2_can_29bit_passive/firmware.elf --nm ~/.platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-nm | tee passive-elf-evidence.txt
+      - name: Upload review artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: m5dial-passive-${{ github.sha }}
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            passive-elf-evidence.txt
+            .pio/build/m5dial_signal_v2_can_29bit_passive/firmware.elf
+            .pio/build/m5dial_signal_v2_can_29bit_passive/firmware.bin
+            .pio/build/m5dial_signal_v2_can_29bit_passive/bootloader.bin
+            .pio/build/m5dial_signal_v2_can_29bit_passive/partitions.bin

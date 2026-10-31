@@ -1,17 +1,32 @@
+#include <atomic>
 #if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
 #include "signal_v2_gatt.h"
 #include "nimble/nimble/host/include/host/ble_store.h"
 #include "signal_v2_golden.h"
 #include "signal_v2_registry.h"
 #include "signal_v2_session.h"
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+#include "signal_v2_can_owner.h"
+#endif
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <cstdio>
 #include <cstring>
 #include <mbedtls/sha256.h>
-#if !defined(M5CAN_CAN_TX_HARD_DISABLED) || !M5CAN_CAN_TX_HARD_DISABLED
-#error "Signal V2 lab MUST compile out physical CAN TX"
+#if !defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && \
+    (!defined(M5CAN_CAN_TX_HARD_DISABLED) || !M5CAN_CAN_TX_HARD_DISABLED)
+#error "CAN-disabled V2-1 requires physical TX lock"
+#endif
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && defined(M5CAN_CAN_TX_HARD_DISABLED)
+#error "V2-2 TX-enabled image conflicts with V2-1 hard-disabled"
+#endif
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && \
+    !defined(M5CAN_SIGNAL_V2_STAGE_GATED) && !defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+#error "Vehicle-capable V2 CAN must retain S1 STAGE_GATED authorization"
+#endif
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL) && defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+#error "Serial-HIL ARM/GROUP requires an unstaged, ELF-isolated USB-only image"
 #endif
 namespace signal_v2 {
 namespace {
@@ -34,6 +49,12 @@ QueueHandle_t inbox = nullptr, admin = nullptr;
 NimBLECharacteristic *status = nullptr, *data = nullptr;
 Registry registry;
 Simulator simulator;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+CanOwner owner;
+std::atomic<bool> can_armed{false};
+std::atomic<uint32_t> can_authorization_epoch{1};
+uint32_t armed_until=0;
+#endif
 // Never inherit legacy V1/NVS DEMO or enable synthetic observations at boot.
 bool demo_enabled = false;
 unsigned active_slot = 0;
@@ -150,6 +171,93 @@ class Callbacks : public NimBLECharacteristicCallbacks {
   }
 };
 void manage(const char *cmd, uint32_t now) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(!std::strcmp(cmd,"SIGV2 CAN STOP")) {
+    owner.noteAuthorizationEnd("OPERATOR_STOP");
+    can_armed=false;const uint32_t revoked=++can_authorization_epoch;
+    owner.revokeAuthorization(revoked);owner.invalidate(10);
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=stop_request,epoch=%lu",(unsigned long)can_authorization_epoch.load());
+#endif
+    for(auto &p:peers) {
+      p.output.size=p.dataoff=0;
+      p.session.clearDemoCache(now);
+    }
+    Serial.println("#SIGNALV2_CAN,armed=0,reason=OPERATOR_STOP,ack=REQUESTED");
+    return;
+  }
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  if(!std::strcmp(cmd,"SIGV2 CAN READY")) {
+    bool ready=false;
+    for(unsigned i=0;i<2;++i){
+      auto l=snapshot(i);
+      if(l.active&&l.status&&l.data&&authorized(l)&&peers[i].session.active(now))ready=true;
+    }
+    hil::note("kind=ready,ok=%u",ready?1U:0U);
+    return;
+  }
+#endif
+  if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {
+#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+    // Owner decision O-1 (review B-02): in the vehicle-capable staged build a
+    // generic ARM is not a vehicle-stage authorization. S1 has its own
+    // command; S2/S3 stay unreachable until their explicit stages exist.
+    Serial.println("#SIGNALV2_CAN,armed=0,reason=STAGE_AUTHORIZATION_REQUIRED");
+    return;
+#endif
+    bool secured=false;
+    for(unsigned i=0;i<2;++i){
+      auto l=snapshot(i);
+      if(l.active&&l.status&&l.data&&authorized(l)&&
+         peers[i].session.active(now)) secured=true;
+    }
+    if(secured && !can_armed)++can_authorization_epoch;
+    can_armed=secured;
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=arm,ok=%u,epoch=%lu",secured?1U:0U,(unsigned long)can_authorization_epoch.load());
+#endif
+    armed_until=now+600000;
+    Serial.printf("#SIGNALV2_CAN,armed=%u,reason=%s,ttl_ms=600000\n",
+      can_armed?1U:0U,can_armed?"USB_VERIFIED":"NOT_READY");
+    return;
+  }
+  // PR-C2 stage S1 (owner decision O-1): its own explicit authorization,
+  // never implied by ARM. Requires the same secured central and an idle
+  // owner; bounded by the 1s observation plus the 3s fail-safe.
+  if(!std::strcmp(cmd,"SIGV2 CAN S1")) {
+    // Snapshot the epoch before checking the secured link: a disconnect at
+    // any later point bumps it, and the compare-exchange below then refuses
+    // to authorize (review B-01, linearizes check -> grant).
+    const uint32_t seen=can_authorization_epoch.load();
+    bool secured=false;
+    for(unsigned i=0;i<2;++i){
+      auto l=snapshot(i);
+      if(l.active&&l.status&&l.data&&authorized(l)&&
+         peers[i].session.active(now)) secured=true;
+    }
+    bool accepted=secured && !can_armed && !owner.busy();
+    uint32_t expected=seen;
+    if(accepted && !can_authorization_epoch.compare_exchange_strong(expected,seen+1))
+      accepted=false; // a disconnect/STOP intervened after the snapshot
+    if(accepted){
+      // Bind the request to the epoch it creates; a disconnect after this
+      // point bumps the epoch, so the request is never consumed and the
+      // stale arm is withdrawn (review F1).
+      const uint32_t epoch=seen+1;
+      owner.requestStageS1(epoch);
+      can_armed=true;
+      armed_until=now+5000;
+      if(can_authorization_epoch.load()!=epoch){can_armed=false;accepted=false;}
+    }
+    Serial.printf("#SIGNALV2_CAN,stage=S1,armed=%u,reason=%s,ttl_ms=5000\n",
+      accepted?1U:0U,accepted?"USB_VERIFIED":(secured?"BUSY_OR_ARMED":"NOT_READY"));
+    return;
+  }
+  if(!std::strncmp(cmd,"SIGV2 DEMO ",11)) {
+    Serial.println("#SIGNALV2_CAN,admin=DEMO_UNAVAILABLE");
+    return;
+  }
+#endif
   if (!std::strcmp(cmd, "SIGV2 DEMO STATUS") ||
       !std::strcmp(cmd, "SIGV2 DEMO ON") ||
       !std::strcmp(cmd, "SIGV2 DEMO OFF")) {
@@ -269,6 +377,16 @@ void manage(const char *cmd, uint32_t now) {
 void send(Peer &p, const Link &l, uint32_t now) {
   if (!live(l))
     return;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(p.output.size && (p.output.bytes[4]==0x20 ||
+                       p.output.bytes[4]==0x21) &&
+     !p.session.canPacketCurrent(now,p.output,owner.samples())){
+    p.output.size=0;
+    p.dataoff=0;
+    p.session.clearDemoCache(now);
+    Serial.println("#SIGNALV2_CAN,queue_drop=STALE_OR_INVALID,quality=INVALID");
+  }
+#endif
   if (p.waiting) {
     int confirmed = 0;
     portENTER_CRITICAL(&mux);
@@ -353,6 +471,32 @@ void send(Peer &p, const Link &l, uint32_t now) {
     }
     return;
   }
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  if(!isack && off==0 && (packet.bytes[4]==0x20 || packet.bytes[4]==0x21)){
+    const uint8_t *payload=packet.payload();
+    const unsigned records=packet.bytes[4]==0x21?payload[12]:payload[0];
+    size_t at=packet.bytes[4]==0x21?20:2;unsigned fresh=0;
+    // Generations actually carried by the notified Fresh records (lowest
+    // value), independent of the owner's current counters (review B-03).
+    uint32_t pdu_generation=0,pdu_mode=0,pdu_source=0;bool pdu_mixed=false;
+    for(unsigned i=0;i<records && at+44<=packet.size-Header;++i){
+      if(payload[at+7]<=1){
+        const uint32_t g=u32(payload+at+14),m=u32(payload+at+18),src=u32(payload+at+22);
+        if(fresh && (g!=pdu_generation||m!=pdu_mode||src!=pdu_source))pdu_mixed=true;
+        if(!fresh||g<pdu_generation)pdu_generation=g;
+        if(!fresh||m<pdu_mode)pdu_mode=m;
+        pdu_source=src;++fresh;
+      }
+      at+=u16(payload+at);
+    }
+    hil::note("kind=packet,type=%u,epoch=%lu,fresh=%u,current=%u,source_generation=%lu,mode_epoch=%lu,"
+      "pdu_source_generation=%lu,pdu_mode_epoch=%lu,pdu_source=%08lX,pdu_mixed=%u",
+      unsigned(packet.bytes[4]),(unsigned long)can_authorization_epoch.load(),fresh,
+      p.session.canPacketCurrent(now,packet,owner.samples())?1U:0U,
+      (unsigned long)owner.samples().source_generation,(unsigned long)owner.samples().mode_epoch,
+      (unsigned long)pdu_generation,(unsigned long)pdu_mode,(unsigned long)pdu_source,pdu_mixed?1U:0U);
+  }
+#endif
   p.progress = now;
   if (isack) {
     p.waiting = true;
@@ -412,11 +556,19 @@ bool begin(NimBLEServer *server) {
   status->setValue(state.bytes.data(),
                    state.size); // Read never leaks another peer's ACK.
   service->start();
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  Serial.printf("#SIGNALV2,boot=%lu,mode=CAN,armed=0,usb_arm_required=1\n",
+                (unsigned long)boot);
+#else
   Serial.printf(
       "#SIGNALV2,boot=%lu,mode=DEMO,can_tx_disabled=1,physical_tx=0\n",
       (unsigned long)boot);
+#endif
   return true;
 }
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+void attachCan(m5can::CanMonitor* m){owner.attach(m);}
+#endif
 void connected(uint16_t handle) {
   portENTER_CRITICAL(&mux);
   for (auto &l : links)
@@ -430,6 +582,15 @@ void connected(uint16_t handle) {
   portEXIT_CRITICAL(&mux);
 }
 void disconnected(uint16_t handle) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  hil::note("kind=disconnect,handle=%u",unsigned(handle));
+#endif
+  owner.noteAuthorizationEnd("CENTRAL_DISCONNECT");
+  can_armed=false; // New connection requires a new local USB arm.
+  const uint32_t revoked=++can_authorization_epoch;
+  owner.revokeAuthorization(revoked); // Thread-safe lease revoke; no sample/selector mutation.
+#endif
   portENTER_CRITICAL(&mux);
   for (auto &l : links)
     if (l.active && l.handle == handle) {
@@ -476,7 +637,50 @@ void poll() {
     if (link.active && link.status && link.data && authorized(link))
       peers[i].session.demand(now, demand);
   }
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(can_armed && int32_t(armed_until-now)<=0){
+    owner.noteAuthorizationEnd("USB_ARM_EXPIRED");
+    can_armed=false;const uint32_t revoked=++can_authorization_epoch;
+    owner.revokeAuthorization(revoked);owner.invalidate(10);
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=stop_request,epoch=%lu",(unsigned long)can_authorization_epoch.load());
+#endif
+    Serial.println("#SIGNALV2_CAN,armed=0,reason=USB_ARM_EXPIRED");
+  }
+  owner.tick(now,demand,can_armed,can_authorization_epoch.load());
+  if(owner.stopped() && can_armed.exchange(false))++can_authorization_epoch;
+  static uint32_t stopped_ack_epoch=0;
+  if(!can_armed && !owner.busy() && stopped_ack_epoch!=can_authorization_epoch.load()){
+    stopped_ack_epoch=can_authorization_epoch.load();
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=stopped,epoch=%lu,source_generation=%lu,mode_epoch=%lu",(unsigned long)stopped_ack_epoch,
+      (unsigned long)owner.samples().source_generation,(unsigned long)owner.samples().mode_epoch);
+#endif
+    Serial.printf("#SIGNALV2_CAN,ack=STOPPED,epoch=%lu,source_generation=%lu,mode_epoch=%lu\n",
+      static_cast<unsigned long>(stopped_ack_epoch),
+      static_cast<unsigned long>(owner.samples().source_generation),
+      static_cast<unsigned long>(owner.samples().mode_epoch));
+  }
+  static bool last_unsafe=false;
+  static uint32_t last_acquired=0,last_invalid=0;
+  const bool unsafe=!can_armed || owner.stopped();
+  const auto &samples=owner.samples();
+  const bool source_transition=samples.acquired!=last_acquired ||
+                               samples.invalidations!=last_invalid;
+  // Never deliver an older queued CAN PDU after a newer acquisition, timeout,
+  // STOP or source invalidation. Snapshot cannot resurrect pre-error records.
+  if((unsafe && !last_unsafe) || (!unsafe && source_transition)){
+    for(auto &p:peers){
+      p.output.size=p.dataoff=0;
+      p.session.clearDemoCache(now);
+    }
+  }
+  last_acquired=samples.acquired;last_invalid=samples.invalidations;
+  last_unsafe=unsafe;
+  simulator.tick(now,Simulator::Demand{});
+#else
   simulator.tick(now, demo_enabled ? demand : Simulator::Demand{});
+#endif
   for (unsigned i = 0; i < 2; ++i) {
     auto l = snapshot(i);
     auto &p = peers[i];
@@ -519,7 +723,11 @@ void poll() {
       p.dataoff = 0;
     }
     if (!p.ack.size && !p.output.size && l.status && l.data && authorized(l) &&
-        p.session.produce(now, p.output, &simulator, demo_enabled)) {
+        p.session.produce(now, p.output, &simulator, demo_enabled
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+                          , &owner.samples()
+#endif
+                          )) {
       p.dataoff = 0;
       p.data_transfer = ++p.transfer;
     }
