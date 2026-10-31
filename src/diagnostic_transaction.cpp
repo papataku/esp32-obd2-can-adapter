@@ -54,6 +54,12 @@ TransactionStep DiagnosticTransaction::onFrame(const TransactionFrame& frame) {
                    request_.can_id!=0x18DB33F1U;
   const bool diagnostic=DiagnosticPolicy::allowedResponseId(frame.can_id) ||
       (!frame.extended && frame.can_id>=0x7E8 && frame.can_id<=0x7EF);
+  // A V2 physical transaction cannot silently absorb a different diagnostic
+  // route and then publish the pinned source as healthy. Refuse before FC.
+  if (request_.signal_v2 && diagnostic && frame.timestamp_us >= tx_us_ &&
+      (!frame.extended || frame.rtr || frame.dlc>8 ||
+       !DiagnosticPolicy::responseBelongsToRequest(request_,frame.can_id)))
+    return fail();
   if (probe && diagnostic) {
     // Validate before the assembler can silently filter a contract breach.
     if (frame.timestamp_us < tx_us_ || frame.dlc>8 || !frame.extended ||

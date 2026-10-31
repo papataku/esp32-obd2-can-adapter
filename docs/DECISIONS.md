@@ -365,3 +365,16 @@ This is routing isolation, not electrical isolation against arbitrary faults.
 See [evidence and limitations](qa/m5dial-passive-design-review.md) and
 [owner/PM acceptance runbook](qa/m5dial-passive-runbook.md). Device acceptance
 remains pending; existing active/legacy gates and default env are unchanged.
+
+
+## 2026-11-01 — Independent PR63 route-mismatch review
+
+V2 11bit 7E8..7EF detection revokes the lower monitor lease and latches a
+fault at capture time, before another BLE-owner tick. Merely incrementing a
+counter left a queued request/FC capability valid in that interval. Regular
+V2 physical transactions now reject a diagnostic source/width mismatch before
+ISO-TP can silently filter it and later report a healthy pinned completion.
+These are stricter V2 failure conditions; the default/V1 path is unchanged.
+Host regressions reproduce the old failures, cover idle 11bit revocation and
+regular wrong-route FF/11bit rejection with zero FC or subsequent TX. Physical
+S1 gates, load caps, and outstanding hardware acceptance remain unchanged.

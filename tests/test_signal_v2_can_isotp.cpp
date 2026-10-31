@@ -31,12 +31,15 @@ int main(){
   assert(DiagnosticPolicy::allowedReadRequest(req));
   DiagnosticTransaction valid;
   valid.begin(req,5000,100);
-  // Two unrelated responders cannot poison this pinned physical ECU.
+  // A diagnostic source/width mismatch invalidates the entire V2 transaction
+  // before any further FC or otherwise valid pinned-ECU completion.
   const uint8_t wrong[]={3,0x41,0x0D,0x11};
-  assert(valid.onFrame(frame(0x18DAF102,true,4,wrong,6000)).event==
-         TransactionEvent::Ignored);
-  assert(valid.onFrame(frame(0x7E8,false,4,wrong,6001)).event==
-         TransactionEvent::Ignored);
+  for(auto bad:{frame(0x18DAF102,true,4,wrong,6000),
+                frame(0x7E8,false,4,wrong,6001)}){
+    DiagnosticTransaction mismatch;mismatch.begin(req,5000,100);
+    assert(mismatch.onFrame(bad).event==TransactionEvent::ProtocolError);
+    assert(mismatch.result().response_count==0);
+  }
   const uint8_t ff[]={0x10,0x11,0x41,0x0D,0x40,0x0C,0x13,0x88};
   const uint8_t cf1[]={0x21,0x05,0x80,0x5B,0x7F,0x9A,0,0};
   const uint8_t cf2[]={0x22,0x4B,0,0,0x64};

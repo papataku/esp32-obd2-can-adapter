@@ -8,7 +8,7 @@ sources=(src/diagnostic_policy.cpp src/diagnostic_transaction.cpp src/isotp_reas
 # Before-fix audit can run all findings separately, without masking later failures.
 failed=0
 c++ "${flags[@]}" -DM5CAN_SIGNAL_V2_RP8_PROFILE=1 tests/pr65/monitor.cpp src/can_monitor.cpp "${sources[@]}" tests/host_stubs/stubs.cpp -o "$build/monitor"
-for finding in M1 M2 M3 M6 M7 m1 controls R1; do
+for finding in M1 M2 M3 M6 M7 m1 controls R1 R2 R3; do
   "$build/monitor" "$finding" || failed=1
 done
 for profile in empty rp8 rp8-10hz; do

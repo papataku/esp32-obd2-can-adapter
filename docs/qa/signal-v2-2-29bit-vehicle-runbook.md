@@ -11,6 +11,18 @@ reviewed bounded discovery mechanism is required to unlock phases 4–6 below.
 They specify the acceptance procedure for that future revision, not permission
 to transmit with this revision. Passive inspection remains distinct.
 
+Current implementation clarification (2026-11-01): #65 bounded physical discovery,
+#67 S1 and #66 serial HIL are already merged into #63 (not main). The 5Hz
+and 10Hz physical images both enforce `M5CAN_SIGNAL_V2_STAGE_GATED=1`:
+`SIGV2 CAN ARM` is refused, and only separately authorized `SIGV2 CAN S1`
+can request one physical probe. S2/S3 and ongoing five-PID acquisition remain
+unavailable in these physical images. The unstaged five-PID path is exercised
+only in the serial-HIL image, whose linked ELF must exclude physical TWAI.
+The future-gate language below refers to operational approval and S2/S3;
+it does not imply that merging the existing implementation grants approval.
+For ambient-only vehicle inspection use the dedicated
+[passive runbook](m5dial-passive-runbook.md), including its mandatory LCD gate.
+
 This is an OWNER-OPERATED procedure. Agents must not flash, erase, connect to
 real CAN, or operate a vehicle. First obtain independent review of exact
 adapter and Ring SHAs, green host/policy/build CI, receiver freshness/epoch
@@ -67,6 +79,20 @@ it is **NOT a CAN-disabled fallback**. Never rebuild default for rollback.
 V2-1 `m5dial_signal_v2_can_disabled_lab` excludes TWAI init/TX at link time.
 Only the two V2-2 environments enable the **Signal V2** TX path. Other legacy
 profiles retain their separate existing ELM behavior.
+
+For M5Dial this gate accepts only the installed 8MiB factory layout with
+app offset **0x10000** and capacity **0x200000**. Run the checker against the
+verified backup and the exact new binary; require its `app.offset=65536`,
+`app.size=2097152` and `write=APP_ONLY` before setting `APP_OFFSET=0x10000`.
+A different layout is a STOP, not a reason to migrate. SmartRing offsets and
+capacity must be independently checked by its owner; never copy M5Dial values.
+
+This V2-2 procedure overrides the older V2-1 full-bank restoration paragraph:
+keep the full backup for recovery, but routine rollback here restores only the
+verified original app at the unchanged active slot. A full-bank restore needs
+a separate reviewed recovery plan. Use the V2-1 preferred ROM recovery only
+if required by the owner's verified tool/device procedure; never combine
+ROM/esptool and JTAG operations blindly.
 
 After review, exact layout/active-slot comparison and capacity check, owner
 app-only write (no generic upload, erase, partition or bootloader write):

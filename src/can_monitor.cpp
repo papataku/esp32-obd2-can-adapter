@@ -268,6 +268,10 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
   portEXIT_CRITICAL(&stats_mux_);
 
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  // Do not wait for the BLE owner to observe the counter: a queued S1 or
+  // Flow Control must lose its TX capability at this RX boundary too.
+  if(!frame.extended && frame.identifier>=0x7E8 && frame.identifier<=0x7EF)
+    enterFaultLocked("V2 11bit OBD response");
   if(frame.extended &&
      DiagnosticPolicy::allowedResponseId(frame.identifier)) {
     portENTER_CRITICAL(&stats_mux_);++stats_.signal_v2_rx;portEXIT_CRITICAL(&stats_mux_);

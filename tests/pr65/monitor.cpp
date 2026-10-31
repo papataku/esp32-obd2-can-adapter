@@ -68,6 +68,25 @@ int main(int argc,char** argv) {
   auto rtr=good;rtr.rtr=1;
   auto oversized=good;oversized.data_length_code=9;
   auto standard=frame(0x7E8,{3,0x41,0x0D,0});standard.extd=0;
+  if(test("R2")){
+    CanMonitor m;g_test_millis=1800;rx.clear();
+    assert(m.acquireLease(550));
+    m.captureMessage(standard,1800000);
+    assert(m.faultLocked() && m.leaseRemainingMs()==0);
+    auto n=sent.size();run(m,q);assert(sent.size()==n);
+    std::cout<<"PASS R2 idle 11bit detection revokes lower TX before owner tick\n";
+  }
+  if(test("R3")) for(auto bad:{
+      frame(0x18DAF102,{0x10,17,0x41,0x0D,0,0x0C,0x13,0x88}),standard}){
+    CanMonitor m;g_test_millis=1900;auto group=q;group.length=6;
+    const uint8_t data[]={1,0x0D,0x0C,5,0x5B,0x9A};std::copy(data,data+6,group.data);
+    rx={{1905,bad},{1910,frame(0x18DAF101,{0x10,17,0x41,0x0D,0,0x0C,0x13,0x88})}};
+    const auto n=sent.size();const auto result=run(m,group);
+    assert(result.status==DiagnosticStatus::IsoTpError && !result.response_count);
+    assert(m.faultLocked() && sent.size()==n+1); // Request only; no FC.
+    run(m,group);assert(sent.size()==n+1);rx.clear();
+    std::cout<<"PASS R3 regular route mismatch latches fault, zero FC and next TX\n";
+  }
   if(test("M1")) for(const auto& bad:std::vector<twai_message_t>{
       rtr,oversized,standard,
       frame(0x18DAF102,{6,0x41,0x0C,0x13,0x88,0x0D,0}),
