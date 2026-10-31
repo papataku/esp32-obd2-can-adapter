@@ -18,6 +18,7 @@ void Session::connect(uint32_t boot, uint32_t session) {
   cache_size_ = 0;
   period_ = 200;
   snapshot_ = false;
+  snapshot_request_id_ = 0;
   observed_ms_ = 0;
   plan_size_ = 0;
   plan_id_ = 0;
@@ -114,7 +115,12 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         break;
       }
       // All accepted profiles must fit a COMPLETE snapshot, never truncate it.
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+      size_t snapshot_bytes = 20; // correlated CAN Snapshot prefix
+#else
       size_t snapshot_bytes = 16;
+#endif
+      uint8_t rejection_reason = 0;
       bool valid = true, relax = false;
       for (unsigned i = 0; i < b[4]; ++i) {
         const auto e = b + 8 + 24 * i;
@@ -126,10 +132,20 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
                  e[6] <= 3 && e[7] == 0 &&
                  // Priority 0 is reserved exclusively for speed (Service 01 PID 0D).
                  ((pid == 0x0d) == (e[6] == 0)) &&
-                 u32(e + 12) == 1 && u16(e + 16) >= 1 && u16(e + 16) <= 10000 &&
+                 u32(e + 12) == 1 &&
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+                 u32(e + 8) == 0 &&
+#endif
+                 u16(e + 16) >= 1 && u16(e + 16) <= 10000 &&
                  u16(e + 18) >= u16(e + 16) && u16(e + 20) >= u16(e + 16) &&
                  e[22] == 0 && e[23] == 0;
-        if (u16(e + 16) < 200) {
+        if (u16(e + 16) <
+#if defined(M5CAN_SIGNAL_V2_10HZ_LAB)
+            100
+#else
+            200
+#endif
+            ) {
           relax = true;
           valid &= u16(e + 18) >= 200 && u16(e + 20) >= 200;
         }
@@ -137,10 +153,14 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
           if (u16(e) == u16(b + 8 + 24 * j))
             valid = false;
       }
-      if (snapshot_bytes > MaxPdu - Header)
+      if (snapshot_bytes > MaxPdu - Header) {
         valid = false;
+        rejection_reason = 1; // SNAPSHOT_TOO_LARGE
+      }
       if (!valid) {
         result = Reject;
+        reply[0] = rejection_reason ? rejection_reason : 2; // PROFILE_INVALID
+        reply_n = 1;
         break;
       }
       if (relax) {
@@ -211,8 +231,10 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         result = BadRevision;
       else if (!active(now))
         result = TxLocked; // expired/paused leases cannot revive valid cache
-      else
+      else {
+        snapshot_request_id_ = rid;
         snapshot_ = true;
+      }
       break;
     case 8:
       if (n)
@@ -276,13 +298,14 @@ void Session::apply(const uint8_t *b, uint32_t now) {
   paused_ = false;
   next_ = now;
   snapshot_ = true;
+  snapshot_request_id_ = 0;
   cache_count_ = 0;
   cache_size_ = 0;
   cache_lengths_.fill(0);
   due_.fill(now);
   plan_size_ = 0;
 }
-bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool demo_enabled) {
+bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool demo_enabled, const CanSamples *can) {
   if (!hello_)
     return false;
   // Expiration invalidates pending snapshots as well as demand. Never reissue
@@ -296,15 +319,36 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
   uint8_t p[486]{};
   if (snapshot_) {
     snapshot_ = false;
+    // Snapshot cannot refresh old CAN data. Remove any stale/invalid cache.
+    if(can)for(unsigned i=0;i<count_;++i){
+      const auto e=entries_.data()+24*i;
+      const auto c=can->sample(u16(e+4));
+      const uint32_t last_seq=cache_lengths_[i]?
+          u32(cache_.data()+52*i+38):0;
+      if(!c||c->quality>1||!c->observed_us||
+         uint64_t(now)*1000ULL < c->observed_us||
+         last_seq!=c->sequence||
+         u32(cache_.data()+52*i+14)!=can->source_generation||
+         u32(cache_.data()+52*i+18)!=can->mode_epoch||
+         uint64_t(now)*1000ULL>c->observed_us+
+              uint64_t(u16(e+20))*1000ULL)cache_lengths_[i]=0;
+    }
     w32(p, frame_ + 2);
     w32(p + 4, 3);
     w32(p + 8, revision_);
-    size_t pos = 16;
+    size_t pos = can ? 20 : 16;
+    if(can){p[13]=2;w32(p+16,snapshot_request_id_);}
     for (unsigned i = 0; i < count_; ++i)
       if (cache_lengths_[i]) {
         ++p[12];
         std::copy(cache_.data() + 52 * i,
                   cache_.data() + 52 * i + cache_lengths_[i], p + pos);
+        if(can){
+          const uint64_t observed=uint64_t(u32(p+pos+30))<<32|u32(p+pos+26);
+          const uint64_t age=uint64_t(now)*1000ULL-observed;
+          p[pos+2]=2;
+          w32(p+pos+34,age>UINT32_MAX?UINT32_MAX:static_cast<uint32_t>(age));
+        }
         pos += cache_lengths_[i];
       }
     out = encode(0x21, boot_, id_, ++frame_, p, pos);
@@ -334,32 +378,49 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
       size_t size = 44 + len;
       std::fill(r, r + 52, 0);
       w16(r, size);
-      r[2] = 1;
-      r[3] = 2;
+      r[2] = can ? 2 : 1;
+      r[3] = can ? 1 : 2;
       w16(r + 4, u16(e));
       r[6] = 1;
       r[7] = pid == 0x0c ? 1 : 0;
       w16(r + 8, pid);
       w32(r + 10, revision_);
-      w32(r + 14, 1);
-      w32(r + 18, 1);
-      w32(r + 22, u32(e + 8));
+      w32(r + 14, can ? can->source_generation : 1);
+      w32(r + 18, can ? can->mode_epoch : 1);
+      w32(r + 22, can ? can->source_id : u32(e + 8));
       const auto shared = source ? source->sample(pid) : nullptr;
+      const auto actual = can ? can->sample(pid) : nullptr;
       // Tests without an external source exercise the original active
       // synthetic path. Physical V2 lab always provides a Simulator.
-      const bool available = demo_enabled && (!source || shared);
+      const bool available = can
+          ? (actual && actual->quality<=1 && actual->length==len &&
+             actual->observed_us &&
+             uint64_t(now)*1000ULL >= actual->observed_us &&
+             uint64_t(now)*1000ULL <= actual->observed_us +
+                  uint64_t(u16(e+20))*1000ULL)
+          : demo_enabled && (!source || shared);
       const uint32_t sample_sequence = !available ? 0 :
-          (shared ? shared->sequence : ++sample_);
-      const size_t actual_len = available
-          ? demoPayload(pid, sample_sequence, r + 44) : 0;
+          (can ? actual->sequence : (shared ? shared->sequence : ++sample_));
+      size_t actual_len=0;
+      if(available&&can){
+        actual_len=actual->length;
+        std::copy(actual->raw,actual->raw+actual_len,r+44);
+      }else if(available){
+        actual_len=demoPayload(pid,sample_sequence,r+44);
+      }
       if (available && actual_len != len) return false;
       len = static_cast<uint8_t>(actual_len);
       size = 44 + len;
       w16(r, static_cast<uint16_t>(size));
-      r[7] = !available ? 2 : (pid == 0x0d && r[46] == 0 ? 1 : 0);
-      w64(r + 26, available
-          ? uint64_t(shared ? shared->observed_ms : now) * 1000 : 0);
-      w32(r + 34, available ? 1000 : 0);
+      r[7] = !available ? (can ? 8 : 2)
+            : (can ? actual->quality : (pid == 0x0d && r[46] == 0 ? 1 : 0));
+      w64(r + 26, available ?
+          (can ? actual->observed_us :
+                 uint64_t(shared ? shared->observed_ms : now)*1000) : 0);
+      // CAN v2 record: acquisition age at this PDU's encoding time. DEMO
+      // retains its legacy uncertainty field and wire fixtures unchanged.
+      w32(r + 34, available ? (can ? static_cast<uint32_t>(
+          uint64_t(now)*1000ULL-actual->observed_us) : 1000) : 0);
       w32(r + 38, available ? sample_sequence : 0);
       r[42] = len;
       cache_lengths_[i] = size;
@@ -374,5 +435,51 @@ bool Session::produce(uint32_t now, Packet &out, const Simulator *source, bool d
     return false;
   out = encode(0x20, boot_, id_, ++frame_, p, pos);
   return true;
+}
+bool Session::canPacketCurrent(uint32_t now,const Packet &packet,
+                               const CanSamples &can) const {
+  if(!active(now) || packet.size<Header+2)return false;
+  const uint8_t type=packet.bytes[4];
+  if(type!=0x20 && type!=0x21)return false;
+  const uint8_t *p=packet.payload();
+  const size_t payload=packet.size-Header;
+  size_t off=type==0x21?20:2;
+  if(type==0x21 && (payload<20 || p[13]!=2 || u16(p+14)!=0 ||
+                   u32(p+16)!=snapshot_request_id_))return false;
+  if(payload<off)return false;
+  const unsigned count=type==0x21?p[12]:p[0];
+  if(count>MaxSubscriptions)return false;
+  const uint64_t now_us=uint64_t(now)*1000ULL;
+  for(unsigned i=0;i<count;++i){
+    if(off>payload||payload-off<44)return false;
+    const uint8_t *rec=p+off;
+    const size_t len=u16(rec);
+    if(len<44||len>payload-off||rec[2]!=2)return false;
+    if(rec[7]<=1){
+      const uint16_t pid=u16(rec+8);
+      const auto sample=can.sample(pid);
+      uint16_t deadline=0;
+      for(unsigned j=0;j<count_;++j){
+        const uint8_t *entry=entries_.data()+24*j;
+        if(u16(entry)==u16(rec+4)&&u16(entry+4)==pid){
+          deadline=u16(entry+20);
+          break;
+        }
+      }
+      if(!deadline||!sample||sample->quality>1||!sample->observed_us||
+         sample->length!=rec[42]||len!=size_t(44)+rec[42]||
+         can.source_generation!=u32(rec+14)||can.mode_epoch!=u32(rec+18)||
+         can.source_id!=u32(rec+22)||
+         sample->sequence!=u32(rec+38)||
+         sample->observed_us!=
+             (uint64_t(u32(rec+30))<<32|u32(rec+26))||
+         now_us<sample->observed_us||
+         now_us>sample->observed_us+uint64_t(deadline)*1000ULL)return false;
+      for(unsigned b=0;b<sample->length;++b)
+        if(rec[44+b]!=sample->raw[b])return false;
+    }
+    off+=len;
+  }
+  return off==payload;
 }
 } // namespace signal_v2

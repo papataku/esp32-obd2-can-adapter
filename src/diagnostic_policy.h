@@ -26,6 +26,10 @@ struct DiagnosticRequest {
   uint8_t length = 0;
   uint8_t data[8]{};
   uint32_t timeout_ms = 200;
+  bool signal_v2 = false; // Dedicated V2 internal CAN owner.
+  // Owner-only regular auxiliary shedding; same SF contract as discovery,
+  // but not a new discovery probe (which requires 200ms boundary spacing).
+  bool signal_v2_essential = false;
 };
 
 struct DiagnosticRawFrame {
@@ -45,6 +49,8 @@ struct DiagnosticResult {
   // One monotonic timestamp for the ACTUAL CAN acquisition. A cache hit
   // must preserve this time, not extend freshness on each delivery.
   uint64_t completed_at_us = 0;
+  // Time the request frame was actually submitted to the driver (0 = never).
+  uint64_t request_tx_us = 0;
   uint32_t tx_to_first_response_us = 0;
   uint32_t transaction_us = 0;
   uint8_t response_count = 0;
@@ -59,6 +65,11 @@ struct DiagnosticResult {
 class DiagnosticPolicy {
  public:
   static bool allowedHeader(uint32_t can_id);
+  static bool observedPhysicalEcu(uint32_t request_id);
+  // N1: compile-time owner-approved V2 discovery candidate (request ID).
+  static bool approvedPhysicalEcu(uint32_t request_id);
+  static void observeFunctionalPairs(const DiagnosticRequest& request,
+                                     const DiagnosticResult& result);
   static bool allowedReadRequest(const DiagnosticRequest& request);
   static bool allowedResponseId(uint32_t can_id);
   static bool responseBelongsToRequest(const DiagnosticRequest& request,

@@ -100,6 +100,9 @@ class DriveLog {
                 uint32_t responder);
   mutable portMUX_TYPE mux_=portMUX_INITIALIZER_UNLOCKED;
   Record record_{},save_record_{},export_current_{},export_record_{};
+  // Only Arduino loop/USB poll/dump uses this workspace. BLE callbacks only
+  // update the mux-protected record; never share this snapshot with them.
+  CanStats poll_can_stats_{};
   CoordinatorRecord save_coordinator_{};
   CoordinatorRecord coordinator_{};
   bool coordinator_enabled_=false;

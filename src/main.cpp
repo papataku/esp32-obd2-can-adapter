@@ -121,6 +121,9 @@ void setup() {
                                     M5CAN_BUILD_SHA);
 #endif
 
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  signal_v2::attachCan(&g_can);
+#endif
   g_ble_ok = g_ble.begin();
 #if defined(ARDUINO_ARCH_ESP32)
   Serial.printf("#BOOT,git=%s,reset=%u,rom_reset=%u,stack=NimBLE_dual_if_enabled\n",

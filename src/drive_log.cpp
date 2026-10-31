@@ -286,7 +286,8 @@ void DriveLog::resources(uint32_t can_stack,uint32_t ble_stack,uint32_t heap_min
 }
 void DriveLog::poll(CanMonitor& can,BleElmTransport& ble,bool demo) {
   if(!enabled_)return;
-  const auto c=can.stats();const auto b=ble.stats();
+  can.stats(poll_can_stats_);
+  const auto& c=poll_can_stats_;const auto b=ble.stats();
   const auto lease=can.leaseRemainingMs();
   const auto fault=can.faultLocked();
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)

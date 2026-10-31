@@ -30,6 +30,7 @@ struct CombinedFlash final:EvidenceFlash {
 };
 namespace m5can {
 CanStats CanMonitor::stats() const{return stats_;}
+void CanMonitor::stats(CanStats& copy) const{copy=stats_;}
 uint32_t CanMonitor::leaseRemainingMs() const{return 0;}
 }
 int main(){
