@@ -44,8 +44,10 @@ struct SerialStub {
   inline static bool capture=false;
   inline static std::string lines{};
   inline static std::string& captured=lines;
-  int availableForWrite(){return 4096;}
-  size_t write(const uint8_t* p,size_t n){lines.append(reinterpret_cast<const char*>(p),n);return n;}
+  inline static int room=4096;
+  inline static size_t max_write=4096;
+  int availableForWrite(){return room;}
+  size_t write(const uint8_t* p,size_t n){n=n<max_write?n:max_write;lines.append(reinterpret_cast<const char*>(p),n);return n;}
   void begin(uint32_t){}
   int printf(const char* fmt,...) {
     if(!capture)return 0;

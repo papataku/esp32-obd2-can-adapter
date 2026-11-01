@@ -186,6 +186,9 @@ void loop() {
     // Long CDC serial writes during a dual-peer session compete with
     // the Arduino loop and can skew the very latencies being diagnosed.
     // Persist complete bounded evidence now; dump it after the run.
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    continue; // HIL evidence uses the bounded event writer, not a CDC dump.
+#endif
     if(g_ble.connectedClientCount()!=0 || g_can.queryPending())continue;
     const char* kind=event.kind==m5can::BleDiagnosticEvent::Kind::Connect ? "CONNECT"
         : event.kind==m5can::BleDiagnosticEvent::Kind::Disconnect ? "DISCONNECT"
@@ -244,7 +247,7 @@ void loop() {
   }
 #endif
 
-#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
+#if defined(M5CAN_DUAL_BLE_EXPERIMENTAL) && !defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
   // BLE worker owns DualBleElm; do not poll sessions from the LCD loop.
   static uint32_t last_dual_stats=0;
   if (millis()-last_dual_stats>=5000) {

@@ -670,4 +670,24 @@ class R66q(unittest.TestCase):
         self.assertTrue(r["checks"]["epoch_separation"],r)
 
 
+class FaultDisconnect(unittest.TestCase):
+    def test_fault_idle_advance_carried_into_disconnect(self):
+        events=fault_trace('noreply')
+        add=adder(events,1)
+        add(.4,'disconnect',handle='1')
+        add(.41,'stopped',epoch='5',source_generation='7',mode_epoch='7')
+        for e in events:
+            if e['kind']=='stop_request':e['epoch']='6'
+            if e['kind']=='stopped' and e['t']>60:
+                e.update(epoch='6',source_generation='8',mode_epoch='8')
+        events=renumber(events)
+        self.assertTrue(h.evaluate('noreply',events)['checks']['epoch_separation'])
+        # Applying the deferred increment twice or skipping it stays invalid.
+        for wrong in ('6','8'):
+            bad=copy.deepcopy(events)
+            e=next(e for e in bad if e['kind']=='stopped' and e['t']==.41)
+            e.update(source_generation=wrong,mode_epoch=wrong)
+            self.assertFalse(h.evaluate('noreply',bad)['checks']['epoch_separation'])
+
+
 if __name__=='__main__':unittest.main()

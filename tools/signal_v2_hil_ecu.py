@@ -484,7 +484,7 @@ def evaluate(scenario, events):
             state["epoch"] = epoch if good else None
             state["cause"] = None
         elif kind_ in ("stop_request", "disconnect", "fault"):
-            if kind_ == "stop_request" and state["fault_idle_advance"] and state["generation"]:
+            if kind_ in ("stop_request", "disconnect") and state["fault_idle_advance"] and state["generation"]:
                 state["generation"] = tuple(g + 1 for g in state["generation"])
                 state["fault_idle_advance"] = False
             state["cause"] = kind_

@@ -383,10 +383,13 @@ public:
         else samples_.invalidate(10); // Never promote disarmed completion.
       }
     }
+#if !defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
     const auto load=can_->stats();
+#endif
     budget_.refresh(now);
     if(uint32_t(now-last_log_)>=1000){
       last_log_=now;
+#if !defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
       Serial.printf("#SIGNALV2_LOAD,reserved_window100_bits=%lu,reserved_window1000_bits=%lu,"
          "reserved_peak100=%lu,reserved_peak1000=%lu,actual_candidate_rx_frames=%llu,actual_fc_submissions=%llu,"
          "charged_traffic_window100_bits=%lu,charged_traffic_window1000_bits=%lu,charged_traffic_peak100=%lu,charged_traffic_peak1000=%lu,"
@@ -405,6 +408,7 @@ public:
          static_cast<unsigned long>(budget_.denied),
          static_cast<unsigned long>(samples_.acquired),
          static_cast<unsigned long>(samples_.invalidations),unsigned(period_));
+#endif
     }
     if(!armed){
       if(previously_armed_)samples_.invalidate(10);

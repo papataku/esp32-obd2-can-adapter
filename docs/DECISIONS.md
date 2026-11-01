@@ -378,3 +378,26 @@ These are stricter V2 failure conditions; the default/V1 path is unchanged.
 Host regressions reproduce the old failures, cover idle 11bit revocation and
 regular wrong-route FF/11bit rejection with zero FC or subsequent TX. Physical
 S1 gates, load caps, and outstanding hardware acceptance remain unchanged.
+
+## 2026-11-01 — V2-2 serial HIL turnaround and runner generation
+
+Bench traces separated a runner generation-accounting error from an actual
+120ms ISO-TP timeout. After a fault STOP ACK, the next idle owner tick consumes
+one deferred GATT epoch change; the runner must carry that increment into a
+later Central disconnect as well as an operator STOP or ARM. Correlated STOP
+ACK generations still require exact equality; malformed/jumped generations
+remain failures. Local private traces can be replayed with
+`python3 tests/replay_hil_trace.py <trace.jsonl> ...`; no raw trace is committed.
+
+Only `M5CAN_SIGNAL_V2_SERIAL_HIL` suppresses periodic LOAD/STATS/dual diagnostic
+Serial dumps. The bounded USB event drain emits up to eight records per poll,
+retaining partial writes and returning on backpressure. Successful FC events
+are correlated to accepted matching CFs in the same shim generation through
+`fc_seq`, `fc_t_us`, and `fc_to_cf_us` fields on the existing RX event. The time
+starts when the FC event is produced on the board, before USB delivery, and
+ends at CF admission. It includes USB/host turnaround, not just ECU delay.
+Unrelated routes, rejected admissions, failed FC and driver STOP cannot produce
+that measurement. It grants no protocol authority. Physical environment flags,
+stage gates, 120ms timeout, lease/fault behavior and load caps are unchanged.
+This addresses the suspected USB contention; deadline compliance and sustained
+5Hz acquisition still require fresh-boot hardware HIL evidence.
