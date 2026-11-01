@@ -141,3 +141,6 @@ python3 tests/test_signal_v2_auto_arm.py
 
 # PR70: STOP/disconnect at every host IO and task-mutex boundary.
 python3 tests/test_signal_v2_revoke_race.py
+
+# Retain bounded Control FIFO events until the outstanding ACK is confirmed.
+python3 tests/test_signal_v2_control_ack.py

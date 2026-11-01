@@ -488,3 +488,23 @@ not recall of frames previously accepted by hardware or vehicle acceptance.
 Expected asynchronous cancellation does not latch an owner admission fault;
 manual STOP and subsequent-session settle behavior remain unchanged. Budgets,
 the 120ms window, stage/HIL isolation and RP8 allowlist are unchanged.
+
+### 2026-11-01 — Signal V2 Control FIFO survives pending ACK
+
+Phase 4B / Signal V2-2: peek the existing 12-event callback FIFO before
+removing its head. While that peer has an outstanding ACK, retain the event
+(including fragments) until the ACK completes. Dispatch still handles at most
+one event per tick, rechecks link generation and authorization, and uses the
+unchanged Session rid/revision/lease checks. Stale link generations are drained.
+The shared FIFO preserves order across peers; a blocked head can delay the
+other peer's Control, while safety service and both send paths keep running.
+
+FIFO saturation is an explicit `CONTROL_FIFO_OVERFLOW` transport protocol
+error followed by the existing disconnect path. No replacement ACK can be
+sent while the previous indication is unconfirmed, so overflow is logged on
+USB rather than overwriting that ACK. There is no silent overwrite or renewal
+at enqueue time. The 2000ms indication deadline/disconnect and 3s lease remain;
+only processing a new op4 renews, while duplicate rid and Snapshot do not.
+Sustained input faster than ACK completion can still exhaust bounded storage
+and must disconnect. Host delay tests establish software behavior only, not RF
+or vehicle acceptance. V1/NUS and CAN/budget/epoch policy are unchanged.
