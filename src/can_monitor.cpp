@@ -460,16 +460,27 @@ void CanMonitor::updateDriverStats() {
   if (info.state == TWAI_STATE_BUS_OFF) revokeLease();
 }
 
-bool CanMonitor::acquireLease(uint32_t duration_ms) {
+bool CanMonitor::acquireLease(uint32_t duration_ms, uint32_t authorization_epoch) {
+#if !defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  (void)authorization_epoch;
+#endif
 #if defined(M5CAN_CAN_TX_HARD_DISABLED)
   (void)duration_ms;return false;
+#endif
+  // Every V2 admission must share the initialized revocation mutex.
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if (!tx_gate_) return false;
 #endif
   if (tx_gate_ && xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE)
     return false;
   if (fault_locked_
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+      || !authorization_epoch || authorization_epoch <= revoked_epoch_
+      || authorization_epoch < lease_epoch_
+#endif
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
       || !stage_authorized_ || stage_epoch_ <= revoked_stage_epoch_
-      || stage_s1_consumed_
+      || authorization_epoch != stage_epoch_ || stage_s1_consumed_
 #endif
       ) {
     if (tx_gate_) xSemaphoreGive(tx_gate_);
@@ -481,6 +492,9 @@ bool CanMonitor::acquireLease(uint32_t duration_ms) {
       static_cast<uint64_t>(esp_timer_get_time()) / 1000ULL;
   portENTER_CRITICAL(&lease_mux_);
   lease_deadline_ms_ = now_ms + duration_ms;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  lease_epoch_ = authorization_epoch;
+#endif
   portEXIT_CRITICAL(&lease_mux_);
   if (tx_gate_) xSemaphoreGive(tx_gate_);
   return true;
@@ -515,10 +529,15 @@ bool CanMonitor::beginStageS1(uint32_t epoch) {
 }
 
 void CanMonitor::revokeStageAuthorization(uint32_t epoch) {
+  revokeAuthorization(epoch);
+}
+
+void CanMonitor::revokeAuthorization(uint32_t epoch) {
   if (!tx_gate_ || xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE) {
     fault_locked_ = true;
     return;
   }
+  if (epoch > revoked_epoch_) revoked_epoch_ = epoch;
   if (epoch > revoked_stage_epoch_) revoked_stage_epoch_ = epoch;
   stage_authorized_ = false;
   portENTER_CRITICAL(&lease_mux_);
@@ -568,7 +587,10 @@ void CanMonitor::enterFaultLocked(const char* reason) {
 }
 
 esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
-                                         uint32_t wait_ms) {
+                                         uint32_t wait_ms, uint32_t authorization_epoch) {
+#if !defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) || defined(M5CAN_CAN_MODE_DRY_RUN) || defined(M5CAN_CAN_TX_HARD_DISABLED)
+  (void)authorization_epoch;
+#endif
 #if defined(M5CAN_CAN_MODE_DRY_RUN) || defined(M5CAN_CAN_TX_HARD_DISABLED)
   // USB-only mode-switch stack regression: no call to the physical TX API.
   (void)message;
@@ -576,15 +598,22 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   return ESP_FAIL;
 #else
   // Preflight is not an authorization: STOP can intervene before the gate.
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if (!tx_gate_) return ESP_FAIL;
+#endif
   if(!leaseAllowsBudget(wait_ms))return ESP_FAIL;
   if (tx_gate_ && xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE)
     return ESP_FAIL;
   // B-03: final lease/fault check and TWAI enqueue share the STOP mutex.
   // If STOP acquired it first, no new frame reaches the driver.
   if (fault_locked_ || !leaseAllowsBudget(wait_ms)
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+      || !authorization_epoch || authorization_epoch <= revoked_epoch_
+      || authorization_epoch != lease_epoch_
+#endif
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
       || !stage_authorized_ || stage_epoch_ <= revoked_stage_epoch_
-      || stage_s1_consumed_
+      || authorization_epoch != stage_epoch_ || stage_s1_consumed_
 #endif
       ) {
     if (tx_gate_) xSemaphoreGive(tx_gate_);
@@ -623,6 +652,7 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
     captureMessage(pending,static_cast<uint64_t>(esp_timer_get_time()));
     if (xSemaphoreTake(tx_gate_,portMAX_DELAY)!=pdTRUE) return ESP_FAIL;
     if (fault_locked_ || !stage_authorized_ ||
+        authorization_epoch <= revoked_epoch_ || authorization_epoch != lease_epoch_ ||
         stage_epoch_!=submitting_epoch ||
         stage_epoch_<=revoked_stage_epoch_ || !leaseAllowsBudget(wait_ms)) {
       xSemaphoreGive(tx_gate_);
@@ -641,6 +671,7 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   }
   portEXIT_CRITICAL(&stats_mux_);
   if (!pre_empty || fault_locked_ || !stage_authorized_ ||
+      authorization_epoch <= revoked_epoch_ || authorization_epoch != lease_epoch_ ||
       stage_epoch_!=submitting_epoch ||
       stage_epoch_<=revoked_stage_epoch_ || !leaseAllowsBudget(wait_ms)) {
     xSemaphoreGive(tx_gate_);
@@ -835,7 +866,7 @@ void CanMonitor::performQuery(
     if(request.signal_v2 && !recordObservedDiagnostic(millis())) {
       terminal=DiagnosticStatus::RateLimited;terminal_set=true;revokeLease();
     }
-    if (!terminal_set && transmitOwnedFrame(tx, 20) != ESP_OK) {
+    if (!terminal_set && transmitOwnedFrame(tx, 20, request.authorization_epoch) != ESP_OK) {
       terminal = DiagnosticStatus::DriverError;
       terminal_set = true;
     } else if (!terminal_set) {
@@ -932,7 +963,7 @@ void CanMonitor::performQuery(
       }
       const twai_message_t fc =
           makeFlowControlFrame(step.flow_control_can_id);
-      if (transmitOwnedFrame(fc, 20) != ESP_OK) {
+      if (transmitOwnedFrame(fc, 20, request.authorization_epoch) != ESP_OK) {
         terminal = DiagnosticStatus::DriverError;
         terminal_set = true;
         break;
@@ -1016,15 +1047,22 @@ bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
   if(!request.signal_v2)return false; // USB/V1 BLE cannot transmit in this image.
 #endif
   if (!query_queue_ || !result_queue_) return false;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if (!tx_gate_ || xSemaphoreTake(tx_gate_,portMAX_DELAY)!=pdTRUE) return false;
+  struct AdmissionUnlock {
+    SemaphoreHandle_t gate;
+    ~AdmissionUnlock(){xSemaphoreGive(gate);}
+  } admission_unlock{tx_gate_};
+  if (!request.authorization_epoch || request.authorization_epoch <= revoked_epoch_ ||
+      request.authorization_epoch != lease_epoch_ || !leaseAllowsBudget(1)) return false;
+#endif
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
   const bool valid_s1=request.signal_v2 && request.can_id==0x18DA01F1U &&
       request.length==3 && request.data[0]==1 && request.data[1]==0x0C &&
       request.data[2]==0x0D && !request.signal_v2_essential;
-  if (!valid_s1 || !tx_gate_ || xSemaphoreTake(tx_gate_,portMAX_DELAY)!=pdTRUE)
-    return false;
+  if (!valid_s1) return false;
   const bool stage_allows=stage_authorized_ && !stage_s1_consumed_ &&
-      stage_epoch_>revoked_stage_epoch_ && !fault_locked_;
-  xSemaphoreGive(tx_gate_);
+      request.authorization_epoch==stage_epoch_ && stage_epoch_>revoked_stage_epoch_ && !fault_locked_;
   if (!stage_allows) return false;
 #endif
   // Reserve the single in-flight slot atomically across USB and BLE callers.

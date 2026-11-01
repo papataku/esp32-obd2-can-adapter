@@ -14,15 +14,16 @@
 #include "signal_v2_can_owner.h"
 namespace signal_v2 {
 struct CanOwnerTestAccess {
+  static uint32_t stageEpoch(const m5can::CanMonitor& m){return m.stage_epoch_;}
   static void complete(CanOwner &o,const m5can::DiagnosticResult &r){o.in_flight_=false;o.result(r);}
   static void perform(m5can::CanMonitor &m,const m5can::DiagnosticRequest &q,m5can::DiagnosticResult &r){
-    m.acquireLease(550);m.performQuery(q,r);
+    auto bound=q;bound.authorization_epoch=m.stage_epoch_;m.acquireLease(550,bound.authorization_epoch);m.performQuery(bound,r);
   }
   static void capture(m5can::CanMonitor &m,const twai_message_t &frame){
     m.captureMessage(frame,static_cast<uint64_t>(g_test_millis)*1000ULL);
   }
   static esp_err_t transmit(m5can::CanMonitor &m,const twai_message_t &f){
-    return m.transmitOwnedFrame(f,20);
+    return m.transmitOwnedFrame(f,20,m.stage_epoch_);
   }
   static uint64_t txAttempts(const m5can::CanMonitor &m){return m.stats_.tx_attempts;}
   static bool closePending(const m5can::CanMonitor &m){return m.audit_close_requested_.load();}
@@ -54,7 +55,7 @@ int s1TestFrameQueueSend(QueueHandle_t,const void*,TickType_t){
     rearm_during_predrain=nullptr;
     monitor->revokeStageAuthorization(12);
     assert(monitor->beginStageS1(13));
-    assert(monitor->acquireLease(550));
+    assert(monitor->acquireLease(550,signal_v2::CanOwnerTestAccess::stageEpoch(*monitor)));
   }
   if(preempt_owner){
     signal_v2::CanOwner *const o=preempt_owner;
@@ -121,7 +122,7 @@ static twai_message_t frame(uint32_t id,std::initializer_list<uint8_t> d){
   std::copy(d.begin(),d.end(),f.data);return f;
 }
 static DiagnosticRequest probe(){
-  DiagnosticRequest q{};q.signal_v2=true;q.can_id=0x18DA01F1;q.length=3;
+  DiagnosticRequest q{};q.signal_v2=true;q.authorization_epoch=1;q.can_id=0x18DA01F1;q.length=3;
   q.timeout_ms=120;q.data[0]=1;q.data[1]=0x0C;q.data[2]=0x0D;return q;
 }
 static std::string record(){
@@ -258,7 +259,7 @@ int main(){
   // twai_transmit. The post-STOP driver queue must remain empty.
   {
     CanMonitor m;assert(m.begin());g_test_millis=100;
-    tx_ms.clear();assert(m.beginStageS1(2));assert(m.acquireLease(550));
+    tx_ms.clear();assert(m.beginStageS1(2));assert(m.acquireLease(550,signal_v2::CanOwnerTestAccess::stageEpoch(m)));
     stop_fired=false;stop_during_tx=&m;
     const esp_err_t status=signal_v2::CanOwnerTestAccess::transmit(
         m,frame(0x18DA01F1U,{3,1,0x0C,0x0D}));
@@ -267,7 +268,7 @@ int main(){
     assert(status!=ESP_OK);
     assert(tx_ms.empty());
     assert(signal_v2::CanOwnerTestAccess::txAttempts(m)==0);
-    assert(!m.acquireLease(550));
+    assert(!m.acquireLease(550,signal_v2::CanOwnerTestAccess::stageEpoch(m)));
     assert(!m.beginStageS1(2));
     assert(m.beginStageS1(3));
   }
@@ -276,7 +277,7 @@ int main(){
   // otherwise-valid physical S1 frame without relying on the CAN owner.
   {
     CanMonitor monitor;assert(monitor.begin());g_test_millis=100;
-    tx_ms.clear();assert(monitor.beginStageS1(7));assert(monitor.acquireLease(550));
+    tx_ms.clear();assert(monitor.beginStageS1(7));assert(monitor.acquireLease(550,signal_v2::CanOwnerTestAccess::stageEpoch(monitor)));
     DiagnosticRequest grouped=probe();grouped.length=5;grouped.data[1]=0x0D;
     assert(!monitor.submitQuery(grouped));
     twai_message_t flow_control=frame(0x18DA01F1U,{0x30,0,0,0,0,0,0,0});
@@ -290,7 +291,7 @@ int main(){
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)==ESP_OK);
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,s1)!=ESP_OK);
     assert(!monitor.submitQuery(probe()));
-    assert(!monitor.acquireLease(550));
+    assert(!monitor.acquireLease(550,signal_v2::CanOwnerTestAccess::stageEpoch(monitor)));
     assert(tx_ms.size()==1);
   }
 
@@ -299,7 +300,7 @@ int main(){
   {
     CanMonitor monitor;assert(monitor.begin());g_test_millis=100;
     rx.clear();tx_ms.clear();assert(monitor.beginStageS1(12));
-    assert(monitor.acquireLease(550));
+    assert(monitor.acquireLease(550,signal_v2::CanOwnerTestAccess::stageEpoch(monitor)));
     rx={{100,frame(0x0CF00400U,{0xFF,0,0,0,0,0,0,0})}};
     rearm_during_predrain=&monitor;
     twai_message_t s1=frame(0x18DA01F1U,{3,1,0x0C,0x0D,0,0,0,0});
@@ -390,14 +391,14 @@ int main(){
   {
     CanMonitor monitor;assert(monitor.begin());g_test_millis=100;
     tx_ms.clear();assert(monitor.beginStageS1(20));
-    assert(monitor.acquireLease(550));
+    assert(monitor.acquireLease(550,signal_v2::CanOwnerTestAccess::stageEpoch(monitor)));
     monitor.revokeStageAuthorization(20);
     twai_message_t valid=frame(0x18DA01F1U,{3,1,0x0C,0x0D,0,0,0,0});
     valid.ss=1;
     assert(signal_v2::CanOwnerTestAccess::transmit(monitor,valid)!=ESP_OK);
     assert(tx_ms.empty());
     assert(monitor.beginStageS1(21));
-    assert(monitor.acquireLease(550));
+    assert(monitor.acquireLease(550,signal_v2::CanOwnerTestAccess::stageEpoch(monitor)));
     {
       std::lock_guard<std::mutex> lock(driver_mu);
       driver_block=true;driver_entered=false;driver_release=false;

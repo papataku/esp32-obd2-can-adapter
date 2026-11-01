@@ -466,3 +466,25 @@ before an old-epoch completion can be discarded; lease/STOP preflight rejection
 is not a driver submission failure. Non-timeout regular response verification
 failure stops immediately in this image. The existing NoData timeout policy
 and other environments' response policy remain unchanged.
+
+### 2026-11-01 — PR70: revoke queued and in-progress V2 authorization at the TX gate
+
+An armed/epoch snapshot in `CanOwner::tick` is not a live authorization:
+STOP or disconnect can complete after its final health check. Revoking only
+the lease allowed that stale tick to acquire another lease and enqueue a new
+request. All Signal V2 CAN environments now carry the owner's epoch through
+lease acquisition, the copied diagnostic request and every request/FC TX.
+`CanMonitor` records a monotonic revoked epoch and the lease's epoch under the
+same task mutex used by revoke, queue admission and `twai_transmit`. An old or
+unbound epoch cannot reacquire a lease, enter the request queue or borrow a
+later epoch's lease at TX. Staged S1 additionally retains its exact stage epoch
+and single-shot restriction, including checks after its pre-TX drain releases
+the mutex. No driver operation is added under an ESP spinlock.
+
+Revocation and driver submission linearize on that mutex: a submission already
+holding it can finish before revoke completes; after revoke completes no old
+epoch may reach the driver. This is a host-tested software admission guarantee,
+not recall of frames previously accepted by hardware or vehicle acceptance.
+Expected asynchronous cancellation does not latch an owner admission fault;
+manual STOP and subsequent-session settle behavior remain unchanged. Budgets,
+the 120ms window, stage/HIL isolation and RP8 allowlist are unchanged.

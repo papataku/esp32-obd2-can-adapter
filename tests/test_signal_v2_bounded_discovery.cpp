@@ -16,8 +16,9 @@ CanStats CanMonitor::stats()const{return {};}
 void CanMonitor::endObservationAudit(ObservationAudit& audit,CanStats& out) {
   audit=audit_;audit.owner_confirmed=false;out=stats_;
 }
+void CanMonitor::revokeAuthorization(uint32_t){revokeLease();}
 void CanMonitor::revokeLease(){}
-bool CanMonitor::acquireLease(uint32_t){return true;}
+bool CanMonitor::acquireLease(uint32_t, uint32_t){return true;}
 bool CanMonitor::submitQuery(const DiagnosticRequest &r){
   submitted=r;++submits;functional+=r.can_id==0x18DB33F1U;return true;
 }

@@ -27,6 +27,7 @@ class CanOwner {
   bool in_flight_=false,physical_=false,essential_=false,stopped_=false;
   bool previously_armed_=false,had_demand_=false;
   uint32_t next_=0,last_log_=0,epoch_=0,submitted_epoch_=0;
+  std::atomic<uint32_t> revoked_epoch_{0}; // Cancellation is not an admission fault.
   uint64_t prior_11bit_=0,prior_bus_errors_=0;
   uint16_t period_=200;
   // N1 bounded physical discovery state; reset at every epoch.
@@ -165,11 +166,11 @@ class CanOwner {
     if(!route.enabledForThisTrial()){stop("WRONG_CAN_ADDRESSING",6);return;}
     if(!budget_.reserve(now,CanBudget::ProbeFrames,120)){stop("LOAD_BUDGET_DISCOVERY");return;}
     m5can::DiagnosticRequest req{};
-    req.signal_v2=true;req.timeout_ms=120;
+    req.signal_v2=true;req.authorization_epoch=epoch_;req.timeout_ms=120;
     req.can_id=route.request_id;req.length=3;
     req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
     probe_target_=route.response_id;
-    if(!can_->acquireLease(550)||!can_->submitQuery(req)){
+    if(!can_->acquireLease(550,epoch_)||!can_->submitQuery(req)){
       stop("QUERY_ADMISSION_FAILED",10);return;
     }
     s1_sent_=true;s1_enqueued_at_=now;
@@ -331,11 +332,11 @@ public:
   bool busy()const{return in_flight_;}
   void revokeAuthorization(uint32_t revoked_epoch=0){
     if(!can_)return;
-#if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
-    if(revoked_epoch){can_->revokeStageAuthorization(revoked_epoch);return;}
-#else
-    (void)revoked_epoch;
-#endif
+    if(revoked_epoch){
+      uint32_t prior=revoked_epoch_.load();
+      while(prior<revoked_epoch && !revoked_epoch_.compare_exchange_weak(prior,revoked_epoch)){}
+      can_->revokeAuthorization(revoked_epoch);return;
+    }
     can_->revokeLease();
   }
   void invalidate(uint8_t reason=10){samples_.invalidate(reason);if(can_)can_->revokeLease();}
@@ -482,7 +483,7 @@ public:
     if(in_flight_||int32_t(now-next_)<0)return;
     next_=now+(discovery && period_<200?200:period_); // Guard probe -> group too.
     m5can::DiagnosticRequest req{};
-    req.signal_v2=true;
+    req.signal_v2=true;req.authorization_epoch=epoch_;
     req.timeout_ms=120;
     essential_=false;
     if(discovery){
@@ -521,7 +522,8 @@ public:
       (unsigned long)epoch_,discovery||essential_?800U:2400U,
       (unsigned long)budget_.used100,(unsigned long)budget_.used1000,discovery?1U:0U);
 #endif
-    if(!can_->acquireLease(550)||!can_->submitQuery(req)){
+    if(!can_->acquireLease(550,epoch_)||!can_->submitQuery(req)){
+      if(epoch_<=revoked_epoch_.load())return; // Expected asynchronous cancellation.
       stop("QUERY_ADMISSION_FAILED",10);return;
     }
     physical_=!discovery;

@@ -21,12 +21,13 @@ void CanMonitor::endObservationAudit(ObservationAudit& copy, CanStats& stats) {
   audit_.pre_tx_queue_empty=true; audit_.pre_tx_gap_ok=true;
   copy=audit_;stats=stats_;
 }
+void CanMonitor::revokeAuthorization(uint32_t){revokeLease();}
 void CanMonitor::revokeLease(){}
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
 bool CanMonitor::beginStageS1(uint32_t){return true;}
 void CanMonitor::revokeStageAuthorization(uint32_t){}
 #endif
-bool CanMonitor::acquireLease(uint32_t){return true;}
+bool CanMonitor::acquireLease(uint32_t, uint32_t){return true;}
 bool CanMonitor::submitQuery(const DiagnosticRequest &r){
   if(!admit)return false;
   submitted=r;++submits;functional+=r.can_id==0x18DB33F1U;return true;

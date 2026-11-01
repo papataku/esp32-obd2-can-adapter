@@ -14,8 +14,9 @@ CanStats CanMonitor::stats()const{return health;}
 void CanMonitor::endObservationAudit(ObservationAudit& audit,CanStats& out) {
   audit=audit_;audit.owner_confirmed=false;out=stats_;
 }
+void CanMonitor::revokeAuthorization(uint32_t){revokeLease();}
 void CanMonitor::revokeLease(){}
-bool CanMonitor::acquireLease(uint32_t){return leaseOk;}
+bool CanMonitor::acquireLease(uint32_t, uint32_t){return leaseOk;}
 bool CanMonitor::submitQuery(const DiagnosticRequest& r){requests.push_back(r);starts.push_back(g_test_millis);return submitOk;}
 bool CanMonitor::pollQueryResult(DiagnosticResult& r){if(!ready)return false;r=response;ready=false;return true;}
 }

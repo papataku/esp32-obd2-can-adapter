@@ -160,7 +160,8 @@ class CanMonitor {
   const char* lastError() const { return last_error_; }
   bool faultLocked() const { return fault_locked_; }
 
-  bool acquireLease(uint32_t duration_ms);
+  bool acquireLease(uint32_t duration_ms, uint32_t authorization_epoch = 0);
+  void revokeAuthorization(uint32_t epoch);
   void revokeLease();
   uint32_t leaseRemainingMs() const;
   bool beginStageS1(uint32_t epoch);
@@ -211,7 +212,7 @@ class CanMonitor {
   void performQuery(const DiagnosticRequest& request, DiagnosticResult& result);
 
   esp_err_t transmitOwnedFrame(const twai_message_t& message,
-                               uint32_t wait_ms);
+                               uint32_t wait_ms, uint32_t authorization_epoch = 0);
   static twai_message_t makeDiagnosticRequestFrame(
       const DiagnosticRequest& request);
   static twai_message_t makeFlowControlFrame(uint32_t can_id);
@@ -253,6 +254,7 @@ class CanMonitor {
   uint64_t probe_tx_us_=0,last_v2_start_us_=0;
   bool v2_start_seen_=false,last_v2_discovery_=false;
   uint64_t lease_deadline_ms_ = 0;
+  uint32_t lease_epoch_ = 0, revoked_epoch_ = 0; // tx_gate_ protected
   uint32_t stage_epoch_ = 0, revoked_stage_epoch_ = 0; // tx_gate_ protected
   bool stage_authorized_ = false; // tx_gate_ protected
   bool stage_s1_consumed_ = false; // TX attempt consumes sole right

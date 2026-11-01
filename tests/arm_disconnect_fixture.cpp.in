@@ -11,8 +11,9 @@ uint32_t g_test_millis=0;
 static unsigned tx=0;
 namespace m5can {
 CanStats CanMonitor::stats() const { return {}; }
+void CanMonitor::revokeAuthorization(uint32_t){revokeLease();}
 void CanMonitor::revokeLease() {}
-bool CanMonitor::acquireLease(uint32_t) { return true; }
+bool CanMonitor::acquireLease(uint32_t, uint32_t) { return true; }
 bool CanMonitor::submitQuery(const DiagnosticRequest&) { ++tx; return true; }
 bool CanMonitor::pollQueryResult(DiagnosticResult&) { return false; }
 void CanMonitor::endObservationAudit(ObservationAudit& a,CanStats& s){a=audit_;s=stats_;}
