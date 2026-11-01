@@ -11,8 +11,9 @@ uint32_t g_test_millis=0;
 static unsigned tx=0;
 namespace m5can {
 CanStats CanMonitor::stats() const { return {}; }
+void CanMonitor::revokeAuthorization(uint32_t){revokeLease();}
 void CanMonitor::revokeLease() {}
-bool CanMonitor::acquireLease(uint32_t) { return true; }
+bool CanMonitor::acquireLease(uint32_t, uint32_t) { return true; }
 bool CanMonitor::submitQuery(const DiagnosticRequest&) { ++tx; return true; }
 bool CanMonitor::pollQueryResult(DiagnosticResult&) { return false; }
 void CanMonitor::endObservationAudit(ObservationAudit& a,CanStats& s){a=audit_;s=stats_;}
@@ -21,6 +22,7 @@ namespace hil { void note(const char*,...) {} }
 signal_v2::CanOwner owner;
 struct Link {
   uint16_t handle=7;
+  uint32_t generation=1;
   bool active=true,status=true,data=true;
 } links[2];
 portMUX_TYPE mux;
@@ -48,17 +50,31 @@ Link snapshot(unsigned i) { return links[i]; }
 bool authorized(const Link&) { return true; }
 struct Session {
   bool active(uint32_t) const { interrupt(0); return true; }
+  uint32_t id()const{return 19;}
 };
-struct Peer { Session session; } peers[2];
+struct Peer { uint32_t generation=1; Session session; } peers[2];
+std::atomic<bool> manual_stop{false};
+std::atomic<bool> manual_stop_pending{false};
+struct AutoSession {
+  bool tracking=false;unsigned slot=0;
+  uint32_t generation=0,session=0,epoch=0,since=0;
+} auto_session;
 @DISCONNECT@
+@GRANT@
 void manage(const char* cmd,uint32_t now) {
 @ARM@
 }
+@AUTO@
 int main(int argc,char** argv) {
-  assert(argc==3); race=std::atoi(argv[1]);
+  assert(argc==4); race=std::atoi(argv[1]);
   m5can::CanMonitor monitor; owner.attach(&monitor);
   signal_v2::Simulator::Demand off{},demand{{200,200,200,200,200}};
   owner.tick(0,off,false,can_authorization_epoch.load());
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+  if(!std::strcmp(argv[3],"auto")) {
+    fired=true;serviceAutoArm(100);fired=false;serviceAutoArm(2100);
+  } else
+#endif
   manage("SIGV2 CAN ARM",100);
   if(race==3) { assert(can_armed); disconnected(7); }
   assert(fired || race==3);

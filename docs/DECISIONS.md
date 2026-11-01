@@ -424,3 +424,67 @@ real CanOwner and stubbed monitor IO. They interrupt after the session check,
 on both sides of the armed store, and after ARM returns, then check disarm and
 zero submitted queries after reconnect without a new ARM. These are software
 interleaving checks; physical CAN and vehicle acceptance remain pending.
+
+### 2026-11-01 — Owner addendum: plug-and-power auto ARM (owner_live only)
+
+**Verbatim owner decision:** 「コマンド必要なの？パソコン繋げられないので、刺して電源入れるだけの状態にして」
+
+This supersedes the USB-required start, 600000ms authorization expiry and
+no-reconnect-auto-ARM statements above **only** for
+`m5dial_signal_v2_can_29bit_5hz_owner_live`, with the additional explicit
+`M5CAN_SIGNAL_V2_OWNER_AUTO_ARM=1`. It is a Phase 4B / Signal V2-2 owner
+operation change, not a new hardware acceptance claim. All other envs retain
+their policies. Boot remains TWAI LISTEN_ONLY, without a lease or TX.
+
+After a registered, encrypted and bonded central subscribes to STATUS/DATA,
+accepts HELLO/PROFILE and holds an active 3s KeepAlive lease continuously for
+2s, automatic ARM uses the same epoch snapshot -> CAS -> armed publication ->
+post-check as USB ARM. Authorization is bound to that link generation and
+protocol session. Only that secured active session extends the ARM TTL; the
+600000ms boundary cannot interrupt it. Disconnect, lease expiry or session end
+revokes authorization and Invalidates data. A subsequent active session must
+settle again and obtain a new epoch; queued old completions cannot become Fresh.
+
+Any owner/monitor fault (including bus error/BUS-OFF, RX accounting, budget,
+response verification and TX failure) remains latched through epoch changes
+until power cycle. Automatic ARM and USB ARM cannot clear it. Any screen tap
+immediately revokes TX through the thread-safe boundary and defers cache cleanup
+to the BLE owner task; it and USB STOP latch manual STOP until power cycle.
+Explicit USB ARM may clear manual STOP only. LCD: WAITING, LIVE (green,
+authorization state), STOPPED F:reason (red), STOPPED (manual). A sent frame
+cannot be recalled; an in-flight operation may still be draining after STOP.
+
+120ms deadlines, physical RP8 `{18DAF101}` only, discovery rules, >=200ms
+cadence, both budget admission gates and all read-only request forms are
+unchanged. No functional request or raw TX API is added. No device access or
+vehicle testing is authorized by this implementation; ROADMAP gates remain.
+See the appended [owner procedure](qa/signal-v2-owner-live.md#追加訂正電源投入だけで開始)
+and [vehicle runbook addendum](qa/signal-v2-2-29bit-vehicle-runbook.md#2026-11-01-owner-addendum-plug-and-power).
+
+The owner_live real `twai_transmit` failure is latched at the lower boundary,
+before an old-epoch completion can be discarded; lease/STOP preflight rejection
+is not a driver submission failure. Non-timeout regular response verification
+failure stops immediately in this image. The existing NoData timeout policy
+and other environments' response policy remain unchanged.
+
+### 2026-11-01 — PR70: revoke queued and in-progress V2 authorization at the TX gate
+
+An armed/epoch snapshot in `CanOwner::tick` is not a live authorization:
+STOP or disconnect can complete after its final health check. Revoking only
+the lease allowed that stale tick to acquire another lease and enqueue a new
+request. All Signal V2 CAN environments now carry the owner's epoch through
+lease acquisition, the copied diagnostic request and every request/FC TX.
+`CanMonitor` records a monotonic revoked epoch and the lease's epoch under the
+same task mutex used by revoke, queue admission and `twai_transmit`. An old or
+unbound epoch cannot reacquire a lease, enter the request queue or borrow a
+later epoch's lease at TX. Staged S1 additionally retains its exact stage epoch
+and single-shot restriction, including checks after its pre-TX drain releases
+the mutex. No driver operation is added under an ESP spinlock.
+
+Revocation and driver submission linearize on that mutex: a submission already
+holding it can finish before revoke completes; after revoke completes no old
+epoch may reach the driver. This is a host-tested software admission guarantee,
+not recall of frames previously accepted by hardware or vehicle acceptance.
+Expected asynchronous cancellation does not latch an owner admission fault;
+manual STOP and subsequent-session settle behavior remain unchanged. Budgets,
+the 120ms window, stage/HIL isolation and RP8 allowlist are unchanged.

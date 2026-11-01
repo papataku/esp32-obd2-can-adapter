@@ -91,6 +91,10 @@ void Ui::showFatal(const char* title, const char* detail) {
 bool Ui::pollDemoToggle() {
   M5Dial.update();
   const auto touch=M5Dial.Touch.getDetail();
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+  if(touch.wasPressed())signal_v2::manualCanStop();
+  return false;
+#endif
   if (!touch.wasPressed()) return false;
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   // Only the lower half changes the status page. It cannot toggle DEMO.
@@ -227,11 +231,11 @@ void Ui::update(const CanMonitor& can, const BleStats& ble_stats, bool ble_ready
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
   const auto tx=signal_v2::canTxDisplay();
   char live_label[32]{};
-  if(tx.armed && !fault)snprintf(live_label,sizeof(live_label),"CAN TX ARMED/LIVE");
-  else if(tx.busy)snprintf(live_label,sizeof(live_label),"CAN TX STOPPING");
-  else if(tx.reason || fault)
+  if(tx.reason || fault)
     snprintf(live_label,sizeof(live_label),"STOPPED F:%.10s",tx.reason?tx.reason:"TWAI");
-  else snprintf(live_label,sizeof(live_label),"CAN TX STOPPED");
+  else if(tx.manual)snprintf(live_label,sizeof(live_label),"STOPPED (manual)");
+  else if(tx.armed)snprintf(live_label,sizeof(live_label),"LIVE");
+  else snprintf(live_label,sizeof(live_label),"WAITING");
   const char* mode_label=live_label;
   const uint16_t mode_color=(tx.reason || fault)?TFT_RED:
       (tx.armed?TFT_GREEN:TFT_LIGHTGREY);

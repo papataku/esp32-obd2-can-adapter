@@ -44,11 +44,12 @@ static twai_message_t frame(uint32_t id,std::initializer_list<uint8_t> d) {
   std::copy(d.begin(),d.end(),f.data);return f;
 }
 static DiagnosticRequest probe() {
-  DiagnosticRequest q{};q.signal_v2=true;q.can_id=0x18DA01F1;q.length=3;
+  DiagnosticRequest q{};q.signal_v2=true;q.authorization_epoch=1;q.can_id=0x18DA01F1;q.length=3;
   q.timeout_ms=120;q.data[0]=1;q.data[1]=0x0C;q.data[2]=0x0D;return q;
 }
 static DiagnosticResult run(CanMonitor& m,const DiagnosticRequest& q) {
-  m.acquireLease(550);DiagnosticResult r{};m.performQuery(q,r);return r;
+  if(!m.tx_gate_)m.tx_gate_=xSemaphoreCreateMutex();
+  m.acquireLease(550,1);DiagnosticResult r{};m.performQuery(q,r);return r;
 }
 int main(int argc,char** argv) {
   const std::string selected=argc>1?argv[1]:"all";
@@ -70,7 +71,7 @@ int main(int argc,char** argv) {
   auto standard=frame(0x7E8,{3,0x41,0x0D,0});standard.extd=0;
   if(test("R2")){
     CanMonitor m;g_test_millis=1800;rx.clear();
-    assert(m.acquireLease(550));
+    m.tx_gate_=xSemaphoreCreateMutex();assert(m.acquireLease(550,1));
     m.captureMessage(standard,1800000);
     assert(m.faultLocked() && m.leaseRemainingMs()==0);
     auto n=sent.size();run(m,q);assert(sent.size()==n);

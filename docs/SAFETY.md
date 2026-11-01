@@ -224,3 +224,13 @@ all controller TX GPIO routes and fixes U179 TXD HIGH. It has no ARM/lease/BLE
 application. Use only its [passive acceptance runbook](qa/m5dial-passive-runbook.md)
 and exact [routing evidence](qa/m5dial-passive-design-review.md); a build alone
 is not a vehicle GO. Existing active profiles still need their own gates.
+
+### Owner-live plug-and-power exception (2026-11-01)
+
+For the named owner_live image only, the explicit owner decision in
+[DECISIONS](DECISIONS.md#2026-11-01--owner-addendum-plug-and-power-auto-arm-owner_live-only)
+replaces the manual USB start with a secured registered active V2 session plus
+2s settle. Boot remains LISTEN_ONLY. The active 3s KeepAlive lease and both TX
+admission gates remain mandatory; faults latch until reboot, and screen/USB
+STOP latches against automatic recovery. All other images retain the rules
+above. See the [current owner procedure](qa/signal-v2-owner-live.md#追加訂正電源投入だけで開始).

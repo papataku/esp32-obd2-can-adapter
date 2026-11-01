@@ -141,10 +141,11 @@ struct Bench {
 }
 namespace m5can {
 bool SerialProtocol::demoActive() const {return demo;}
-bool CanMonitor::acquireLease(uint32_t duration) {
+bool CanMonitor::acquireLease(uint32_t duration, uint32_t) {
   if(fault_locked_) return false;
   lease_deadline_ms_=millis()+duration; return true;
 }
+void CanMonitor::revokeAuthorization(uint32_t){revokeLease();}
 void CanMonitor::revokeLease(){lease_deadline_ms_=0;}
 uint32_t CanMonitor::leaseRemainingMs() const {
   return lease_deadline_ms_>millis()?lease_deadline_ms_-millis():0;

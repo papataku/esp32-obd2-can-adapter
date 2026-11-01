@@ -26,6 +26,7 @@ struct DiagnosticRequest {
   uint8_t length = 0;
   uint8_t data[8]{};
   uint32_t timeout_ms = 200;
+  uint32_t authorization_epoch = 0; // Internal V2 capability; copied with queued requests.
   bool signal_v2 = false; // Dedicated V2 internal CAN owner.
   // Owner-only regular auxiliary shedding; same SF contract as discovery,
   // but not a new discovery probe (which requires 200ms boundary spacing).

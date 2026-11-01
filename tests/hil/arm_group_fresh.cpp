@@ -28,8 +28,9 @@ void note(const char*,...) {}
 }
 namespace m5can {
 CanStats CanMonitor::stats() const { return {}; }
+void CanMonitor::revokeAuthorization(uint32_t){revokeLease();}
 void CanMonitor::revokeLease() {}
-bool CanMonitor::acquireLease(uint32_t) { return true; }
+bool CanMonitor::acquireLease(uint32_t, uint32_t) { return true; }
 bool CanMonitor::submitQuery(const DiagnosticRequest& q) {
   requests.push_back(q); return true;
 }
