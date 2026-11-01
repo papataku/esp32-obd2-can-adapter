@@ -192,12 +192,15 @@ class SerialHilB01(unittest.TestCase):
 #include <cstdio>
 #include <cstring>
 #include <cassert>
-struct Link { bool active=true, status=true, data=true; };
+#include "signal_v2_disconnect_owner.h"
+using signal_v2::DisconnectOwner;
+DisconnectOwner arm_owner;
+struct Link { bool active=true, status=true, data=true; uint16_t handle=7; uint32_t generation=1; };
 Link link;
 bool is_authorized=true, session_active=true;
 Link snapshot(unsigned) { return link; }
 bool authorized(const Link&) { return is_authorized; }
-struct Session { bool active(uint32_t)const{return session_active;} };
+struct Session { bool active(uint32_t)const{return session_active;} uint32_t id()const{return 19;} };
 struct Peer { Session session; };
 Peer peers[2];
 struct Owner { const char* stopReason()const{return nullptr;} } owner;
@@ -253,7 +256,7 @@ int main(){
                 effective = [x for x in flags[env] if x.startswith("-D") or x.startswith("-U")]
                 exe = pathlib.Path(d) / ("gatt-arm-hil" if env == HIL else "gatt-arm-vehicle")
                 p = subprocess.run(["c++", "-std=c++17", "-Wall", "-Wextra",
-                                    "-Werror", *effective, str(source_file), "-o",
+                                    "-Werror", "-Iinclude", *effective, str(source_file), "-o",
                                     str(exe)], cwd=ROOT, capture_output=True, text=True)
                 self.assertEqual(p.returncode, 0, (env, p.stdout+p.stderr)[-4000:])
                 p = subprocess.run([str(exe)], capture_output=True, text=True)

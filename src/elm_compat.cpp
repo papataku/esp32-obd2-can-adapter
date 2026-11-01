@@ -290,7 +290,12 @@ ElmResult ElmCompat::execute(const char* command) {
     return result;
   }
   if (!std::strcmp(cmd, "ATM5TX0")) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+    // Legacy ELM cannot revoke the shared V2 epoch capability (USB or BLE).
+    setReply(result, "?");
+#else
     result.action = ElmAction::LeaseRevoke;
+#endif
     return result;
   }
   if (!std::strcmp(cmd, "ATM5STAT")) {

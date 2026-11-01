@@ -1,3 +1,4 @@
+#include "signal_v2_disconnect_owner.h"
 // Production GATT functions + real Session and CanOwner; only BLE/TWAI IO stubbed.
 #include "signal_v2_can_owner.h"
 #include "signal_v2_session.h"
@@ -21,6 +22,7 @@ bool CanMonitor::pollQueryResult(DiagnosticResult&) {return false;}
 void CanMonitor::endObservationAudit(ObservationAudit& a,CanStats& s){a=audit_;s=stats_;}
 }
 CanOwner owner;
+signal_v2::DisconnectOwner disconnect_owner, arm_owner;
 struct Link {
   uint16_t handle=7;
   uint32_t generation=1;

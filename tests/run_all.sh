@@ -144,3 +144,6 @@ python3 tests/test_signal_v2_revoke_race.py
 
 # Retain bounded Control FIFO events until the outstanding ACK is confirmed.
 python3 tests/test_signal_v2_control_ack.py
+
+# Owner disconnect isolation and legacy ELM revoke boundary.
+python3 tests/test_signal_v2_disconnect_owner.py
