@@ -5,6 +5,7 @@
 #include "signal_v2_golden.h"
 #include "signal_v2_registry.h"
 #include "signal_v2_session.h"
+#include "signal_v2_disconnect_owner.h"
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
 #include "signal_v2_can_owner.h"
 #endif
@@ -68,6 +69,7 @@ Registry registry;
 Simulator simulator;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
 CanOwner owner;
+DisconnectOwner disconnect_owner, arm_owner;
 std::atomic<bool> can_armed{false};
 std::atomic<uint32_t> can_authorization_epoch{1};
 uint32_t armed_until=0;
@@ -205,6 +207,27 @@ void serviceControlRevocations(uint32_t now) {
     }
   }
 }
+// Unsubscribe is a sticky transport STOP, independent of subsequent CCCD writes.
+std::atomic<unsigned> unsubscribe_revoke_pending{0};
+void serviceUnsubscribeRevocations(uint32_t now) {
+  const unsigned slots=unsubscribe_revoke_pending.exchange(0);
+  if(!slots)return;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  owner.noteAuthorizationEnd("CENTRAL_UNSUBSCRIBE");
+  owner.invalidate(10);
+#endif
+  for(unsigned i=0;i<2;++i) {
+    auto &p=peers[i];
+    p.output.size=p.dataoff=0;
+    p.session.clearDemoCache(now);
+    if(slots&(1U<<i)) {
+      p.session.invalidate();
+      p.ack.size=p.ackoff=0;
+      p.waiting=false;
+      p.rx.reset();
+    }
+  }
+}
 class Callbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, ble_gap_conn_desc *d) override {
     if (!d || !d->sec_state.encrypted || !d->sec_state.bonded)
@@ -235,25 +258,68 @@ class Callbacks : public NimBLECharacteristicCallbacks {
                    uint16_t sub) override {
     if (!d)
       return;
+    if(c!=status && c!=data)return;
+    const bool subscribed=c==status ? (sub&2)!=0 : (sub&1)!=0;
+    unsigned slots=0;
     portENTER_CRITICAL(&mux);
-    for (auto &l : links)
-      if (l.active && l.handle == d->conn_handle) {
-        if (c == status)
-          l.status = (sub & 2) != 0;
-        else if (c == data)
-          l.data = (sub & 1) != 0;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+    bool known_peer=false, owner_live=false;
+    // Inspect the publication before changing the owner's subscription flags.
+    if(can_armed.load() && disconnect_owner.current(can_authorization_epoch.load(),millis()))
+      for(const auto &l:links)
+        if(l.active && l.status && l.data && l.handle==disconnect_owner.handle &&
+           l.generation==disconnect_owner.generation) owner_live=true;
+    for(const auto &l:links)
+      if(l.active && l.handle==d->conn_handle) known_peer=true;
+    const bool non_owner=known_peer && owner_live && d->conn_handle!=disconnect_owner.handle;
+    const bool stop=!subscribed && !non_owner;
+#else
+    const bool stop=false;
+#endif
+    for(unsigned i=0;i<2;++i) {
+      auto &l=links[i];
+      if(l.active && l.handle==d->conn_handle) {
+        if(c==status)l.status=subscribed;
+        else l.data=subscribed;
       }
+      // Unknown ownership fails closed for every possible owner. A revoked
+      // link must reconnect; resubscribe alone cannot revive its generation.
+      if(stop && l.active
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+         && (!owner_live || l.handle==d->conn_handle)
+#else
+         && l.handle==d->conn_handle
+#endif
+         ) {
+        l.active=l.status=l.data=false;
+        slots|=1U<<i;
+      }
+    }
     portEXIT_CRITICAL(&mux);
+    if(stop) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+      const uint32_t revoked=++can_authorization_epoch;
+      can_armed=false;
+      owner.revokeAuthorizationAsync(revoked);
+#endif
+      unsubscribe_revoke_pending.fetch_or(slots);
+    }
   }
 };
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
 // Shared USB/automatic grant: snapshot before validation, CAS, publish, post-check.
 bool grantCanArm(uint32_t now,uint32_t seen) {
     bool secured=false;
+    DisconnectOwner binding;
+    unsigned candidates=0;
     for(unsigned i=0;i<2;++i){
       auto l=snapshot(i);
       if(l.active&&l.status&&l.data&&authorized(l)&&
-         peers[i].session.active(now)) secured=true;
+         peers[i].session.active(now)) {
+        secured=true;++candidates;
+        binding.handle=l.handle;binding.generation=l.generation;
+        binding.session=peers[i].session.id();
+      }
     }
 #if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
     secured=secured && !manual_stop.load() && !owner.stopReason();
@@ -272,6 +338,9 @@ bool grantCanArm(uint32_t now,uint32_t seen) {
        )){
       can_armed=false;accepted=false;
     }
+    binding.known=accepted && candidates==1;
+    binding.epoch=seen+1;
+    arm_owner=binding; // BLE owner task only; callback uses the published copy.
     return accepted;
 }
 #endif
@@ -338,10 +407,16 @@ void manage(const char *cmd, uint32_t now) {
     // to authorize (review B-01, linearizes check -> grant).
     const uint32_t seen=can_authorization_epoch.load();
     bool secured=false;
+    DisconnectOwner binding;
+    unsigned candidates=0;
     for(unsigned i=0;i<2;++i){
       auto l=snapshot(i);
       if(l.active&&l.status&&l.data&&authorized(l)&&
-         peers[i].session.active(now)) secured=true;
+         peers[i].session.active(now)) {
+        secured=true;++candidates;
+        binding.handle=l.handle;binding.generation=l.generation;
+        binding.session=peers[i].session.id();
+      }
     }
     bool accepted=secured && !can_armed && !owner.busy();
     uint32_t expected=seen;
@@ -356,6 +431,8 @@ void manage(const char *cmd, uint32_t now) {
       can_armed=true;
       armed_until=now+5000;
       if(can_authorization_epoch.load()!=epoch){can_armed=false;accepted=false;}
+      binding.known=accepted && candidates==1;binding.epoch=epoch;
+      arm_owner=binding;
     }
     Serial.printf("#SIGNALV2_CAN,stage=S1,armed=%u,reason=%s,ttl_ms=5000\n",
       accepted?1U:0U,accepted?"USB_VERIFIED":(secured?"BUSY_OR_ARMED":"NOT_READY"));
@@ -706,7 +783,20 @@ void connected(uint16_t handle) {
   portEXIT_CRITICAL(&mux);
 }
 void disconnected(uint16_t handle) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  bool known_peer=false, owner_live=false;
+#endif
   portENTER_CRITICAL(&mux);
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  // Only a stable, unexpired owner publication can prove a non-owner.
+  if(can_armed.load() && disconnect_owner.current(can_authorization_epoch.load(),millis()))
+    for(const auto &l:links)
+      if(l.active && l.status && l.data && l.handle==disconnect_owner.handle &&
+         l.generation==disconnect_owner.generation) owner_live=true;
+  for(const auto &l:links)
+    if(l.active && l.handle==handle) known_peer=true;
+  const bool non_owner=known_peer && owner_live && handle!=disconnect_owner.handle;
+#endif
   for (auto &l : links)
     if (l.active && l.handle == handle) {
       l.active = false;
@@ -714,6 +804,7 @@ void disconnected(uint16_t handle) {
     }
   portEXIT_CRITICAL(&mux);
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if(non_owner)return;
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
   hil::note("kind=disconnect,handle=%u",unsigned(handle));
 #endif
@@ -804,11 +895,51 @@ bool usbCommand(const char *command) {
     Serial.println("#SIGNALV2,admin=BUSY");
   return true;
 }
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+// Callback never reads Session. Withdrawal brackets all BLE-owner mutations;
+// every early return publishes only a fully checked end-of-tick snapshot.
+struct DisconnectPublication {
+  DisconnectPublication() {
+    portENTER_CRITICAL(&mux);
+    disconnect_owner={};
+    portEXIT_CRITICAL(&mux);
+  }
+  ~DisconnectPublication() {
+    const uint32_t now=millis(), epoch=can_authorization_epoch.load();
+    DisconnectOwner next;
+    unsigned candidates=0;
+    for(unsigned i=0;i<2;++i) {
+      const auto l=snapshot(i);
+      if(l.active && l.status && l.data && authorized(l) &&
+         peers[i].generation==l.generation && peers[i].session.active(now) &&
+         arm_owner.known && arm_owner.epoch==epoch &&
+         arm_owner.handle==l.handle && arm_owner.generation==l.generation &&
+         arm_owner.session==peers[i].session.id()) {
+        ++candidates;
+        next.known=true;next.handle=l.handle;next.generation=l.generation;
+        next.epoch=epoch;next.deadline=peers[i].session.leaseDeadline();
+      }
+    }
+    portENTER_CRITICAL(&mux);
+    bool matching=false;
+    for(const auto &l:links)
+      if(l.active && l.status && l.data && l.handle==next.handle && l.generation==next.generation)
+        matching=true;
+    if(candidates==1 && matching && can_armed.load() &&
+       can_authorization_epoch.load()==epoch) disconnect_owner=next;
+    portEXIT_CRITICAL(&mux);
+  }
+};
+#endif
 void poll() {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  DisconnectPublication publication;
+#endif
   if (!inbox)
     return;
   uint32_t now = millis();
   serviceControlRevocations(now);
+  serviceUnsubscribeRevocations(now);
 #if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
   if(manual_stop_pending.exchange(false))manage("SIGV2 CAN STOP",now);
 #endif

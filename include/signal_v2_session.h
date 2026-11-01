@@ -53,6 +53,7 @@ public:
   bool active(uint32_t now) const {
     return hello_ && !paused_ && count_ && int32_t(deadline_ - now) > 0;
   }
+  uint32_t leaseDeadline() const { return deadline_; }
   uint32_t revision() const { return revision_; }
   uint32_t id() const { return id_; }
   uint8_t reservations(uint32_t now) const { return active(now) ? count_ : 0; }

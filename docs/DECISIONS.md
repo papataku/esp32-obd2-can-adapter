@@ -531,3 +531,45 @@ TX authority. A replacement secured session requires a new epoch and the normal
 Host tests hold the TX mutex during overflow, then reject old-epoch lease,
 queued request and FC, check Invalid/session cleanup, and verify fresh settle
 for both delayed and failed disconnect. No device or vehicle acceptance claimed.
+
+### 2026-11-01 — V2 owner disconnect isolation; legacy coexistence deferred
+
+Phase 4B / Signal V2-2 continuity correction: a known non-owner BLE disconnect
+must leave the active owner's ARM, epoch, lease and samples intact. ARM/S1
+bind authorization to one secured, registered, subscribed active protocol
+session and link generation. The BLE task publishes a callback-safe snapshot
+with its epoch and absolute session lease deadline under the link mux. It
+withdraws that snapshot while processing Session transitions; ambiguous/multiple
+owners, unknown handles, stale generations/epochs and expired publications
+retain the existing fail-closed disconnect STOP. Callbacks never inspect Session
+or sample storage. The owner disconnect still invalidates the link before epoch
+revocation, so ARM races retain the existing CAS and post-check guarantees.
+
+V2 CAN images reject legacy ELM ATM5TX0 at the shared parser (USB and BLE),
+leaving the V2 epoch lease untouched. Safety/internal revocation APIs remain
+unchanged. Control FIFO overflow still revokes unconditionally (PR71); timeout,
+fault latch, tap/USB STOP and reconnect with a new epoch plus the 2s auto-ARM
+settle retain their policies. NUS is not advertised; iOS legacy coexistence is
+deferred. No load budgets, 120ms window, RP8 routes, device access or acceptance
+gates change. Host before/after tests cover non-owner continuity, owner/unknown
+STOP, transition/expiry/generation ambiguity and legacy revoke rejection.
+
+
+### 2026-11-01 — PR72: owner unsubscribe is a sticky STOP
+
+Phase 4B / Signal V2-2: STATUS indication or DATA notification unsubscribe
+checks the same callback-safe owner publication as disconnect, before changing
+CCCD flags. A proven non-owner only changes its own flags. Owner or unknown
+ownership invalidates the possible owner links, advances the authorization
+epoch, clears ARM and publishes the monitor revoke atomically without waiting
+for its TX mutex, using the PR71 overflow primitives. The sticky slot mask is
+independent of Control FIFO and later resubscribe callbacks. The BLE owner task
+clears Session, reassembly, ACK/output and samples before its next owner tick.
+A revoked link must reconnect and establish a new protocol session; resubscribe
+alone never revives it. Replacement authorization requires a new epoch and the
+unchanged 2s auto-ARM settle. A driver submission already admitted may drain.
+
+Host regressions use production callbacks and real Session/CanOwner/CanMonitor
+for both characteristics: unsubscribe alone, unsubscribe/resubscribe before
+poll, non-owner continuity and unknown-owner STOP. No device access or vehicle
+acceptance is claimed. Budgets, 120ms, RP8 and settle policy are unchanged.
