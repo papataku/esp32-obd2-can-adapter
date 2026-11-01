@@ -87,11 +87,31 @@ static void connectSession(uint32_t sid,uint32_t now) {
     w16(e+16,200);w16(e+18,400);w16(e+20,600);}
   control(2,now,p,sizeof(p));assert(peers[0].session.active(now));
 }
-int main() {
+int main(int argc,char** argv) {
   m5can::CanMonitor monitor;owner.attach(&monitor);
   owner.tick(0,{},false,1);
   assert(!can_armed&&tx==0); // boot cannot grant or submit
   connectSession(19,100);
+  const char* scenario=argc>1?argv[1]:"lifecycle";
+  if(std::strcmp(scenario,"lifecycle")) {
+    manage("SIGV2 CAN ARM",100);assert(can_armed);
+    if(!std::strcmp(scenario,"touch")) {
+      m5can::Ui ui;assert(!ui.pollDemoToggle());
+      assert(manual_stop&&!can_armed);
+      control(4,2100);serviceAutoArm(2100);assert(!can_armed);
+    } else if(!std::strcmp(scenario,"ttl")) {
+      for(uint32_t now=1000;now<610000;now+=1000) {
+        control(4,now);pollAuthorization(now);assert(can_armed);
+      }
+    } else if(!std::strcmp(scenario,"fault")) {
+      health.driver_bus_error=1;
+      owner.tick(100,{},true,can_authorization_epoch.load());
+      assert(owner.stopReason());can_armed=false;++can_authorization_epoch;
+      health={};manage("SIGV2 CAN ARM",101);assert(!can_armed);
+      serviceAutoArm(102);serviceAutoArm(2102);assert(!can_armed);
+    } else assert(false);
+    std::cout<<"PASS isolated "<<scenario<<"\n";return 0;
+  }
   for(unsigned missing=0;missing<3;++missing){
     links[0].registered=links[0].encrypted=links[0].bonded=true;
     if(missing==0)links[0].registered=false;

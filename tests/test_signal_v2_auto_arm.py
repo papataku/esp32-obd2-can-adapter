@@ -35,8 +35,10 @@ class AutoArm(unittest.TestCase):
                 'src/signal_v2_codec.cpp','src/signal_v2_can_samples.cpp',
                 '-o',str(exe)],cwd=ROOT,capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-            result=subprocess.run([str(exe)],capture_output=True,text=True)
-            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-            print(result.stdout.strip())
+            for scenario in ('lifecycle','touch','ttl','fault'):
+                with self.subTest(scenario=scenario):
+                    result=subprocess.run([str(exe),scenario],capture_output=True,text=True)
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    print(result.stdout.strip())
 
 if __name__=='__main__':unittest.main()
