@@ -8,6 +8,10 @@ namespace signal_v2 {
 bool begin(NimBLEServer *);
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
 void attachCan(m5can::CanMonitor*);
+#if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
+struct CanTxDisplay { bool armed, busy; const char* reason; };
+CanTxDisplay canTxDisplay();
+#endif
 #endif
 void connected(uint16_t);
 void disconnected(uint16_t);

@@ -133,3 +133,5 @@ c++ -std=c++17 -Wall -Wextra -Werror -Iinclude tests/test_passive_policy.cpp -o 
 python3 tests/test_passive_profile.py
 ./tests/run_passive_runtime.sh
 python3 tests/test_passive_flash_check.py
+
+python3 tests/test_owner_live_usb.py
