@@ -1,4 +1,5 @@
 #include <cassert>
+#include <algorithm>
 #include <iostream>
 #include <thread>
 #include <atomic>
@@ -67,6 +68,39 @@ int main(int argc,char** argv){
       assert(hil::receive(&m,0)==ESP_OK);assert(hil::receive(&m,0)==ESP_ERR_TIMEOUT);
       hil::driver_uninstall();hil::driver_install(&g,&t,&f);hil::start();flush();
     }
+  }else if(test=="writer"){
+    Serial.lines.clear();
+    for(int i=0;i<10;++i)hil::note("kind=writer,index=%d",i);
+    hil::poll();
+    assert(std::count(Serial.lines.begin(),Serial.lines.end(),'\n')==8);
+    hil::poll();assert(std::count(Serial.lines.begin(),Serial.lines.end(),'\n')==10);
+    Serial.lines.clear();hil::note("kind=partial");
+    SerialStub::room=0;hil::poll();assert(Serial.lines.empty());
+    SerialStub::room=7;SerialStub::max_write=3;
+    flush();
+    assert(std::count(Serial.lines.begin(),Serial.lines.end(),'\n')==1);
+    assert(Serial.lines.find("kind=partial\n")!=std::string::npos);
+  }else if(test=="latency"){
+    Serial.lines.clear();
+    m.identifier=0x18DA01F1;m.extd=1;m.data_length_code=8;m.data[0]=0x30;
+    g_test_millis=100;
+    assert(hil::transmit(&m,0)==ESP_OK);
+    g_test_millis=107;inject("18DAF101 1 2101020304050607");
+    g_test_millis=109;inject("18DAF101 1 2201020304050607");
+    // One bounded poll drains both CF records and the causative FC.
+    hil::poll();
+    assert(Serial.lines.find("fc_t_us=100000,fc_to_cf_us=7000")!=std::string::npos);
+    assert(Serial.lines.find("fc_t_us=100000,fc_to_cf_us=9000")!=std::string::npos);
+    // Unrelated route, stale generation and failed FC cannot claim a latency.
+    Serial.lines.clear();inject("18DAF102 1 2101020304050607");
+    inject("18DAF101 1 2101020304050607",hil::currentGeneration()+1);flush();
+    assert(Serial.lines.find("fc_to_cf_us=")==std::string::npos);
+    hil::stop();hil::driver_uninstall();hil::driver_install(&g,&t,&f);hil::start();
+    Serial.lines.clear();inject("18DAF101 1 2101020304050607");flush();
+    assert(Serial.lines.find("fc_to_cf_us=")==std::string::npos);
+    hil::usbCommand("HIL TXFAIL 1");assert(hil::transmit(&m,0)!=ESP_OK);
+    Serial.lines.clear();inject("18DAF101 1 2101020304050607");flush();
+    assert(Serial.lines.find("fc_to_cf_us=")==std::string::npos);
   }else if(test=="transport"){
     // USB is never serviced: owner operations remain bounded, missing evidence
     // latches fail-closed and cannot be reset away by reinstall or HIL RESET.

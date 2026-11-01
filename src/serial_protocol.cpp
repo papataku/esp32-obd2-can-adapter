@@ -868,6 +868,9 @@ void SerialProtocol::emitFrame(
 }
 
 void SerialProtocol::emitStats(bool forced) {
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  if (!forced) return; // Keep the virtual ECU turnaround free of periodic CDC dumps.
+#endif
   if (elm_mode_) return;
   const uint32_t now = millis();
   if (!forced &&

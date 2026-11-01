@@ -10,5 +10,5 @@ c++ -std=c++17 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined \
  tests/hil/driver.cpp src/twai_hil.cpp src/can_monitor.cpp \
  src/diagnostic_policy.cpp src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \
  -o "$build/driver"
-for test in drain model race transport; do "$build/driver" "$test"; done
+for test in drain model race transport latency writer; do "$build/driver" "$test"; done
 python3 tests/test_hil_review.py

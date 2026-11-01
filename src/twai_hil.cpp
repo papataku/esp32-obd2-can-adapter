@@ -24,6 +24,11 @@ Event events[MaxEvents]{};
 unsigned event_head=0,event_count=0;
 uint32_t sequence=0,lost=0;
 bool transport_fault=false;
+// Instrumentation only: the successful FC event and its matching CF admissions.
+// This never grants admission, renews a lease, or changes ISO-TP deadlines.
+uint64_t fc_us=0;
+uint32_t fc_seq=0,fc_generation=0,fc_response=0;
+bool fc_ext=false,fc_pending=false;
 
 bool eventLocked(const char* detail){
   ++sequence;
@@ -38,6 +43,15 @@ bool frameLocked(const char* kind,const twai_message_t& m,bool ok){
   for(unsigned i=0;i<m.data_length_code && i<8;++i)std::snprintf(hex+2*i,3,"%02X",m.data[i]);
   std::snprintf(detail,sizeof(detail),"kind=%s,id=%08lX,ext=%u,dlc=%u,data=%s,ok=%u",
     kind,(unsigned long)m.identifier,unsigned(m.extd),unsigned(m.data_length_code),hex,ok?1U:0U);
+  if(ok && !std::strcmp(kind,"rx") && fc_pending &&
+     generation==fc_generation && m.identifier==fc_response &&
+     bool(m.extd)==fc_ext && m.data_length_code && (m.data[0]>>4)==2){
+    const size_t used=std::strlen(detail);
+    std::snprintf(detail+used,sizeof(detail)-used,
+      ",fc_seq=%lu,fc_t_us=%llu,fc_to_cf_us=%llu",
+      (unsigned long)fc_seq,(unsigned long long)fc_us,
+      (unsigned long long)(uint64_t(esp_timer_get_time())-fc_us));
+  }
   return eventLocked(detail);
 }
 bool valid(const twai_message_t& m){
@@ -84,22 +98,25 @@ void note(const char* format,...){
 // duplicate records. A disconnected/backlogged host cannot block the CAN owner.
 void poll(){
   static char pending[320]{};static size_t size=0,offset=0;
-  if(!size){
-    Event e{};bool have=false;uint32_t dropped;
-    portENTER_CRITICAL(&mux);
-    dropped=lost;
-    if(event_count){e=events[event_head];event_head=(event_head+1)%MaxEvents;--event_count;have=true;}
-    portEXIT_CRITICAL(&mux);
-    if(!have)return;
-    size=std::snprintf(pending,sizeof(pending),"#HIL_EVENT,seq=%lu,t_us=%llu,gen=%lu,lost=%lu,boot=%08lX,%s\n",
-      (unsigned long)e.seq,(unsigned long long)e.us,(unsigned long)e.gen,(unsigned long)dropped,(unsigned long)boot_id,e.detail);
+  for(unsigned records=0;records<8;++records){
+    if(!size){
+      Event e{};bool have=false;uint32_t dropped;
+      portENTER_CRITICAL(&mux);
+      dropped=lost;
+      if(event_count){e=events[event_head];event_head=(event_head+1)%MaxEvents;--event_count;have=true;}
+      portEXIT_CRITICAL(&mux);
+      if(!have)return;
+      size=std::snprintf(pending,sizeof(pending),"#HIL_EVENT,seq=%lu,t_us=%llu,gen=%lu,lost=%lu,boot=%08lX,%s\n",
+        (unsigned long)e.seq,(unsigned long long)e.us,(unsigned long)e.gen,(unsigned long)dropped,(unsigned long)boot_id,e.detail);
+    }
+    const int room=Serial.availableForWrite();
+    if(room<=0)return;
+    const size_t n=Serial.write(reinterpret_cast<const uint8_t*>(pending)+offset,
+      size-offset<size_t(room)?size-offset:size_t(room));
+    offset+=n;
+    if(offset==size){size=offset=0;}
+    else return; // Retain partial records; do not spin on a backlogged host.
   }
-  const int room=Serial.availableForWrite();
-  if(room<=0)return;
-  const size_t n=Serial.write(reinterpret_cast<const uint8_t*>(pending)+offset,
-    size-offset<size_t(room)?size-offset:size_t(room));
-  offset+=n;
-  if(offset==size){size=offset=0;}
 }
 esp_err_t driver_install(const twai_general_config_t* g,const twai_timing_config_t* t,const twai_filter_config_t* f){
   if(!g||!t||!f||!g->rx_queue_len||g->rx_queue_len>MaxRx||
@@ -126,6 +143,7 @@ esp_err_t start(){
 esp_err_t stop(){
   portENTER_CRITICAL(&mux);
   if(!installed||state.state!=TWAI_STATE_RUNNING){portEXIT_CRITICAL(&mux);return ESP_ERR_INVALID_STATE;}
+  fc_pending=false;
   state.state=TWAI_STATE_STOPPED;eventLocked("kind=stop");
   portEXIT_CRITICAL(&mux);return ESP_OK;
 }
@@ -136,6 +154,14 @@ esp_err_t transmit(const twai_message_t* m,TickType_t){
   const bool fail=tx_fail_next>0;
   if(fail){--tx_fail_next;++state.tx_failed_count;}
   const bool recorded=frameLocked("tx",*m,!fail);
+  fc_pending=false;
+  if(recorded && !fail && m->data_length_code>=3 && m->data[0]==0x30){
+    fc_seq=sequence;fc_generation=generation;fc_ext=m->extd;
+    fc_us=events[(event_head+event_count-1)%MaxEvents].us;
+    fc_response=m->extd ? ((m->identifier&0x1FFF0000UL)|
+      ((m->identifier&0xFF)<<8)|((m->identifier>>8)&0xFF)) : m->identifier+8;
+    fc_pending=true;
+  }
   portEXIT_CRITICAL(&mux);
   return fail||!recorded?ESP_FAIL:ESP_OK;
 }
