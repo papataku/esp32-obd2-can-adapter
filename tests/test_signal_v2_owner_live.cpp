@@ -118,5 +118,17 @@ int main() {
   assert(owner.stopped()&&!owner.busy()&&requests.size()==3);
   assert(std::strcmp(owner.stopReason(),"RX_ACCOUNTING_OR_BUS_FAULT")==0);
 #endif
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+  signal_v2::CanOwner malformed;malformed.attach(&m);
+  malformed.tick(1000,demand,true,10);completeProbe();
+  malformed.tick(1010,demand,true,10);
+  malformed.tick(1201,demand,true,10);assert(malformed.busy());
+  completeGroup();response.responses[0].data[0]=0x7F;
+  malformed.tick(1220,demand,true,10);
+  assert(malformed.stopped()&&malformed.stopReason());
+  const auto stopped_queries=requests.size();
+  malformed.tick(1221,demand,false,11);malformed.tick(1222,demand,true,12);
+  assert(malformed.stopped()&&requests.size()==stopped_queries);
+#endif
   std::cout<<"PASS owner-live ARM -> GROUP -> Fresh five PID, continuous 5Hz, STOP/no auto-ARM\n";
 }

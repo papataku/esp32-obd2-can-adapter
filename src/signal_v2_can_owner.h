@@ -279,6 +279,11 @@ class CanOwner {
     }
     ecu_.observeSingle(valid,r.status);
     if(!valid){
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+      if(r.status!=m5can::DiagnosticStatus::NoData){
+        stop("RESPONSE_VERIFICATION",5);return;
+      }
+#endif
       samples_.invalidate(r.status==m5can::DiagnosticStatus::NoData?3:5);
       Serial.printf("#SIGNALV2_CAN,quality=INVALID,reason=RESPONSE,"
                     "status=%u,invalid=%lu\n",unsigned(r.status),

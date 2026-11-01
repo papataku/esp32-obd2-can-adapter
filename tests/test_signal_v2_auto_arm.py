@@ -6,6 +6,23 @@ import unittest
 from test_signal_v2_b01_policy import ROOT, OWNER, flags_by_env
 
 class AutoArm(unittest.TestCase):
+    def test_actual_monitor_tx_failure_latches(self):
+        _,flags=flags_by_env()
+        with tempfile.TemporaryDirectory() as d:
+            exe=pathlib.Path(d)/'tx-fault'
+            result=subprocess.run(['c++','-std=c++11','-Wall','-Wextra','-Werror',
+                *[f for f in flags[OWNER] if f.startswith(('-D','-U'))],
+                '-Itests/pr65/stubs','-Itests/host_stubs','-Iinclude','-Isrc',
+                'tests/test_signal_v2_owner_tx_fault.cpp','src/can_monitor.cpp',
+                'src/diagnostic_policy.cpp','src/diagnostic_transaction.cpp',
+                'src/isotp_reassembler.cpp','src/signal_v2_discovery_profile.cpp',
+                'tests/host_stubs/stubs.cpp',
+                '-o',str(exe)],cwd=ROOT,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            result=subprocess.run([str(exe)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            print(result.stdout.strip())
+
     def test_production_lifecycle(self):
         source=(ROOT/'src/signal_v2_gatt.cpp').read_text()
         def block(start,end):

@@ -672,7 +672,16 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
     portEXIT_CRITICAL(&stats_mux_);
   }
 #endif
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+  // A real driver submission failure is a boot fault even if its old-epoch
+  // completion is later discarded. Preflight cancellation never reaches here.
+  if(result!=ESP_OK)fault_locked_=true;
+#endif
   if (tx_gate_) xSemaphoreGive(tx_gate_);
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+  // revokeLease takes tx_gate_; never call it while retaining that mutex.
+  if(result!=ESP_OK)enterFaultLocked("owner-live TX failure");
+#endif
   // A TX result is one software submission event, not a physical wire
   // timestamp. Cache responses and dry-run TX are never fabricated as TX.
   RawCanFrame raw{};

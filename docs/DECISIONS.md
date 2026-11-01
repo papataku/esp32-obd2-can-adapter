@@ -460,3 +460,9 @@ unchanged. No functional request or raw TX API is added. No device access or
 vehicle testing is authorized by this implementation; ROADMAP gates remain.
 See the appended [owner procedure](qa/signal-v2-owner-live.md#追加訂正電源投入だけで開始)
 and [vehicle runbook addendum](qa/signal-v2-2-29bit-vehicle-runbook.md#2026-11-01-owner-addendum-plug-and-power).
+
+The owner_live real `twai_transmit` failure is latched at the lower boundary,
+before an old-epoch completion can be discarded; lease/STOP preflight rejection
+is not a driver submission failure. Non-timeout regular response verification
+failure stops immediately in this image. The existing NoData timeout policy
+and other environments' response policy remain unchanged.
