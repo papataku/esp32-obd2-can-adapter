@@ -66,3 +66,28 @@ GATT, UI, advertising/authentication/registration and NUS files are unchanged.
 This is host execution of serial-HIL code, not a board-connected serial run.
 Device, physical serial, RF/LCD/touch, bench CAN and car acceptance: **NOT RUN**.
 No device, flash/upload, serial port or physical CAN TX is used.
+
+## Recorded result
+
+Source commit `635c5eb1a02cb4bf8b4935fabc65c38f80a8ee7a`: existing host suite,
+profile tests and fixed-base host/serial-HIL equivalence **PASS**; temporary
+4999bit mutation **FAIL (expected exit 1)**. All **26 platformio.ini envs plus
+the adapter repo's SmartRing lab env = 27/27 PASS**. HIL, CAN-disabled and
+passive linked-ELF checks pass. The matrix used synthetic build-only identity
+and existing build-gate constants, never real device approval or partition
+readback. Initial local Python 3.9 / build provisioning / concurrent same-env
+build attempts were corrected; the recorded matrix runs each env once, in
+separate build directories, against the clean source commit above.
+
+At 5Hz, the synthetic HIL window has 14 requests at 200ms intervals and 13
+GROUP completions; owner/monitor reservation peaks are both 4800/14400bits.
+At 10Hz, it has 27 requests (200ms probe guard, then 100ms), 26 completions,
+with both peaks 4000/16000bits. In both cases request IDs, bytes, deadlines,
+epochs, budget transcripts and post-STOP TX counts match the immutable base.
+
+See [evidence](../evidence/p2), including the [mutation failure](../evidence/p2/mutation-fail.txt).
+Reproduce the build-only matrix from repository root with
+`python3 docs/evidence/p2/build_matrix.py` (logs go to `../evidence`).
+The final head's owner-live binary hash is recorded in the PR/report after
+this evidence-only commit; source tests/builds above identify their code SHA.
+No device/car acceptance is inferred.
