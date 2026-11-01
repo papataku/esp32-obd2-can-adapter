@@ -164,11 +164,11 @@ class CanOwner {
     if(DiscoveryProfile::kCount!=1){stop("NO_APPROVED_CANDIDATE",6);return;}
     const EcuRoute route=DiscoveryProfile::kCandidates[0].route();
     if(!route.enabledForThisTrial()){stop("WRONG_CAN_ADDRESSING",6);return;}
-    if(!budget_.reserve(now,CanBudget::ProbeFrames,120)){stop("LOAD_BUDGET_DISCOVERY");return;}
+    if(!budget_.reserve(now,CanBudget::ProbeFrames,profiles::kLegacyRp8.deadline_ms)){stop("LOAD_BUDGET_DISCOVERY");return;}
     m5can::DiagnosticRequest req{};
-    req.signal_v2=true;req.authorization_epoch=epoch_;req.timeout_ms=120;
+    req.signal_v2=true;req.authorization_epoch=epoch_;req.timeout_ms=profiles::kLegacyRp8.deadline_ms;
     req.can_id=route.request_id;req.length=3;
-    req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
+    for(unsigned i=0;i<3;++i)req.data[i]=profiles::kLegacyRp8.probe_request[i];
     probe_target_=route.response_id;
     if(!can_->acquireLease(550,epoch_)||!can_->submitQuery(req)){
       stop("QUERY_ADMISSION_FAILED",10);return;
@@ -195,7 +195,7 @@ class CanOwner {
        r.response_count<1 || r.response_count>2 ||
        r.raw_frame_count!=r.response_count)return false;
     for(unsigned j=0;j<r.raw_frame_count;++j)
-      if(r.raw_frames[j].can_id!=id || r.raw_rx_offsets_us[j]>120000U)return false;
+      if(r.raw_frames[j].can_id!=id || r.raw_rx_offsets_us[j]>uint32_t(profiles::kLegacyRp8.deadline_ms)*1000U)return false;
     bool rpm=false,speed=false;
     for(unsigned i=0;i<r.response_count;++i){
       const auto &m=r.responses[i];
@@ -475,9 +475,9 @@ public:
     }
     had_demand_=true;
 #if defined(M5CAN_SIGNAL_V2_10HZ_LAB)
-    if(period_<100)period_=100;
+    if(period_<profiles::kLegacyRp8.period_10hz_ms)period_=profiles::kLegacyRp8.period_10hz_ms;
 #else
-    if(period_<200)period_=200;
+    if(period_<profiles::kLegacyRp8.period_5hz_ms)period_=profiles::kLegacyRp8.period_5hz_ms;
 #endif
     const bool discovery=ecu_.state()==m5can::EcuPhysicalSelector::State::Discover;
     if(!discovery&&!ecu_.fixed()){stop("ECU_PIN_LOST",6);return;}
@@ -486,10 +486,10 @@ public:
       stop("DISCOVERY_TIMEOUT",6);return;
     }
     if(in_flight_||int32_t(now-next_)<0)return;
-    next_=now+(discovery && period_<200?200:period_); // Guard probe -> group too.
+    next_=now+(discovery && period_<profiles::kLegacyRp8.probe_period_ms?profiles::kLegacyRp8.probe_period_ms:period_); // Guard probe -> group too.
     m5can::DiagnosticRequest req{};
     req.signal_v2=true;req.authorization_epoch=epoch_;
-    req.timeout_ms=120;
+    req.timeout_ms=profiles::kLegacyRp8.deadline_ms;
     essential_=false;
     if(discovery){
       // Serial physical probes to approved candidates only; never functional.
@@ -502,25 +502,24 @@ public:
       if(!discovery_running_){discovery_running_=true;discovery_started_=now;}
       probe_target_=route.response_id;
       req.can_id=route.request_id;req.length=3;
-      req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
+      for(unsigned i=0;i<3;++i)req.data[i]=profiles::kLegacyRp8.probe_request[i];
     }else{
       req.can_id=ecu_.physicalId();req.length=6;
-      const uint8_t p[6]={1,0x0D,0x0C,0x05,0x5B,0x9A};
-      for(unsigned i=0;i<6;++i)req.data[i]=p[i];
+      for(unsigned i=0;i<6;++i)req.data[i]=profiles::kLegacyRp8.group_request[i];
     }
     // Physical group: request + <=10 candidate RX + <=1 FC, prepaid.
     // Discovery probe: request + <=2 SF + 1 allowance, no FC (PR-A section 2).
     // At 100ms cadence, two full 120ms reservations leave no room even
     // for the next essential read. Keep one essential reservation of
     // headroom when choosing a full group; 5Hz selection is unchanged.
-    const bool full_headroom=discovery || period_>=200 || budget_.permits(now,16);
-    if(!full_headroom || !budget_.reserve(now,discovery?CanBudget::ProbeFrames:12,120)){
+    const bool full_headroom=discovery || period_>=profiles::kLegacyRp8.period_5hz_ms || budget_.permits(now,profiles::kLegacyRp8.headroom_frames);
+    if(!full_headroom || !budget_.reserve(now,discovery?CanBudget::ProbeFrames:profiles::kLegacyRp8.group_frames,profiles::kLegacyRp8.deadline_ms)){
       if(discovery){stop("LOAD_BUDGET_DISCOVERY");return;}
       // Shed only regular auxiliary reads; keep the same pinned ECU and
       // reserve the entire SF-only essential transaction before submission.
       essential_=true;req.signal_v2_essential=true;req.length=3;
-      req.data[0]=1;req.data[1]=0x0C;req.data[2]=0x0D;
-      if(!budget_.reserve(now,4,120)){stop("LOAD_BUDGET_ESSENTIAL");return;}
+      for(unsigned i=0;i<3;++i)req.data[i]=profiles::kLegacyRp8.probe_request[i];
+      if(!budget_.reserve(now,profiles::kLegacyRp8.essential_frames,profiles::kLegacyRp8.deadline_ms)){stop("LOAD_BUDGET_ESSENTIAL");return;}
     }
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
     hil::note("kind=gate,gate=owner,epoch=%lu,cost=%u,used100=%lu,used1000=%lu,discovery=%u",

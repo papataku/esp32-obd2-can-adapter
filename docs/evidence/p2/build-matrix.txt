@@ -1,0 +1,31 @@
+Source commit: 635c5eb1a02cb4bf8b4935fabc65c38f80a8ee7a
+Synthetic host/build evidence only; no devices or serial ports.
+
+m5dial_legacy_single 0
+m5dial_dual_ble_bench 0
+m5dial_dual_ble_mtu_bench 0
+m5dial 0
+m5dial_dual_ble_canmode_dry_bench 0
+m5dial_dual_ble_multipid_bench 0
+m5dial_mtu23_bench 0
+m5dial_mtu_bench 0
+m5dial_dual_ble_fault_fixture 0
+m5dial_flash_layout_eval 0
+m5dial_single_app_layout_eval 0
+m5dial_dual_ble_multipid_mtu_bench 0
+m5dial_v2_owner_compile 0
+m5dial_integrated_soak 0
+m5dial_memory_diagnostic_baseline 0
+m5dial_v2_authenticated_lab 0
+m5dial_v2_fresh_flash_lab 0
+m5dial_v2_fresh_flash_window16_lab 0
+m5dial_signal_v2_can_disabled_lab 0
+m5dial_signal_v2_can_29bit_5hz_lab 0
+m5dial_signal_v2_can_29bit_5hz_owner_live 0
+m5dial_signal_v2_can_29bit_serial_hil 0
+m5dial_v2_fresh_flash_mtu247_lab 0
+m5dial_existing_singleapp_vehicle_trial 0
+m5dial_signal_v2_can_29bit_passive 0
+m5dial_signal_v2_can_29bit_10hz_lab 0
+smartring_signal_v2_client_lab 0
+TOTAL 27 PASS 27

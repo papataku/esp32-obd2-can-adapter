@@ -1,4 +1,5 @@
 #pragma once
+#include "../include/signal_v2_vehicle_profile.h"
 #include <array>
 #include <cstdint>
 namespace signal_v2 {
@@ -16,7 +17,7 @@ public:
   // A broadcast cannot be admitted under a 5000-bit/100ms cap.
   static constexpr uint16_t DiscoveryFrames = 1 + 256*2;
   // N1 physical probe: TX 1 + RX <=2 Single Frames + 1 safety allowance.
-  static constexpr uint16_t ProbeFrames = 4;
+  static constexpr uint16_t ProbeFrames = profiles::kLegacyRp8.probe_frames;
   void refresh(uint32_t now) {
     if(saturated_ && uint32_t(now-saturated_at_)<1000){
       used100=used1000=UINT32_MAX;return;
@@ -34,11 +35,11 @@ public:
   // never a deceptively low usage. TX is latched off by the caller.
   bool observe(uint32_t now){
     for(auto &r:journal_)if(!r.used || uint32_t(now-r.at)>=1000){
-      r.at=now;r.bits=200;r.duration=0;r.used=true;
+      r.at=now;r.bits=profiles::kLegacyRp8.bits_per_frame;r.duration=0;r.used=true;
       refresh(now);
       if(used100>peak100)peak100=used100;
       if(used1000>peak1000)peak1000=used1000;
-      return used100<=5000 && used1000<=25000;
+      return used100<=profiles::kLegacyRp8.bits_100ms && used1000<=profiles::kLegacyRp8.bits_1s;
     }
     saturated_=true;saturated_at_=now;
     used100=used1000=peak100=peak1000=UINT32_MAX;
@@ -46,8 +47,8 @@ public:
   }
   bool permits(uint32_t now,uint16_t frames){
     refresh(now);
-    if(uint64_t(used100)+uint32_t(frames)*200>5000 ||
-       uint64_t(used1000)+uint32_t(frames)*200>25000){++denied;return false;}
+    if(uint64_t(used100)+uint32_t(frames)*profiles::kLegacyRp8.bits_per_frame>profiles::kLegacyRp8.bits_100ms ||
+       uint64_t(used1000)+uint32_t(frames)*profiles::kLegacyRp8.bits_per_frame>profiles::kLegacyRp8.bits_1s){++denied;return false;}
     return true;
   }
   bool reserve(uint32_t now,uint16_t worst_frames,uint16_t duration=0){
@@ -55,8 +56,8 @@ public:
     last_=now;
     refresh(now);
     const uint32_t a=used100,b=used1000;
-    const uint32_t cost=uint32_t(worst_frames)*200;
-    if(uint64_t(a)+cost>5000||uint64_t(b)+cost>25000){++denied;return false;}
+    const uint32_t cost=uint32_t(worst_frames)*profiles::kLegacyRp8.bits_per_frame;
+    if(uint64_t(a)+cost>profiles::kLegacyRp8.bits_100ms||uint64_t(b)+cost>profiles::kLegacyRp8.bits_1s){++denied;return false;}
     for(auto &r:journal_)if(!r.used||now-r.at>=uint32_t(1000)+r.duration){
       r.at=now;r.bits=cost;r.duration=duration;r.used=true;
       used100=a+cost;used1000=b+cost;

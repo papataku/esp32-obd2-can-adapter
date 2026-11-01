@@ -1,4 +1,5 @@
 #pragma once
+#include "signal_v2_vehicle_profile.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -6,7 +7,8 @@ namespace signal_v2 {
 // A bounded, host-testable source. Only a fully decoded physical response
 // from one pinned ECU may populate these samples.
 struct CanSamples {
-  static constexpr uint16_t Pids[5]={0x0D,0x0C,0x05,0x5B,0x9A};
+  static constexpr uint16_t Pids[5]={profiles::kLegacyRp8.pids[0],profiles::kLegacyRp8.pids[1],
+    profiles::kLegacyRp8.pids[2],profiles::kLegacyRp8.pids[3],profiles::kLegacyRp8.pids[4]};
   static constexpr uint8_t Lengths[5]={3,4,3,3,8};
   struct Sample {
     uint8_t raw[8]{};

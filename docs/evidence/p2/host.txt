@@ -1,0 +1,374 @@
+Source content: 635c5eb1a02cb4bf8b4935fabc65c38f80a8ee7a
+Command: PATH=<Python-3.11-bin>:$PATH ./tests/run_all.sh
+Exit: 0
+Unfiltered local stdout SHA256: 9ddd2835a874ec9eaaf6d4d27f92048e245381a35f84be5b225429a49555b7e7
+Syntax listing lines omitted; synthetic fixtures only.
+
+PASS C++ native protocol boundary tests
+PASS ELM compatibility command-surface tests
+PASS diagnostic safety policy tests
+PASS ISO-TP reassembly tests
+PASS diagnostic transaction tests
+PASS ELM raw response formatter golden tests
+PASS KW905 multiframe golden-output tests
+PASS per-PID/DID diagnostic pacing and safe bounded table
+PASS independent bounded per-PID cache, ECU identity, TTL, negative/partial protection and eviction\nPASS pure CAN planner single/join/group, order, deadlines, disabled group independence\nPASS bounded automatic multi-PID probe and response validation
+PASS ELM batch -> CAN multi-PID -> ISO-TP -> ELM replies -> fallback\nPASS diagnostic safety policy tests
+PASS all Phase 3C firmware translation units + demo drive + screen toggle
+PASS persisted BLE evidence, disconnect reason, corruption, overrun, CAN-idle lock, write cadence and reboot export
+PASS LOGCAP sizing lower bound and read-only host behavior: 30048 bytes logical payload minimum
+PASS read-only LOGCAP sizing with legacy NVS settings unchanged
+PASS BLE persisted disconnect/CRC/reboot/overflow and CAN-idle checkpoint
+PASS dual BLE targeted chunks and disconnect isolation
+PASS opt-in 244-byte unicast and exact retry payload ordering
+PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO
+PASS stable dual profiles preserve individual CAN requests
+PASS DEMO fault replies, silent timeout, peer isolation and fresh recovery without CAN submission
+PASS dedicated flash:20 keys, wear rotation, torn erase/header/data/commit, CRC, owner redundancy, foreign/readonly preservation
+PASS combined64 boots:48 original CAN frames/RX offsets, separate first failure, BLE reasons, legacy trip/settings preservation
+PASS all Phase 3C firmware translation units + demo drive + screen toggle + BLE notify chunk
+PASS bounded BLE output, fairness, pool reserve, exact recovery, generation, overflow and stall
+PASS RPM run/provenance/ECU/gaps/counters
+PASS Issue31 RAM-only RPM provenance/compression gate (no firmware hook)
+V2 codec window bound bytes=3610 records=511 PASS
+raw CAN ring and reversible codec PASS
+V2 codec window bound bytes=3456 records=488 PASS
+raw CAN ring and reversible codec PASS
+PASS PR32 CAN RX/TX SPSC ring, sequence gaps and lossless block codec
+raw journal CRC, ownership, reboot, power-cut PASS
+PASS PR32 append-only journal ownership, CRC, torn commits and reboot
+BLE RAW export decimal/CRC/hex/resume chunk gate PASS
+PASS PR32 BLE journal read chunk protocol, CRC32 and resume
+M5CAN stream v2 framing, CRC, cursor, ACK credit and retry PASS
+PASS V2 stream wire contract (bench-only; not wired to BLE)
+V2 64KiB stream, loss, corruption, go-back-N and END PASS frames=321 retries=11
+PASS deterministic 64KiB windowed stream loss/corruption recovery simulation
+V2 bounded 3-frame burst FIFO/END/SD-ACK model PASS polls=7 frames=18\njournal V2 sender staged/SD-ACK/loss/corruption PASS bytes=68789 dropped=6 corrupted=7 rewind=10
+PASS V2 immutable-journal staged sender and SD-durable receipt simulation
+M5CAN V2 dedicated GATT control integrity test PASS
+PASS V2 isolated GATT START/ACK wire compatibility and corruption checks
+V2 progress/Flash timeout, reply generation, wrap and END PASS
+PASS: authenticated V2 lab requires explicit valid 48-bit bonded identity
+V2 two-peer ELM-first scheduling simulated PASS
+V2 ELM priority without spurious log session abort PASS
+PASS independent bounded per-PID cache, ECU identity, TTL, negative/partial protection and eviction\nPASS per-PID/DID diagnostic pacing and safe bounded table
+PASS actual dual BLE scheduler with host ECU: grouping, one probe, fallback, routing, faults, disconnect, DEMO
+PASS ASan+UBSan PID cache, pacing, and BLE/CAN coordinator simulation
+PASS boot listen-only present
+PASS listen-only TX queue constant zero
+PASS normal TX queue bounded to one
+PASS exactly one twai_transmit call
+PASS twai_transmit only in CAN owner
+PASS normal mode only referenced by CAN owner
+PASS serial HIL bridge calls no TWAI hardware API
+PASS serial HIL redirect only in CAN owner
+PASS TWAI state-changing calls only mutually exclusive CAN owners
+PASS single-shot TX enabled
+PASS flow control is 30 00 00
+PASS FC send rechecks lease
+PASS explicit short lease required
+PASS lease alone does not switch mode
+PASS host input bounded
+PASS ELM query is asynchronous
+PASS only known 29-bit headers allowed
+PASS read services whitelisted
+PASS dangerous UDS services absent from allow policy
+PASS response IDs restricted to 18DAF1xx
+PASS FF ownership checks service PID DID before FC
+PASS FC target derived from responding ECU
+PASS stale pre-query frames rejected
+PASS response pending bounded
+PASS no public RAW TX command
+PASS all current Analyzer AT commands implemented
+PASS BLE Nordic UART service configured
+PASS BLE characteristic is write + notify
+PASS BLE notifications use safe default MTU chunks
+PASS BLE input uses bounded ring buffer
+PASS BLE disconnect revokes TX lease
+PASS BLE and USB have exclusive ELM ownership
+PASS BLE is ELM-only, Native remains USB
+PASS normal UI updates never full-screen clear
+34 Phase 3D safety/compatibility checks passed
+PASS Phase 1 text frame format
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.030s
+
+OK
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.002s
+
+OK
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.701s
+
+OK
+CANLOG Python decoder and USB recovery PASS
+PASS test_cobs
+PASS test_cobs_truncated
+PASS test_packet
+PASS test_crc_corruption_rejected
+PASS test_unsupported_version_rejected
+PASS test_oversize_payload_rejected
+PASS test_command
+PASS test_can
+PASS test_can_dlc_mismatch_rejected
+PASS test_rtr
+PASS test_hello
+PASS test_stats
+PASS test_crc
+13 protocol tests passed
+PASS test_valid
+PASS test_sequence_gap
+PASS test_crc_corruption
+PASS test_stats_failure
+PASS test_timestamp_regression
+PASS test_min_duration
+6 capture validation tests passed
+.
+----------------------------------------------------------------------
+Ran 1 test in 1.208s
+
+OK
+session/replay/revision/lease/snapshot and 256 torn registry writes PASS
+.
+----------------------------------------------------------------------
+Ran 1 test in 2.504s
+
+OK
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.002s
+
+OK
+CAN hard lock: no driver, lease or submission PASS
+V2 service-only discovery, V1 isolation and protocol-neutral 11/29bit route PASS
+Serial HIL virtual ECU scenarios and evaluator PASS
+N1 bounded physical discovery PASS
+PR-C2 stage S1 single observation PASS
+PR-C2 stage S1 single observation PASS
+PR-C2 S1 TX/STOP race + monitor integration PASS
+....
+----------------------------------------------------------------------
+Ran 4 tests in 2.473s
+
+OK
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 12.334s
+
+OK
+PASS production guard owner accepted
+PASS production guard auto_zero rejected
+PASS production guard auto_without_owner rejected
+PASS production guard auto_hil rejected
+PASS production guard other_unstaged_vehicle rejected
+PASS production guard owner_zero rejected
+PASS production guard owner_no_rp8 rejected
+PASS production guard owner_10hz rejected
+PASS production guard owner_hil rejected
+PASS production guard owner_staged rejected
+PASS GATT ARM env:m5dial_signal_v2_can_29bit_serial_hil USB_VERIFIED ttl=600000
+PASS GATT ARM env:m5dial_signal_v2_can_29bit_5hz_owner_live USB_VERIFIED ttl=600000
+PASS GATT ARM env:m5dial_signal_v2_can_29bit_5hz_lab STAGE_AUTHORIZATION_REQUIRED
+PASS owner-live ARM -> GROUP -> Fresh five PID, continuous 5Hz, STOP/no auto-ARM
+.
+----------------------------------------------------------------------
+Ran 1 test in 5.278s
+
+OK
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=0 check=armed
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=0 check=armed
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=0 check=reconnect
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=0 check=reconnect
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=1 check=armed
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=1 check=armed
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=1 check=reconnect
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=1 check=reconnect
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=2 check=armed
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=2 check=armed
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=2 check=reconnect
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=2 check=reconnect
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=3 check=armed
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=3 check=armed
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=3 check=reconnect
+env:m5dial_signal_v2_can_29bit_5hz_owner_live PASS race=3 check=reconnect
+env:m5dial_signal_v2_can_29bit_serial_hil PASS race=0 check=armed
+env:m5dial_signal_v2_can_29bit_serial_hil PASS race=0 check=reconnect
+env:m5dial_signal_v2_can_29bit_serial_hil PASS race=1 check=armed
+env:m5dial_signal_v2_can_29bit_serial_hil PASS race=1 check=reconnect
+env:m5dial_signal_v2_can_29bit_serial_hil PASS race=2 check=armed
+env:m5dial_signal_v2_can_29bit_serial_hil PASS race=2 check=reconnect
+env:m5dial_signal_v2_can_29bit_serial_hil PASS race=3 check=armed
+env:m5dial_signal_v2_can_29bit_serial_hil PASS race=3 check=reconnect
+PASS M1 rejected unexpected RX id=18daf101 pci=6 -> rejected, all_rx=1, no pin
+PASS M1 rejected unexpected RX id=18daf101 pci=6 -> rejected, all_rx=1, no pin
+PASS M1 rejected unexpected RX id=7e8 pci=3 -> rejected, all_rx=1, no pin
+PASS M1 rejected unexpected RX id=18daf102 pci=6 -> rejected, all_rx=1, no pin
+PASS M1 rejected unexpected RX id=18daf101 pci=0 -> rejected, all_rx=1, no pin
+PASS M1 rejected unexpected RX id=18daf101 pci=3 -> rejected, all_rx=1, no pin
+PASS M1 rejected unexpected RX id=18daf101 pci=30 -> rejected, all_rx=1, no pin
+PASS FF/CF fail with zero FC
+PASS FF/CF fail with zero FC
+PASS M2 late SF stops and blocks next TX
+PASS M2 extra response past old quiet-close latches STOP
+PASS M2 queued late response drained before driver reinstall
+PASS M3 both split SF orders, second at +110ms
+PASS M3 both split SF orders, second at +110ms
+PASS FF/CF fail with zero FC
+PASS FF/CF fail with zero FC
+PASS M6 monitor denies probe starts 150ms apart
+PASS FF/CF fail with zero FC
+PASS M7 monitor loss/unavailable status blocks pin and TX
+PASS M7 monitor loss/unavailable status blocks pin and TX
+PASS FF/CF fail with zero FC
+PASS m1 policy rejects functional; PASS monitor blocks actual TX
+PASS lower reservation budget denies entire probe, zero TX
+PASS lower observed-traffic budget denies entire probe, zero TX
+PASS monitor precharges 800 bits; combined SF accepted
+PASS FF/CF fail with zero FC
+PASS third probe frame fails with zero FC
+PASS duplicate SF fails
+PASS negative remains evidence for owner rejection
+PASS regular six-byte group permitted, charged 2400 bits
+PASS regular group FF+2CF, one FC, 17-byte result
+PASS FF/CF fail with zero FC
+PASS R1 monitor sustained 10Hz admission, essential zero FC, M6 guard
+PASS R1 essential lower denial zero TX and FF zero FC
+PASS R2 idle 11bit detection revokes lower TX before owner tick
+PASS FF/CF fail with zero FC
+PASS R3 regular route mismatch latches fault, zero FC and next TX
+PASS R3 regular route mismatch latches fault, zero FC and next TX
+PASS FF/CF fail with zero FC
+PASS empty profile STOP zero TX
+PASS empty profile STOP zero TX
+PASS empty profile STOP zero TX
+PASS empty profile STOP zero TX
+PASS empty profile STOP zero TX
+PASS R1 5Hz 3.2s: full groups every cycle
+PASS R1 essential exhaustion STOP latched, zero submit
+PASS M4 queued completion at deadline cannot pin
+PASS M5 rejected submit latches STOP, one attempt
+PASS M5 failed lease latches STOP with zero submissions
+PASS 5Hz probe -> group at 200ms
+PASS M7 RX loss stops before pin and blocks next group
+PASS upper budget denies entire 800-bit probe, zero submit
+PASS missing completion 3s STOP latched; subsequent completion discarded
+PASS old-epoch completion cannot pin; new-epoch result pins
+PASS NoData-with-frames STOP latched
+PASS out-of-window RAW offsets rejected at owner too
+PASS R1 10Hz 3.2s: full=11 essential=22 samples=33
+PASS R1 essential exhaustion STOP latched, zero submit
+PASS M4 queued completion at deadline cannot pin
+PASS M5 rejected submit latches STOP, one attempt
+PASS M5 failed lease latches STOP with zero submissions
+PASS M6 10Hz waits 200ms after probe
+PASS M7 RX loss stops before pin and blocks next group
+PASS upper budget denies entire 800-bit probe, zero submit
+PASS missing completion 3s STOP latched; subsequent completion discarded
+PASS old-epoch completion cannot pin; new-epoch result pins
+PASS NoData-with-frames STOP latched
+PASS out-of-window RAW offsets rejected at owner too
+PASS legacy/default functional Mode01 and physical UDS preserved
+PASS legacy/default functional Mode01 and physical UDS preserved
+PASS V2 profile-only physical policy, legacy rejected; functional rejected
+PASS V2 profile-only physical policy, legacy rejected; functional rejected
+PASS HIL drain
+PASS HIL model
+PASS HIL race
+PASS HIL transport
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.001s
+
+OK
+...............
+----------------------------------------------------------------------
+Ran 15 tests in 15.449s
+
+OK
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.008s
+
+OK
+............................................................
+----------------------------------------------------------------------
+Ran 60 tests in 7.368s
+
+OK
+PASS passive hardware fault injection, stale check, wrap and sticky latch
+....
+----------------------------------------------------------------------
+Ran 4 tests in 1.217s
+
+OK
+PASS actual passive runtime: boot ordering, ARM/lease rejection, all 49 TX routes and fault teardown
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.040s
+
+OK
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.021s
+
+OK
+..
+----------------------------------------------------------------------
+Ran 2 tests in 4.098s
+
+OK
+PASS owner-live real TX failure boot latch; preflight STOP exempt
+PASS secured settle, active TTL, reconnect/new epoch/Invalid, lease/end, tap/USB STOP, fault latch/reboot
+PASS isolated touch
+PASS isolated ttl
+PASS isolated fault
+owner positive current-epoch TX=1; 62 interleavings; failures= 0
+shared positive current-epoch TX=1; 62 interleavings; failures= 0
+staged positive current-epoch TX=1; 78 interleavings; failures= 0
+10hz positive current-epoch TX=1; 78 interleavings; failures= 0
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 2.946s
+
+OK
+delayed PASS: overflow disconnect_requests=1 session_invalidated=1 samples_invalid=1 fresh_session_settled=1 post-overflow actual monitor driver TX=0
+failed PASS: overflow disconnect_requests=1 session_invalidated=1 samples_invalid=1 fresh_session_settled=1 post-overflow actual monitor driver TX=0
+legacy status PASS
+owner status PASS
+unknown status PASS
+lease status PASS
+transition status PASS
+expired status PASS
+generation status PASS
+unsubscribe status PASS
+bounce status PASS
+nonowner_unsubscribe status PASS
+unknown_unsubscribe status PASS
+legacy data PASS
+owner data PASS
+unknown data PASS
+lease data PASS
+transition data PASS
+expired data PASS
+generation data PASS
+unsubscribe data PASS
+bounce data PASS
+nonowner_unsubscribe data PASS
+unknown_unsubscribe data PASS
+.
+----------------------------------------------------------------------
+Ran 1 test in 2.881s
+
+OK
+PASS schema/revision 1, P1 PID/width/responder, unknown/empty 0 candidates
+PASS schema/revision 1, P1 PID/width/responder, unknown/empty 0 candidates
+PASS host 5 Hz 9592ee3927d01862ab965023bb2d262a01b6e08e4b4428bfb1291cc5361fd7c7
+PASS host 10 Hz 9592ee3927d01862ab965023bb2d262a01b6e08e4b4428bfb1291cc5361fd7c7
+PASS serial 5 Hz c0b83effa94e519769061bf0039c616881e68b20d422bf04b1ac25ff5c0ce4eb
+PASS serial 10 Hz 2e6e536093d762babf4aad0cda700deb106e2594b1d7993c280e2841d8e7aaf3
+budget boundary base=1,5000 head=1,5000
+PASS fixed-base equivalence de635e9f628d46e26050019c15cf337482789276

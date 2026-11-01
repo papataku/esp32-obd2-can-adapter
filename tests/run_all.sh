@@ -147,3 +147,6 @@ python3 tests/test_signal_v2_control_ack.py
 
 # Owner disconnect isolation and legacy ELM revoke boundary.
 python3 tests/test_signal_v2_disconnect_owner.py
+
+# P2 versioned built-in data and immutable-main TX equivalence (no devices).
+bash tests/run_p2_profile.sh

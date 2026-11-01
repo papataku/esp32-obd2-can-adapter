@@ -1,0 +1,5 @@
+Source commit: 635c5eb1a02cb4bf8b4935fabc65c38f80a8ee7a
+Synthetic host/build evidence only; no devices or serial ports.
+
+PASS: physical TWAI TX and driver initialization symbols absent
+ELF SHA256: 279f9b943c0e6ceb2d4001e2238a986f00ec81844b21a51266f60798942b3f38

@@ -1,0 +1,5 @@
+Source commit: 635c5eb1a02cb4bf8b4935fabc65c38f80a8ee7a
+Synthetic host/build evidence only; no devices or serial ports.
+
+PASS 329 fixed-base files byte-identical; wire/PDU, driver, auth/GATT/UI, BLE/NUS, envs, lease/epoch unchanged
+PASS P2 file allowlist, provenance digest, owner authorization blocks; no external-repo files

@@ -1,0 +1,5 @@
+Source commit: 635c5eb1a02cb4bf8b4935fabc65c38f80a8ee7a
+Synthetic host/build evidence only; no devices or serial ports.
+
+PASS: RX present; TX/ARM/lease/BLE and I2C pin-initialization symbols absent
+ELF SHA256: 889c3eb60dc007cdcee336a07cc7d140ccd7a392730259b68c372bc37c8e4216
