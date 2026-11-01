@@ -38,7 +38,8 @@ int main() {
     std::cout<<"produce "<<ok<<'\n';if(ok)dump(out);
     Simulator::Demand d{};s.demand(now,d);
     std::cout<<"active "<<s.active(now)<<" revision "<<s.revision()<<" deadline "<<s.leaseDeadline()<<" demand ";
-    for(auto v:d)std::cout<<v<<',';std::cout<<'\n';
+    for(auto v:d)std::cout<<v<<',';
+    std::cout<<'\n';
   };
   produce(100);produce(101);produce(299);produce(300);
   run(4,1,nullptr,0,350);w32(b+4,1);run(7,1,b,8,400);produce(401);
