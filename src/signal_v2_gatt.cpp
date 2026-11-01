@@ -22,11 +22,22 @@
 #error "V2-2 TX-enabled image conflicts with V2-1 hard-disabled"
 #endif
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && \
-    !defined(M5CAN_SIGNAL_V2_STAGE_GATED) && !defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
-#error "Vehicle-capable V2 CAN must retain S1 STAGE_GATED authorization"
+    !defined(M5CAN_SIGNAL_V2_STAGE_GATED) && !defined(M5CAN_SIGNAL_V2_SERIAL_HIL) && \
+    !(defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE) && \
+      M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE == 1 && \
+      defined(M5CAN_SIGNAL_V2_RP8_PROFILE) && M5CAN_SIGNAL_V2_RP8_PROFILE == 1)
+#error "Vehicle V2 requires STAGE_GATED or explicit RP8 OWNER_CONTINUOUS_LIVE=1"
 #endif
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL) && defined(M5CAN_SIGNAL_V2_STAGE_GATED)
 #error "Serial-HIL ARM/GROUP requires an unstaged, ELF-isolated USB-only image"
+#endif
+#if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE) && \
+    (M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE != 1 || \
+     !defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) || \
+     !defined(M5CAN_SIGNAL_V2_RP8_PROFILE) || M5CAN_SIGNAL_V2_RP8_PROFILE != 1 || \
+     defined(M5CAN_SIGNAL_V2_SERIAL_HIL) || defined(M5CAN_SIGNAL_V2_STAGE_GATED) || \
+     defined(M5CAN_SIGNAL_V2_10HZ_LAB))
+#error "OWNER_CONTINUOUS_LIVE is exclusively unstaged physical RP8 5Hz"
 #endif
 namespace signal_v2 {
 namespace {
@@ -54,6 +65,11 @@ CanOwner owner;
 std::atomic<bool> can_armed{false};
 std::atomic<uint32_t> can_authorization_epoch{1};
 uint32_t armed_until=0;
+#if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
+// Published only by the BLE application task; LCD never reads owner storage.
+std::atomic<bool> display_busy{false};
+std::atomic<const char*> display_reason{nullptr};
+#endif
 #endif
 // Never inherit legacy V1/NVS DEMO or enable synthetic observations at boot.
 bool demo_enabled = false;
@@ -205,18 +221,26 @@ void manage(const char *cmd, uint32_t now) {
     Serial.println("#SIGNALV2_CAN,armed=0,reason=STAGE_AUTHORIZATION_REQUIRED");
     return;
 #endif
+    const uint32_t seen=can_authorization_epoch.load();
     bool secured=false;
     for(unsigned i=0;i<2;++i){
       auto l=snapshot(i);
       if(l.active&&l.status&&l.data&&authorized(l)&&
          peers[i].session.active(now)) secured=true;
     }
-    if(secured && !can_armed)++can_authorization_epoch;
-    can_armed=secured;
-#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
-    hil::note("kind=arm,ok=%u,epoch=%lu",secured?1U:0U,(unsigned long)can_authorization_epoch.load());
-#endif
+    uint32_t expected=seen;
+    bool accepted=secured &&
+      can_authorization_epoch.compare_exchange_strong(expected,seen+1);
+    can_armed=accepted;
     armed_until=now+600000;
+    // A disconnect after the grant must also withdraw a flag stored after
+    // its revocation. No later poll is needed to make this ARM invalid.
+    if(accepted && can_authorization_epoch.load()!=seen+1){
+      can_armed=false;accepted=false;
+    }
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+    hil::note("kind=arm,ok=%u,epoch=%lu",can_armed?1U:0U,(unsigned long)can_authorization_epoch.load());
+#endif
     Serial.printf("#SIGNALV2_CAN,armed=%u,reason=%s,ttl_ms=600000\n",
       can_armed?1U:0U,can_armed?"USB_VERIFIED":"NOT_READY");
     return;
@@ -568,6 +592,11 @@ bool begin(NimBLEServer *server) {
 }
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
 void attachCan(m5can::CanMonitor* m){owner.attach(m);}
+#if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
+CanTxDisplay canTxDisplay(){
+  return {can_armed.load(),display_busy.load(),display_reason.load()};
+}
+#endif
 #endif
 void connected(uint16_t handle) {
   portENTER_CRITICAL(&mux);
@@ -582,15 +611,6 @@ void connected(uint16_t handle) {
   portEXIT_CRITICAL(&mux);
 }
 void disconnected(uint16_t handle) {
-#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
-#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
-  hil::note("kind=disconnect,handle=%u",unsigned(handle));
-#endif
-  owner.noteAuthorizationEnd("CENTRAL_DISCONNECT");
-  can_armed=false; // New connection requires a new local USB arm.
-  const uint32_t revoked=++can_authorization_epoch;
-  owner.revokeAuthorization(revoked); // Thread-safe lease revoke; no sample/selector mutation.
-#endif
   portENTER_CRITICAL(&mux);
   for (auto &l : links)
     if (l.active && l.handle == handle) {
@@ -598,6 +618,18 @@ void disconnected(uint16_t handle) {
       l.status = l.data = false;
     }
   portEXIT_CRITICAL(&mux);
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+#if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
+  hil::note("kind=disconnect,handle=%u",unsigned(handle));
+#endif
+  owner.noteAuthorizationEnd("CENTRAL_DISCONNECT");
+  // Invalidate the link before publishing a new epoch: an ARM observing
+  // that epoch must not validate this disconnected link. Publish revocation
+  // before clearing the flag so a concurrent grant cannot survive the clear.
+  const uint32_t revoked=++can_authorization_epoch;
+  can_armed=false; // New connection requires a new local USB arm.
+  owner.revokeAuthorization(revoked); // Thread-safe lease revoke; no sample/selector mutation.
+#endif
 }
 void gap(ble_gap_event *e) {
   if (!e || !status || e->type != BLE_GAP_EVENT_NOTIFY_TX)
@@ -649,6 +681,10 @@ void poll() {
   }
   owner.tick(now,demand,can_armed,can_authorization_epoch.load());
   if(owner.stopped() && can_armed.exchange(false))++can_authorization_epoch;
+#if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
+  display_reason.store(owner.stopReason());
+  display_busy.store(owner.busy());
+#endif
   static uint32_t stopped_ack_epoch=0;
   if(!can_armed && !owner.busy() && stopped_ack_epoch!=can_authorization_epoch.load()){
     stopped_ack_epoch=can_authorization_epoch.load();

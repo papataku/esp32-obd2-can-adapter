@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "app_config.h"
+#include "signal_v2_gatt.h"
 
 namespace m5can {
 namespace {
@@ -223,8 +224,21 @@ void Ui::update(const CanMonitor& can, const BleStats& ble_stats, bool ble_ready
   // Two clearly distinct concepts: the selected DEMO setting (AUTO/OFF)
   // and the actual response source (DEMO DRIVE/CAN LIVE/IDLE/ERROR).
   // Only the central highlighted soft key is touch sensitive.
+#if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
+  const auto tx=signal_v2::canTxDisplay();
+  char live_label[32]{};
+  if(tx.armed && !fault)snprintf(live_label,sizeof(live_label),"CAN TX ARMED/LIVE");
+  else if(tx.busy)snprintf(live_label,sizeof(live_label),"CAN TX STOPPING");
+  else if(tx.reason || fault)
+    snprintf(live_label,sizeof(live_label),"STOPPED F:%.10s",tx.reason?tx.reason:"TWAI");
+  else snprintf(live_label,sizeof(live_label),"CAN TX STOPPED");
+  const char* mode_label=live_label;
+  const uint16_t mode_color=(tx.reason || fault)?TFT_RED:
+      (tx.armed?TFT_GREEN:TFT_LIGHTGREY);
+#else
   const char* mode_label = demo_auto ? "DEMO AUTO  TAP" : "DEMO OFF  TAP";
   const uint16_t mode_color = demo_auto ? TFT_GREEN : TFT_LIGHTGREY;
+#endif
   if (std::strncmp(cached_demo_mode_,mode_label,sizeof(cached_demo_mode_))!=0 ||
       cached_demo_mode_color_!=mode_color) {
     M5Dial.Display.fillRect(35,50,170,21,TFT_BLACK);

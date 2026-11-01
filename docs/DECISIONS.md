@@ -378,3 +378,49 @@ These are stricter V2 failure conditions; the default/V1 path is unchanged.
 Host regressions reproduce the old failures, cover idle 11bit revocation and
 regular wrong-route FF/11bit rejection with zero FC or subsequent TX. Physical
 S1 gates, load caps, and outstanding hardware acceptance remain unchanged.
+
+## 2026-11-01 — Owner decision: continuous physical Signal V2 5Hz
+
+**Verbatim owner choice:** 「ロックを外して連続取得」.
+
+**Scope:** For M5Dial + U179 / RP8 only, the new explicit opt-in
+`m5dial_signal_v2_can_29bit_5hz_owner_live` defines
+`M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE=1` and the RP8 profile, without
+`M5CAN_SIGNAL_V2_STAGE_GATED`. Generic USB `SIGV2 CAN ARM` may start the
+existing CanOwner ARM -> physical discovery -> GROUP -> Fresh continuous
+29bit physical five-PID acquisition at at most 5Hz, using real TWAI.
+The owner accepts skipping staged **S1/S2 vehicle evidence** and authorizes
+this continuous path **without S1/S2/S3 staging**. This decision supersedes
+those operational staging requirements only for this named image; it does
+not assert that skipped evidence exists or that vehicle acceptance passed.
+
+Existing 5Hz/10Hz lab, passive, serial-HIL, default/V1 environments and HIL
+physical-TWAI isolation checks retain their policies. No functional requests
+(`7DF`/`18DB33F1`), new candidate, raw TX API, automatic ARM/reconnect recovery,
+120ms deadline or budget relaxation is authorized. RP8 `{18DAF101}` only,
+200 bits/frame, 5,000/100ms and 25,000/1s with both admission gates, fault
+latch -> STOP/Invalid, three-second V2 lease/KeepAlive, secured + registered +
+active subscribed central, USB verification and 600,000ms ARM TTL remain.
+The existing owner path remains demand driven: the central must request all
+five PIDs and maintain its session. LCD states report authorization/drain,
+not independently measured on-wire traffic. This implementation task permits
+no device access, flashing or vehicle test, and does not advance ROADMAP
+hardware acceptance gates. See the [runbook addendum](qa/signal-v2-2-29bit-vehicle-runbook.md#2026-11-01-owner-addendum-continuous-5hz)
+and [short Japanese operating procedure](qa/signal-v2-owner-live.md).
+
+### PR69 review: disconnect wins over an in-flight USB ARM
+
+Generic ARM snapshots the authorization epoch before checking the secured
+central, grants only by compare-exchange to the next epoch, and checks again
+after publishing the armed flag. Disconnect first invalidates its link, then
+advances the epoch, then clears the flag and revokes the monitor lease. This
+ordering also protects S1: an ARM checking before disconnect either loses its
+grant or withdraws it; an ARM observing the new epoch cannot reuse the old
+link. Reconnect alone cannot restore authorization. The callback never mutates
+Session or owner sample/selector storage.
+
+Host regressions compile the unchanged production ARM/disconnect bodies with
+real CanOwner and stubbed monitor IO. They interrupt after the session check,
+on both sides of the armed store, and after ARM returns, then check disarm and
+zero submitted queries after reconnect without a new ARM. These are software
+interleaving checks; physical CAN and vehicle acceptance remain pending.

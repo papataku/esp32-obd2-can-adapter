@@ -240,3 +240,33 @@ counts all candidate-route RX including late frames;
 on-wire delivery. `4294967295` in a charged window/peak means saturated
 accounting, an abort condition, never a valid measured load. Current windows
 are recomputed even disarmed/idle, and peaks are retained for the boot.
+
+## 2026-11-01 owner addendum: continuous 5Hz
+
+Owner's verbatim choice on **2026-11-01**: **「ロックを外して連続取得」**.
+For the single new `m5dial_signal_v2_can_29bit_5hz_owner_live` image only,
+the owner accepts skipping staged **S1/S2 vehicle evidence** and authorizes
+the existing continuous 29bit physical 5Hz five-PID CanOwner path on real
+TWAI through generic USB `SIGV2 CAN ARM`, **without S1/S2/S3 staging**.
+This addendum overrides the earlier staging/NO-GO operational wording above
+only within that scope; earlier text is retained as historical procedure.
+No skipped gate is reported as passed. Independent bench/physical acceptance
+remains separate from host tests, firmware builds and this owner decision.
+
+The existing 5Hz/10Hz lab images still require stage authorization and reject
+generic ARM; passive and serial-HIL images retain their separate boundaries.
+No 10Hz permission is added. The sole RP8 candidate `{18DAF101}`, no functional
+requests, 120ms ISO-TP deadline, 200 bits/frame and both 5,000/100ms and
+25,000/1s admission gates, fault latch -> STOP/Invalid, secured/registered/
+active central with three-second KeepAlive lease, disconnect -> STOP and
+600,000ms ARM TTL are unchanged. Reconnection never auto-ARMs.
+
+Use the [Japanese owner procedure](signal-v2-owner-live.md) for the exact USB
+ARM/STOP commands and LCD interpretation. The [offline wiring/electrical,
+backup and app-only checklist](#1-inventory-wiring-and-protected-backups-offline-no-vehicle)
+still applies. No agent device access, flashing, erasure or vehicle operation
+is authorized by this addendum. USB console close alone is not an immediate
+STOP; require a drained STOP ack or observe expiry/disconnect as described
+above. The owner decision does not introduce a stationary-speed-zero gate
+into the existing continuous path; it must not be mistaken for the former
+S2/S3 lifecycle or evidence of its acceptance.
