@@ -330,6 +330,11 @@ public:
   const char* stopReason()const{return stop_reason_;}
 #endif
   bool busy()const{return in_flight_;}
+  void revokeAuthorizationAsync(uint32_t epoch){
+    uint32_t prior=revoked_epoch_.load();
+    while(prior<epoch && !revoked_epoch_.compare_exchange_weak(prior,epoch)){}
+    if(can_)can_->revokeAuthorizationAsync(epoch);
+  }
   void revokeAuthorization(uint32_t revoked_epoch=0){
     if(!can_)return;
     if(revoked_epoch){

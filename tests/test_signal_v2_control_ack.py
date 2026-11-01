@@ -23,6 +23,7 @@ class ControlDuringAck(unittest.TestCase):
         fixture = (ROOT / 'tests/control_ack_fixture.cpp.in').read_text()
         replacements = {
             '@DISPATCH@': source.split('  Incoming in;\n  if (xQueue', 1)[1],
+            '@REVOKE@': block('// Sticky per-slot notification:', 'class Callbacks :') if '// Sticky per-slot notification:' in source else 'void revokeControlLink(uint16_t) {}',
             '@ENQUEUE@': block('        if (xQueueSend(inbox, &in, 0)', '\n        return;'),
             '@CONFIRM@': block('  if (p.waiting) {', '\n  bool isack ='),
         }
@@ -59,6 +60,9 @@ class ControlDuringAck(unittest.TestCase):
     def test_ack_timeout_still_disconnects(self): self.scenario('timeout')
     def test_stale_generation_does_not_block_fifo(self): self.scenario('stale')
     def test_authorization_rechecked_after_wait(self): self.scenario('auth')
+
+
+from test_signal_v2_control_overflow import ControlOverflow
 
 
 if __name__ == '__main__':

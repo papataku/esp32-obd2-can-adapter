@@ -1,5 +1,6 @@
 #include "signal_v2_session.h"
 #include <cassert>
+#include <atomic>
 #include <cstring>
 #include <deque>
 #include <string>
@@ -49,6 +50,7 @@ void portEXIT_CRITICAL(int*) {}
 bool secured=true;
 bool authorized(const Link&) { return secured; }
 Link snapshot(unsigned i) { return links[i]; }
+@REVOKE@
 void enqueue(Incoming in) {
 @ENQUEUE@
 }
