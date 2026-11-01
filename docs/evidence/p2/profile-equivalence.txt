@@ -1,0 +1,11 @@
+Source commit: 635c5eb1a02cb4bf8b4935fabc65c38f80a8ee7a
+Synthetic host/build evidence only; no devices or serial ports.
+
+PASS schema/revision 1, P1 PID/width/responder, unknown/empty 0 candidates
+PASS schema/revision 1, P1 PID/width/responder, unknown/empty 0 candidates
+PASS host 5 Hz 9592ee3927d01862ab965023bb2d262a01b6e08e4b4428bfb1291cc5361fd7c7
+PASS host 10 Hz 9592ee3927d01862ab965023bb2d262a01b6e08e4b4428bfb1291cc5361fd7c7
+PASS serial 5 Hz c0b83effa94e519769061bf0039c616881e68b20d422bf04b1ac25ff5c0ce4eb
+PASS serial 10 Hz 2e6e536093d762babf4aad0cda700deb106e2594b1d7993c280e2841d8e7aaf3
+budget boundary base=1,5000 head=1,5000
+PASS fixed-base equivalence de635e9f628d46e26050019c15cf337482789276
