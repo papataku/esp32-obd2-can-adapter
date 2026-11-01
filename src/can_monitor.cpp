@@ -532,12 +532,17 @@ void CanMonitor::revokeStageAuthorization(uint32_t epoch) {
   revokeAuthorization(epoch);
 }
 
+void CanMonitor::revokeAuthorizationAsync(uint32_t epoch) {
+  uint32_t prior=revoked_epoch_.load();
+  while(prior<epoch && !revoked_epoch_.compare_exchange_weak(prior,epoch)){}
+}
+
 void CanMonitor::revokeAuthorization(uint32_t epoch) {
   if (!tx_gate_ || xSemaphoreTake(tx_gate_, portMAX_DELAY) != pdTRUE) {
     fault_locked_ = true;
     return;
   }
-  if (epoch > revoked_epoch_) revoked_epoch_ = epoch;
+  revokeAuthorizationAsync(epoch);
   if (epoch > revoked_stage_epoch_) revoked_stage_epoch_ = epoch;
   stage_authorized_ = false;
   portENTER_CRITICAL(&lease_mux_);
@@ -547,6 +552,9 @@ void CanMonitor::revokeAuthorization(uint32_t epoch) {
 }
 
 uint32_t CanMonitor::leaseRemainingMs() const {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  if (lease_epoch_.load() <= revoked_epoch_.load()) return 0;
+#endif
   const uint64_t now_ms =
       static_cast<uint64_t>(esp_timer_get_time()) / 1000ULL;
   uint64_t deadline = 0;

@@ -488,3 +488,46 @@ not recall of frames previously accepted by hardware or vehicle acceptance.
 Expected asynchronous cancellation does not latch an owner admission fault;
 manual STOP and subsequent-session settle behavior remain unchanged. Budgets,
 the 120ms window, stage/HIL isolation and RP8 allowlist are unchanged.
+
+### 2026-11-01 — Signal V2 Control FIFO survives pending ACK
+
+Phase 4B / Signal V2-2: peek the existing 12-event callback FIFO before
+removing its head. While that peer has an outstanding ACK, retain the event
+(including fragments) until the ACK completes. Dispatch still handles at most
+one event per tick, rechecks link generation and authorization, and uses the
+unchanged Session rid/revision/lease checks. Stale link generations are drained.
+The shared FIFO preserves order across peers; a blocked head can delay the
+other peer's Control, while safety service and both send paths keep running.
+
+FIFO saturation is an explicit `CONTROL_FIFO_OVERFLOW` transport protocol
+error followed by the existing disconnect path. No replacement ACK can be
+sent while the previous indication is unconfirmed, so overflow is logged on
+USB rather than overwriting that ACK. There is no silent overwrite or renewal
+at enqueue time. The 2000ms indication deadline/disconnect and 3s lease remain;
+processing a new op4 renews, while duplicate rid and Snapshot do not.
+Pre-existing new op2 PROFILE / op3 COMMIT also set the 3s lease through
+`Session::apply()`; that behavior is unchanged.
+Sustained input faster than ACK completion can still exhaust bounded storage
+and must disconnect. Host delay tests establish software behavior only, not RF
+or vehicle acceptance. V1/NUS and CAN/budget/epoch policy are unchanged.
+
+
+### 2026-11-01 — PR71 review: Control overflow revokes before disconnect
+
+Control FIFO saturation invalidates the link, advances the authorization epoch,
+clears ARM and atomically publishes the revoked epoch to CanOwner/CanMonitor
+before logging or requesting asynchronous BLE disconnect. The callback never
+waits on the CAN task mutex or accesses Session/sample storage. The monitor
+checks the atomic epoch at lease acquisition, queue admission and request/FC
+TX under `tx_gate_`; lease checks also treat the revoked epoch as immediately
+invalid. A driver submission already admitted before revocation may drain;
+revocation cannot recall it.
+
+A sticky atomic per-slot bitmask, independent of the full FIFO, tells the BLE
+owner to invalidate Session, reassembly, pending ACK/output and CAN samples
+before its next demand/owner tick. Delayed or failed disconnect cannot restore
+TX authority. A replacement secured session requires a new epoch and the normal
+2s auto-ARM settle. No budget, 120ms deadline, RP8 route or fault latch changes.
+Host tests hold the TX mutex during overflow, then reject old-epoch lease,
+queued request and FC, check Invalid/session cleanup, and verify fresh settle
+for both delayed and failed disconnect. No device or vehicle acceptance claimed.

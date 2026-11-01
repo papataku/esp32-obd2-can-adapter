@@ -1,0 +1,152 @@
+#include "signal_v2_session.h"
+#include <cassert>
+#include <atomic>
+#include <cstring>
+#include <deque>
+#include <string>
+using namespace signal_v2;
+struct Link {
+  uint16_t handle=1;
+  uint32_t generation=1;
+  bool active=true, status=true, data=true;
+  int confirm=0;
+} links[2];
+struct Incoming {
+  uint16_t handle=1;
+  uint32_t generation=1;
+  size_t n=0;
+  uint8_t b[260]{};
+};
+struct Peer {
+  Session session;
+  Reassembler rx;
+  Packet ack, output, input;
+  size_t ackoff=0, dataoff=0;
+  uint32_t transfer=0, ack_transfer=0, progress=0, sent=0;
+  bool waiting=false;
+} peers[2];
+std::deque<Incoming> inbox_storage;
+auto inbox=&inbox_storage;
+constexpr int pdTRUE=1;
+int xQueuePeek(std::deque<Incoming>* q, Incoming* out, int) {
+  if(q->empty()) return 0;
+  *out=q->front(); return pdTRUE;
+}
+int xQueueReceive(std::deque<Incoming>* q, Incoming* out, int wait) {
+  if(!xQueuePeek(q,out,wait)) return 0;
+  q->pop_front(); return pdTRUE;
+}
+int xQueueSend(std::deque<Incoming>* q, Incoming* in, int) {
+  if(q->size()==12) return 0;
+  q->push_back(*in); return pdTRUE;
+}
+std::string events;
+struct SerialStub { void println(const char* s) { events+=s; } } Serial;
+struct Server { void disconnect(uint16_t) { events+="DISCONNECT"; } } server;
+struct NimBLEDevice { static Server* getServer() { return &server; } };
+int mux;
+void portENTER_CRITICAL(int*) {}
+void portEXIT_CRITICAL(int*) {}
+bool secured=true;
+bool authorized(const Link&) { return secured; }
+Link snapshot(unsigned i) { return links[i]; }
+@REVOKE@
+void enqueue(Incoming in) {
+@ENQUEUE@
+}
+void dispatch(uint32_t now) {
+@DISPATCH@
+void confirm(Peer& p, const Link& l, uint32_t now) {
+@CONFIRM@
+}
+Packet request(uint32_t rid, uint8_t op=4, uint32_t rev=1) {
+  uint8_t body[12]{};
+  w32(body,rid); w32(body+4,rev); body[8]=op;
+  return encode(1,0x11223344,0xa1b2c3d4,rid,body,sizeof(body));
+}
+void put(Packet p, uint32_t gen=1) {
+  Incoming in; in.generation=gen;
+  in.n=fragment(p,1,++peers[0].transfer,0,247,in.b);
+  assert(in.n && in.n<=sizeof(in.b));
+  enqueue(in);
+}
+void pending(uint32_t now) {
+  auto& p=peers[0]; assert(p.ack.size);
+  p.waiting=true; p.sent=p.ack.size; p.progress=now;
+}
+void confirmed(uint32_t now) {
+  links[0].confirm=1;
+  confirm(peers[0],links[0],now);
+  assert(!peers[0].waiting && !peers[0].ack.size);
+  dispatch(now);
+}
+void init() {
+  links[1].active=false;
+  auto& p=peers[0];
+  p.session.connect(0x11223344,0xa1b2c3d4);
+  uint8_t h[]={@HELLO@}, f[]={@PROFILE@};
+  Packet hello,profile;
+  assert(decode(h,sizeof(h),hello)==Error::None);
+  assert(decode(f,sizeof(f),profile)==Error::None);
+  p.session.control(hello,true,0,p.ack);
+  p.session.control(profile,true,0,p.ack);
+  assert(p.ack.payload()[5]==Accept && p.session.active(2999));
+  pending(1000);
+}
+int main(int argc,char** argv) {
+  assert(argc==2); init(); auto& p=peers[0]; std::string test=argv[1];
+  if(test=="renew") {
+    put(request(3)); dispatch(1000);
+    assert(inbox->size()==1 && p.waiting && p.session.active(2999));
+    confirmed(2700);
+    assert(inbox->empty() && u32(p.ack.payload())==3 && p.ack.payload()[5]==Accept);
+    assert(p.session.active(5699) && !p.session.active(5700));
+  } else if(test=="delay") {
+    // Delay each ACK by 1.7s for 12s; send new op4 every 1s. The finite
+    // FIFO cannot support an arrival rate above service rate indefinitely.
+    uint32_t next_confirm=2700, rid=3;
+    for(uint32_t now=1000;now<=12000;now+=100) {
+      if(now%1000==0) put(request(rid++));
+      dispatch(now);
+      if(now==next_confirm) { confirmed(now); pending(now); next_confirm+=1700; }
+      assert(p.session.active(now));
+      assert(events.empty());
+    }
+    assert(inbox->size()>0); // backlog is retained, never silently dropped
+  } else if(test=="fifo") {
+    put(request(3)); put(request(4)); put(request(5)); dispatch(1000);
+    assert(inbox->size()==3);
+    for(uint32_t rid=3;rid<=5;++rid) {
+      confirmed(1000+rid*100);
+      assert(u32(p.ack.payload())==rid && p.ack.payload()[5]==Accept);
+      pending(1000+rid*100);
+    }
+    assert(inbox->empty());
+  } else if(test=="overflow") {
+    for(uint32_t rid=3;rid<15;++rid) { put(request(rid)); dispatch(1000); }
+    assert(inbox->size()==12 && events.empty());
+    put(request(15));
+    assert(inbox->size()==12);
+    assert(events=="#SIGNALV2,protocol_error=CONTROL_FIFO_OVERFLOWDISCONNECT");
+  } else if(test=="duplicate") {
+    confirmed(1000); // release profile ACK
+    put(request(3)); dispatch(1000); auto stored=p.ack; pending(1000);
+    put(request(3)); dispatch(2000); assert(inbox->size()==1);
+    confirmed(2700);
+    assert(inbox->empty() && p.ack.bytes==stored.bytes && p.ack.size==stored.size);
+    assert(p.session.active(3999) && !p.session.active(4000));
+  } else if(test=="timeout") {
+    put(request(3)); dispatch(1000);
+    confirm(p,links[0],2999); assert(events.empty());
+    confirm(p,links[0],3000);
+    assert(events=="DISCONNECT" && !p.session.active(3000) && !p.ack.size);
+  } else if(test=="stale") {
+    put(request(3),0); dispatch(1000); assert(inbox->empty());
+    put(request(3)); dispatch(1000); assert(inbox->size()==1);
+    confirmed(2700); assert(u32(p.ack.payload())==3);
+  } else if(test=="auth") {
+    put(request(3)); dispatch(1000); assert(inbox->size()==1);
+    secured=false; confirmed(2700);
+    assert(p.ack.payload()[5]==NotAuthorized && !p.session.active(2700));
+  } else assert(false);
+}

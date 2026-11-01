@@ -165,6 +165,46 @@ bool persist(const Registry &next) {
   }
   return ok;
 }
+// Sticky per-slot notification: independent of the already-full Control FIFO.
+std::atomic<unsigned> control_revoke_pending{0};
+void revokeControlLink(uint16_t handle) {
+  unsigned slots=0;
+  portENTER_CRITICAL(&mux);
+  for(unsigned i=0;i<2;++i) {
+    auto &l=links[i];
+    if(l.active && l.handle==handle) {
+      l.active=l.status=l.data=false;
+      slots|=1U<<i;
+    }
+  }
+  portEXIT_CRITICAL(&mux);
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  const uint32_t revoked=++can_authorization_epoch;
+  can_armed=false;
+  owner.revokeAuthorizationAsync(revoked);
+#endif
+  control_revoke_pending.fetch_or(slots);
+}
+void serviceControlRevocations(uint32_t now) {
+  const unsigned slots=control_revoke_pending.exchange(0);
+  if(!slots)return;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  owner.noteAuthorizationEnd("CONTROL_FIFO_OVERFLOW");
+  owner.invalidate(10);
+#endif
+  for(unsigned i=0;i<2;++i) {
+    auto &p=peers[i];
+    // All queued CAN output belongs to the revoked global authorization.
+    p.output.size=p.dataoff=0;
+    p.session.clearDemoCache(now);
+    if(slots&(1U<<i)) {
+      p.session.invalidate();
+      p.ack.size=p.ackoff=0;
+      p.waiting=false;
+      p.rx.reset();
+    }
+  }
+}
 class Callbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, ble_gap_conn_desc *d) override {
     if (!d || !d->sec_state.encrypted || !d->sec_state.bonded)
@@ -180,8 +220,13 @@ class Callbacks : public NimBLECharacteristicCallbacks {
       auto l = snapshot(i);
       if (l.active && l.handle == in.handle) {
         in.generation = l.generation;
-        if (xQueueSend(inbox, &in, 0) != pdTRUE)
+        if (xQueueSend(inbox, &in, 0) != pdTRUE) {
+          // No room to retain this Control: transport protocol error. Do not
+          // overwrite the pending ACK or pretend the request was accepted.
+          revokeControlLink(in.handle);
+          Serial.println("#SIGNALV2,protocol_error=CONTROL_FIFO_OVERFLOW");
           NimBLEDevice::getServer()->disconnect(in.handle);
+        }
         return;
       }
     }
@@ -763,6 +808,7 @@ void poll() {
   if (!inbox)
     return;
   uint32_t now = millis();
+  serviceControlRevocations(now);
 #if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
   if(manual_stop_pending.exchange(false))manage("SIGV2 CAN STOP",now);
 #endif
@@ -878,9 +924,11 @@ void poll() {
     }
     send(p, l, now);
   }
-  // Parse at most one complete callback event, always rechecking generation.
+  // Single consumer: retain the FIFO head until its peer can accept Control.
+  // The 12 bounded callback events include fragments. Other peers may wait
+  // behind this head too; send/safety service above still runs on every tick.
   Incoming in;
-  if (xQueueReceive(inbox, &in, 0) != pdTRUE)
+  if (xQueuePeek(inbox, &in, 0) != pdTRUE)
     return;
   for (unsigned i = 0; i < 2; ++i) {
     auto l = snapshot(i);
@@ -889,6 +937,7 @@ void poll() {
       continue;
     if (p.ack.size)
       return;
+    xQueueReceive(inbox, &in, 0);
     auto e = p.rx.feed(in.b, in.n, 1, now, p.input);
     if (e == Error::None) {
       p.ackoff = 0;
@@ -905,6 +954,8 @@ void poll() {
     }
     return;
   }
+  // Disconnected/replaced generations must not block the live FIFO.
+  xQueueReceive(inbox, &in, 0);
 }
 } // namespace signal_v2
 #endif
