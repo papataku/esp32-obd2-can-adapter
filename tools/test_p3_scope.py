@@ -4,6 +4,8 @@ import pathlib, re, subprocess
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BASE='18188eed1b45534a7aadc6a2c390f2d594d92921'
 def git(*args):return subprocess.check_output(['git',*args],cwd=ROOT).decode()
+if subprocess.run(['git','cat-file','-e',BASE+'^{commit}'],cwd=ROOT,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
+    subprocess.run(['git','fetch','--no-tags','origin',BASE],cwd=ROOT,check=True)  # shallow CI checkout
 old_files=set(git('ls-tree','-r','--name-only',BASE).splitlines())
 modified={'include/signal_v2_session.h','src/signal_v2_session.cpp','src/signal_v2_gatt.cpp','tests/run_all.sh'}
 for path in old_files-modified:

@@ -12,6 +12,8 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--mutation-proof',action='store_true');p.add_argument('--output',type=pathlib.Path);a=p.parse_args()
     with tempfile.TemporaryDirectory() as d:
         temp=pathlib.Path(d);base=temp/'base';base.mkdir()
+        if subprocess.run(['git','cat-file','-e',BASE+'^{commit}'],cwd=ROOT,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:
+            run(['git','fetch','--no-tags','origin',BASE],cwd=ROOT)  # shallow CI checkout
         archive=subprocess.Popen(['git','archive',BASE],cwd=ROOT,stdout=subprocess.PIPE)
         subprocess.run(['tar','-xf','-','-C',str(base)],stdin=archive.stdout,check=True);archive.stdout.close();assert archive.wait()==0
         head=ROOT
