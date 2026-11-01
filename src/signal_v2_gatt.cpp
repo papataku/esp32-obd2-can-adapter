@@ -207,6 +207,27 @@ void serviceControlRevocations(uint32_t now) {
     }
   }
 }
+// Unsubscribe is a sticky transport STOP, independent of subsequent CCCD writes.
+std::atomic<unsigned> unsubscribe_revoke_pending{0};
+void serviceUnsubscribeRevocations(uint32_t now) {
+  const unsigned slots=unsubscribe_revoke_pending.exchange(0);
+  if(!slots)return;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+  owner.noteAuthorizationEnd("CENTRAL_UNSUBSCRIBE");
+  owner.invalidate(10);
+#endif
+  for(unsigned i=0;i<2;++i) {
+    auto &p=peers[i];
+    p.output.size=p.dataoff=0;
+    p.session.clearDemoCache(now);
+    if(slots&(1U<<i)) {
+      p.session.invalidate();
+      p.ack.size=p.ackoff=0;
+      p.waiting=false;
+      p.rx.reset();
+    }
+  }
+}
 class Callbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *c, ble_gap_conn_desc *d) override {
     if (!d || !d->sec_state.encrypted || !d->sec_state.bonded)
@@ -237,15 +258,52 @@ class Callbacks : public NimBLECharacteristicCallbacks {
                    uint16_t sub) override {
     if (!d)
       return;
+    if(c!=status && c!=data)return;
+    const bool subscribed=c==status ? (sub&2)!=0 : (sub&1)!=0;
+    unsigned slots=0;
     portENTER_CRITICAL(&mux);
-    for (auto &l : links)
-      if (l.active && l.handle == d->conn_handle) {
-        if (c == status)
-          l.status = (sub & 2) != 0;
-        else if (c == data)
-          l.data = (sub & 1) != 0;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+    bool known_peer=false, owner_live=false;
+    // Inspect the publication before changing the owner's subscription flags.
+    if(can_armed.load() && disconnect_owner.current(can_authorization_epoch.load(),millis()))
+      for(const auto &l:links)
+        if(l.active && l.status && l.data && l.handle==disconnect_owner.handle &&
+           l.generation==disconnect_owner.generation) owner_live=true;
+    for(const auto &l:links)
+      if(l.active && l.handle==d->conn_handle) known_peer=true;
+    const bool non_owner=known_peer && owner_live && d->conn_handle!=disconnect_owner.handle;
+    const bool stop=!subscribed && !non_owner;
+#else
+    const bool stop=false;
+#endif
+    for(unsigned i=0;i<2;++i) {
+      auto &l=links[i];
+      if(l.active && l.handle==d->conn_handle) {
+        if(c==status)l.status=subscribed;
+        else l.data=subscribed;
       }
+      // Unknown ownership fails closed for every possible owner. A revoked
+      // link must reconnect; resubscribe alone cannot revive its generation.
+      if(stop && l.active
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+         && (!owner_live || l.handle==d->conn_handle)
+#else
+         && l.handle==d->conn_handle
+#endif
+         ) {
+        l.active=l.status=l.data=false;
+        slots|=1U<<i;
+      }
+    }
     portEXIT_CRITICAL(&mux);
+    if(stop) {
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+      const uint32_t revoked=++can_authorization_epoch;
+      can_armed=false;
+      owner.revokeAuthorizationAsync(revoked);
+#endif
+      unsubscribe_revoke_pending.fetch_or(slots);
+    }
   }
 };
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
@@ -881,6 +939,7 @@ void poll() {
     return;
   uint32_t now = millis();
   serviceControlRevocations(now);
+  serviceUnsubscribeRevocations(now);
 #if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
   if(manual_stop_pending.exchange(false))manage("SIGV2 CAN STOP",now);
 #endif

@@ -29,13 +29,28 @@ class DisconnectOwnership(unittest.TestCase):
         f=f.replace('static m5can::CanStats health{};','')
         a=f.index('namespace m5can {');b=f.index('\nCanOwner owner;',a)
         f=f[:a]+(ROOT/'tests/pr70/runtime.inc').read_text()+f[b:]
+        f=f.replace('Session session;Packet output;size_t dataoff=0;',
+            'Session session;Packet output,ack;size_t dataoff=0,ackoff=0;bool waiting=false;Reassembler rx;')
         f=f[:f.index('int main(')]
+        if 'std::atomic<unsigned> unsubscribe_revoke_pending' in source:
+            f+=block('// Unsubscribe is a sticky transport STOP,', 'class Callbacks :')
+        else:
+            f+='void serviceUnsubscribeRevocations(uint32_t) {}\n'
+        callback=block('  void onSubscribe(NimBLECharacteristic *c, ble_gap_conn_desc *d,', '\n};\n#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)')
+        f+='''
+struct NimBLECharacteristic {};struct ble_gap_conn_desc {uint16_t conn_handle;};
+NimBLECharacteristic status_storage,data_storage;
+NimBLECharacteristic *status=&status_storage,*data=&data_storage;
+struct Callback {
+'''+callback.replace(' override','')+'\n};\n'
+
         if 'struct DisconnectPublication {' in source:
             f+=block('struct DisconnectPublication {','\n#endif\nvoid poll()')
         else:f+='struct DisconnectPublication {};\n'
         f+='''
 int main(int argc,char** argv){
- assert(argc==2);const std::string scenario=argv[1];
+ assert(argc==3);const std::string scenario=argv[1];
+ const bool use_data=std::string(argv[2])=="data";
  m5can::CanMonitor m;CanOwnerTestAccess::setup(m);owner.attach(&m);
  owner.tick(0,{},false,1);connectSession(19,100);
  serviceAutoArm(100);serviceAutoArm(2101);assert(can_armed);
@@ -52,7 +67,42 @@ int main(int argc,char** argv){
  links[1].registered=links[1].encrypted=links[1].bonded=false;
  links[1].status=links[1].data=false;
  {DisconnectPublication publish; (void)publish;}
- if(scenario=="lease") {
+ if(scenario=="unsubscribe" || scenario=="bounce" || scenario=="nonowner_unsubscribe" || scenario=="unknown_unsubscribe") {
+   const bool preserve=scenario=="nonowner_unsubscribe";
+   if(scenario=="unknown_unsubscribe")disconnect_owner={};
+   if(preserve)links[1].status=links[1].data=true;
+   peers[0].output.size=peers[0].ack.size=20;
+   peers[0].dataoff=peers[0].ackoff=4;peers[0].waiting=true;
+   Callback cb;ble_gap_conn_desc desc{uint16_t(preserve?8:7)};
+   auto characteristic=use_data?data:status;
+   cb.onSubscribe(characteristic,&desc,0);
+   // Callback alone must revoke before the owner task or another CCCD write.
+   assert(bool(can_armed)==preserve);
+   assert(can_authorization_epoch==epoch+(preserve?0:1));
+   assert((m.leaseRemainingMs()>0)==preserve);
+   if(!preserve)assert(!m.acquireLease(550,epoch));
+   if(scenario=="bounce")cb.onSubscribe(characteristic,&desc,use_data?1:2);
+   serviceUnsubscribeRevocations(2102);
+   serviceAutoArm(2102);
+   owner.tick(2102,{},can_armed,can_authorization_epoch);
+   assert(bool(can_armed)==preserve);
+   if(preserve) {
+     assert(peers[0].session.active(2102));
+     assert(samples.invalidations==before.invalidations && samples.source_id==before.source_id);
+   } else {
+     assert(!peers[0].session.active(2102));
+     assert(samples.source_id==0);
+     for(const auto &v:samples.values)assert(v.quality!=0);
+     assert(!links[0].active);
+     assert(!peers[0].output.size && !peers[0].ack.size && !peers[0].waiting);
+     assert(!peers[0].dataoff && !peers[0].ackoff);
+     assert(!grantCanArm(2102,can_authorization_epoch.load()));
+     connectSession(20,2200);serviceAutoArm(2200);
+     assert(peers[0].session.id()!=19);
+     serviceAutoArm(4199);assert(!can_armed);
+     serviceAutoArm(4200);assert(can_armed && can_authorization_epoch>epoch+1);
+   }
+ } else if(scenario=="lease") {
    m5can::ElmCompat elm;auto result=elm.execute("ATM5TX0");
    // Both production ELM dispatchers execute revoke only for this action.
    if(result.action==m5can::ElmAction::LeaseRevoke)m.revokeLease();
@@ -63,7 +113,6 @@ int main(int argc,char** argv){
    else {
      if(scenario=="expired")g_test_millis=3100;
      if(scenario=="generation")++links[0].generation;
-     if(scenario=="unsubscribe")links[0].status=false;
      disconnected(scenario=="owner"?7:scenario=="unknown"?99:8);
    }
    const bool preserve=scenario=="legacy";
@@ -100,10 +149,10 @@ int main(int argc,char** argv){
                 'src/diagnostic_policy.cpp','src/diagnostic_transaction.cpp','src/isotp_reassembler.cpp',
                 'src/signal_v2_session.cpp','src/signal_v2_codec.cpp','src/signal_v2_can_samples.cpp',
                 'src/signal_v2_discovery_profile.cpp','-o',str(exe)],cwd=ROOT,check=True)
-            for scenario in ('legacy','owner','unknown','lease','transition','expired','generation','unsubscribe'):
-                with self.subTest(scenario=scenario):
-                    r=subprocess.run([str(exe),scenario],capture_output=True,text=True)
-                    print(scenario, 'PASS' if r.returncode==0 else 'FAIL',flush=True)
+            for scenario, characteristic in ((s,c) for c in ('status','data') for s in ('legacy','owner','unknown','lease','transition','expired','generation','unsubscribe','bounce','nonowner_unsubscribe','unknown_unsubscribe')):
+                with self.subTest(scenario=scenario, characteristic=characteristic):
+                    r=subprocess.run([str(exe),scenario,characteristic],capture_output=True,text=True)
+                    print(scenario, characteristic, 'PASS' if r.returncode==0 else 'FAIL',flush=True)
                     self.assertEqual(r.returncode,0,r.stdout+r.stderr)
 
 if __name__=='__main__':unittest.main()

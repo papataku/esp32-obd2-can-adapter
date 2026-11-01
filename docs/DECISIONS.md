@@ -553,3 +553,23 @@ settle retain their policies. NUS is not advertised; iOS legacy coexistence is
 deferred. No load budgets, 120ms window, RP8 routes, device access or acceptance
 gates change. Host before/after tests cover non-owner continuity, owner/unknown
 STOP, transition/expiry/generation ambiguity and legacy revoke rejection.
+
+
+### 2026-11-01 — PR72: owner unsubscribe is a sticky STOP
+
+Phase 4B / Signal V2-2: STATUS indication or DATA notification unsubscribe
+checks the same callback-safe owner publication as disconnect, before changing
+CCCD flags. A proven non-owner only changes its own flags. Owner or unknown
+ownership invalidates the possible owner links, advances the authorization
+epoch, clears ARM and publishes the monitor revoke atomically without waiting
+for its TX mutex, using the PR71 overflow primitives. The sticky slot mask is
+independent of Control FIFO and later resubscribe callbacks. The BLE owner task
+clears Session, reassembly, ACK/output and samples before its next owner tick.
+A revoked link must reconnect and establish a new protocol session; resubscribe
+alone never revives it. Replacement authorization requires a new epoch and the
+unchanged 2s auto-ARM settle. A driver submission already admitted may drain.
+
+Host regressions use production callbacks and real Session/CanOwner/CanMonitor
+for both characteristics: unsubscribe alone, unsubscribe/resubscribe before
+poll, non-owner continuity and unknown-owner STOP. No device access or vehicle
+acceptance is claimed. Budgets, 120ms, RP8 and settle policy are unchanged.
