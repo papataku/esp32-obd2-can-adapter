@@ -58,3 +58,29 @@ LCD の物理表示確認は未実施です。タッチでは ARM できませ�
 しません**。終了後も ARM 期限内かつ central が有効なら TX が継続し得ます。
 必ず STOP を明示し、drained ack と停止後 2 秒以上の TX/FC カウンタを確認します。
 ログ共有時は BLE address / VIN / 生ログをコミットしないでください。
+
+## 追加・訂正：電源投入だけで開始
+
+Owner の決定（2026-11-01）：「コマンド必要なの？パソコン繋げられないので、刺して電源入れるだけの状態にして」
+
+**以下が owner_live の現行手順です。上記の USB 必須・600秒で失効・再接続では
+自動 ARM しない説明を訂正します。** 他の image は変更しません。
+
+1. 接続前に [U179 配線・電源・終端抵抗チェック](signal-v2-2-29bit-vehicle-runbook.md#1-inventory-wiring-and-protected-backups-offline-no-vehicle)を実施します。電源は従来どおり ACC/IG USB 5V、OBD Pin16 は使いません。
+2. OBD に接続して電源を入れ、事前登録・bond 済みの SmartRing を接続します。車内で Mac や ARM コマンドは不要です。
+3. SmartRing が HELLO/PROFILE を完了し五 PID を要求、3秒 lease の KeepAlive を続けると、有効な接続が2秒継続した後に自動開始します。最大5Hz、従来の物理 discovery と予算制限を保ちます。
+
+LCD は `WAITING`（接続待ち・2秒待機）、`LIVE`（緑：送信許可中）、
+`STOPPED F:xxx`（赤：fault、理由の先頭10文字）、`STOPPED (manual)`（手動停止）。
+LIVE は実測 Hz や Fresh の証明ではありません。
+
+停止は **画面の任意の場所をタップ**、または電源を抜きます。タップ・USB STOP 後は
+電源を入れ直すまで自動再開しません。USB ARM は手動停止だけ解除できます。
+切断・lease 切れ・session 終了は STOP/Invalid にし、新しい有効 session が2秒
+継続すれば新 epoch で再開します。古い値は Fresh に戻しません。
+有効 session 中は600秒で停止しません。
+
+bus error/BUS-OFF、RX欠落・集計、予算、応答検証、TX失敗等は再接続・USB ARM
+でも解除できません。`STOPPED F:xxx` になったら停車して原因を確認し、電源を
+抜き差ししてください。STOP は送信済みフレームを取り消せません。
+実機・車両・LCD表示の確認は未実施です。

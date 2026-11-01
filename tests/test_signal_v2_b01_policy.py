@@ -11,6 +11,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 HIL = "env:m5dial_signal_v2_can_29bit_serial_hil"
 OWNER = "env:m5dial_signal_v2_can_29bit_5hz_owner_live"
 OWNER_MACRO = "M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE"
+AUTO_MACRO = "M5CAN_SIGNAL_V2_OWNER_AUTO_ARM"
 
 def flags_by_env(path=None):
     p=configparser.ConfigParser(interpolation=None)
@@ -76,6 +77,11 @@ class SerialHilB01(unittest.TestCase):
             hil=active(defs,"M5CAN_SIGNAL_V2_SERIAL_HIL")
             owner=active(defs,OWNER_MACRO)
             disabled=active(defs,"M5CAN_CAN_TX_HARD_DISABLED")
+            auto=active(defs,AUTO_MACRO)
+            if auto:
+                self.assertEqual(env,OWNER,"auto ARM macro must not leak")
+                self.assertTrue(owner,"auto ARM requires owner live")
+                self.assertEqual(defs.count("-D"+AUTO_MACRO+"=1"),1)
             if owner:
                 self.assertEqual(env,OWNER,"owner macro must not leak")
                 self.assertEqual(defs.count("-D"+OWNER_MACRO+"=1"),1)
@@ -94,7 +100,7 @@ class SerialHilB01(unittest.TestCase):
         config,flags=flags_by_env()
         self.assert_vehicle_policy(flags)
         # All other effective 5Hz definitions stay the same.
-        self.assertEqual([f for f in flags[OWNER] if OWNER_MACRO not in f],
+        self.assertEqual([f for f in flags[OWNER] if OWNER_MACRO not in f and AUTO_MACRO not in f],
                          [f for f in flags["env:m5dial_signal_v2_can_29bit_5hz_lab"]
                           if "M5CAN_SIGNAL_V2_STAGE_GATED" not in f])
         self.assertEqual(config.get(OWNER,"extends"),
@@ -111,9 +117,9 @@ class SerialHilB01(unittest.TestCase):
         for has_macro in (False,True):
             mutated=dict(flags)
             mutated[rogue]=[f for f in flags[OWNER]
-                            if has_macro or OWNER_MACRO not in f]
+                            if has_macro or (OWNER_MACRO not in f and AUTO_MACRO not in f)]
             with self.assertRaisesRegex(AssertionError,
-                                        "owner macro must not leak" if has_macro
+                                        "auto ARM macro must not leak" if has_macro
                                         else "requires STAGE_GATED=1"):
                 self.assert_vehicle_policy(mutated)
 
@@ -123,8 +129,21 @@ class SerialHilB01(unittest.TestCase):
             ini.write_text((ROOT/"platformio.ini").read_text()+
                 "\n[env:other_unstaged_vehicle]\nextends = "+OWNER+"\n")
             _,flags=flags_by_env(ini)
-            with self.assertRaisesRegex(AssertionError,"owner macro must not leak"):
+            with self.assertRaisesRegex(AssertionError,"auto ARM macro must not leak"):
                 self.assert_vehicle_policy(flags)
+
+    def test_auto_arm_policy_negative_combinations(self):
+        _,flags=flags_by_env()
+        for env in flags:
+            if env==OWNER:continue
+            mutated={k:list(v) for k,v in flags.items()}
+            mutated[env].append("-D"+AUTO_MACRO+"=1")
+            with self.subTest(env=env), self.assertRaisesRegex(AssertionError,"auto ARM macro must not leak"):
+                self.assert_vehicle_policy(mutated)
+        mutated={k:list(v) for k,v in flags.items()}
+        mutated[OWNER]=[f for f in mutated[OWNER] if OWNER_MACRO not in f]
+        with self.assertRaisesRegex(AssertionError,"auto ARM requires owner live"):
+            self.assert_vehicle_policy(mutated)
 
     def test_b01_compile_guard_rejects_other_unstaged_vehicle(self):
         # Compile the actual production guard, without BLE SDK dependencies.
@@ -134,8 +153,11 @@ class SerialHilB01(unittest.TestCase):
         _,flags=flags_by_env()
         base=[f for f in flags[OWNER] if f.startswith(("-D","-U"))]
         cases=[("owner",base,True),
-               ("other_unstaged_vehicle",[f for f in base if OWNER_MACRO not in f],False),
-               ("owner_zero",[f for f in base if OWNER_MACRO not in f]+["-D"+OWNER_MACRO+"=0"],False),
+               ("auto_zero",[f for f in base if AUTO_MACRO not in f]+["-D"+AUTO_MACRO+"=0"],False),
+               ("auto_without_owner",[f for f in base if OWNER_MACRO not in f],False),
+               ("auto_hil",["-D"+AUTO_MACRO+"=1", "-DM5CAN_SIGNAL_V2_SERIAL_HIL=1", "-DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1"],False),
+               ("other_unstaged_vehicle",[f for f in base if OWNER_MACRO not in f and AUTO_MACRO not in f],False),
+               ("owner_zero",[f for f in base if OWNER_MACRO not in f and AUTO_MACRO not in f]+["-D"+OWNER_MACRO+"=0"],False),
                ("owner_no_rp8",[f for f in base if "M5CAN_SIGNAL_V2_RP8_PROFILE" not in f],False),
                ("owner_10hz",base+["-DM5CAN_SIGNAL_V2_10HZ_LAB=1"],False),
                ("owner_hil",base+["-DM5CAN_SIGNAL_V2_SERIAL_HIL=1"],False),
@@ -153,6 +175,9 @@ class SerialHilB01(unittest.TestCase):
     def test_b01_production_gatt_arm_branch_accepts_secured_usb(self):
         _, flags = flags_by_env()
         source = (ROOT / "src/signal_v2_gatt.cpp").read_text()
+        grant = 'bool grantCanArm(uint32_t now,uint32_t seen) {'
+        grant += source.split(grant, 1)[1].split('\n#endif\nvoid manage(', 1)[0]
+
         begin = '  if(!std::strcmp(cmd,"SIGV2 CAN ARM")) {'
         end = '  // PR-C2 stage S1'
         self.assertEqual(source.count(begin), 1, "production GATT ARM branch changed")
@@ -175,6 +200,9 @@ bool authorized(const Link&) { return is_authorized; }
 struct Session { bool active(uint32_t)const{return session_active;} };
 struct Peer { Session session; };
 Peer peers[2];
+struct Owner { const char* stopReason()const{return nullptr;} } owner;
+std::atomic<bool> manual_stop{false};
+struct AutoSession {} auto_session;
 std::atomic<bool> can_armed{false};
 std::atomic<uint32_t> can_authorization_epoch{2};
 uint32_t armed_until=0;
@@ -187,6 +215,7 @@ struct SerialOut {
   }
 } Serial;
 namespace hil {void note(const char*,...){}}
+""" + grant + """
 void manage(const char* cmd,uint32_t now){
 """ + part + """
 }

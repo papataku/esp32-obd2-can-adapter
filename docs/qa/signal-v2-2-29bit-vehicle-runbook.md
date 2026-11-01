@@ -270,3 +270,33 @@ STOP; require a drained STOP ack or observe expiry/disconnect as described
 above. The owner decision does not introduce a stationary-speed-zero gate
 into the existing continuous path; it must not be mistaken for the former
 S2/S3 lifecycle or evidence of its acceptance.
+
+## 2026-11-01 owner addendum: plug-and-power
+
+Owner decision (verbatim): 「コマンド必要なの？パソコン繋げられないので、刺して電源入れるだけの状態にして」
+
+For `m5dial_signal_v2_can_29bit_5hz_owner_live` only, the additional
+`M5CAN_SIGNAL_V2_OWNER_AUTO_ARM=1` supersedes the preceding USB-required ARM,
+600000ms stop and no-automatic-reconnect-recovery instructions. Follow the
+[current Japanese owner procedure](signal-v2-owner-live.md#追加訂正電源投入だけで開始).
+Complete the [U179 checklist](#1-inventory-wiring-and-protected-backups-offline-no-vehicle)
+first; plug-and-power does not authorize OBD Pin16 power or bypass termination,
+backup/app-only or physical acceptance requirements.
+
+Boot stays LISTEN_ONLY/no TX. A registered encrypted/bonded subscribed central
+must complete HELLO/PROFILE and remain active with the unchanged 3s KeepAlive
+lease for 2s. Auto ARM uses the PR69 epoch snapshot/CAS/post-check grant; the
+bound active session extends ARM beyond 600000ms. Disconnect, lease expiry or
+session end revokes TX and invalidates data. A new eligible session can settle
+and acquire a fresh epoch; no old data is promoted. Discovery, RP8 physical
+`{18DAF101}`, 120ms deadlines, both admission gates and budgets are unchanged.
+
+A screen tap or USB STOP latches manual STOP until power cycle (USB ARM may
+clear only manual STOP). Owner/CAN faults, BUS-OFF, RX accounting, budget,
+response verification and TX failure latch until power cycle; no automatic or
+USB ARM clears them. LCD: WAITING; LIVE green (authorization, not on-wire
+proof); STOPPED F:reason red; STOPPED (manual). Stop by tapping the screen or
+removing power; already-sent frames cannot be recalled. Unplug/replug only
+after inspecting the cause of a fault. Other envs retain their existing stages
+and USB rules. This change has no device/vehicle evidence and advances no
+ROADMAP hardware gate.

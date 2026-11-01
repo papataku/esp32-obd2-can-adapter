@@ -136,3 +136,5 @@ python3 tests/test_passive_profile.py
 python3 tests/test_passive_flash_check.py
 
 python3 tests/test_owner_live_usb.py
+
+python3 tests/test_signal_v2_auto_arm.py

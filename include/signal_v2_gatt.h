@@ -9,7 +9,10 @@ bool begin(NimBLEServer *);
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
 void attachCan(m5can::CanMonitor*);
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
-struct CanTxDisplay { bool armed, busy; const char* reason; };
+struct CanTxDisplay { bool armed, busy; const char* reason; bool manual; };
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+void manualCanStop();
+#endif
 CanTxDisplay canTxDisplay();
 #endif
 #endif

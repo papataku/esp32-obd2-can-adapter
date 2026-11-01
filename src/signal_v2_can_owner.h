@@ -54,7 +54,7 @@ class CanOwner {
 #endif
   void stop(const char* reason,uint8_t quality=10){
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
-    if(!stopped_)stop_reason_=reason;
+    if(!stop_reason_)stop_reason_=reason;
 #endif
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
     if(!stopped_)hil::note("kind=fault,epoch=%lu,reason=%s",(unsigned long)epoch_,reason);
@@ -360,9 +360,15 @@ public:
       ecu_=m5can::EcuPhysicalSelector{};pinned_=EcuRoute{};
       verified_={};probe_target_=0;probe_index_=verified_count_=0;
       discovery_running_=false;discovery_started_=0;
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+      if(armed && !stop_reason_)stopped_=false;
+#else
       if(armed)stopped_=false;
+#endif
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
+#if !defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
       if(armed)stop_reason_=nullptr;
+#endif
 #endif
       had_demand_=false;next_=now;
       // A stage request applies only to the epoch it created.

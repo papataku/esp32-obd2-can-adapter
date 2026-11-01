@@ -39,6 +39,12 @@
      defined(M5CAN_SIGNAL_V2_10HZ_LAB))
 #error "OWNER_CONTINUOUS_LIVE is exclusively unstaged physical RP8 5Hz"
 #endif
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM) && \
+    (M5CAN_SIGNAL_V2_OWNER_AUTO_ARM != 1 || \
+     !defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE) || \
+     M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE != 1)
+#error "OWNER_AUTO_ARM requires the exclusive OWNER_CONTINUOUS_LIVE image"
+#endif
 namespace signal_v2 {
 namespace {
 struct Link {
@@ -65,6 +71,15 @@ CanOwner owner;
 std::atomic<bool> can_armed{false};
 std::atomic<uint32_t> can_authorization_epoch{1};
 uint32_t armed_until=0;
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+std::atomic<bool> manual_stop{false};
+std::atomic<bool> manual_stop_pending{false};
+struct AutoArmSession {
+  bool tracking=false;
+  unsigned slot=0;
+  uint32_t generation=0, session=0, epoch=0, since=0;
+} auto_session;
+#endif
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
 // Published only by the BLE application task; LCD never reads owner storage.
 std::atomic<bool> display_busy{false};
@@ -186,9 +201,41 @@ class Callbacks : public NimBLECharacteristicCallbacks {
     portEXIT_CRITICAL(&mux);
   }
 };
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+// Shared USB/automatic grant: snapshot before validation, CAS, publish, post-check.
+bool grantCanArm(uint32_t now,uint32_t seen) {
+    bool secured=false;
+    for(unsigned i=0;i<2;++i){
+      auto l=snapshot(i);
+      if(l.active&&l.status&&l.data&&authorized(l)&&
+         peers[i].session.active(now)) secured=true;
+    }
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+    secured=secured && !manual_stop.load() && !owner.stopReason();
+#endif
+    uint32_t expected=seen;
+    bool accepted=secured &&
+      can_authorization_epoch.compare_exchange_strong(expected,seen+1);
+    can_armed=accepted;
+    armed_until=now+600000;
+    // A disconnect after the grant must also withdraw a flag stored after
+    // its revocation. No later poll is needed to make this ARM invalid.
+    if(accepted && (can_authorization_epoch.load()!=seen+1
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+       || manual_stop.load() || owner.stopReason()
+#endif
+       )){
+      can_armed=false;accepted=false;
+    }
+    return accepted;
+}
+#endif
 void manage(const char *cmd, uint32_t now) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(!std::strcmp(cmd,"SIGV2 CAN STOP")) {
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+    manual_stop=true;
+#endif
     owner.noteAuthorizationEnd("OPERATOR_STOP");
     can_armed=false;const uint32_t revoked=++can_authorization_epoch;
     owner.revokeAuthorization(revoked);owner.invalidate(10);
@@ -221,23 +268,15 @@ void manage(const char *cmd, uint32_t now) {
     Serial.println("#SIGNALV2_CAN,armed=0,reason=STAGE_AUTHORIZATION_REQUIRED");
     return;
 #endif
-    const uint32_t seen=can_authorization_epoch.load();
-    bool secured=false;
-    for(unsigned i=0;i<2;++i){
-      auto l=snapshot(i);
-      if(l.active&&l.status&&l.data&&authorized(l)&&
-         peers[i].session.active(now)) secured=true;
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+    if(owner.stopReason()) {
+      Serial.println("#SIGNALV2_CAN,armed=0,reason=FAULT_LATCHED");
+      return;
     }
-    uint32_t expected=seen;
-    bool accepted=secured &&
-      can_authorization_epoch.compare_exchange_strong(expected,seen+1);
-    can_armed=accepted;
-    armed_until=now+600000;
-    // A disconnect after the grant must also withdraw a flag stored after
-    // its revocation. No later poll is needed to make this ARM invalid.
-    if(accepted && can_authorization_epoch.load()!=seen+1){
-      can_armed=false;accepted=false;
-    }
+    manual_stop=false;
+    auto_session={};
+#endif
+    grantCanArm(now,can_authorization_epoch.load());
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
     hil::note("kind=arm,ok=%u,epoch=%lu",can_armed?1U:0U,(unsigned long)can_authorization_epoch.load());
 #endif
@@ -581,8 +620,13 @@ bool begin(NimBLEServer *server) {
                    state.size); // Read never leaks another peer's ACK.
   service->start();
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+  Serial.printf("#SIGNALV2,boot=%lu,mode=CAN,armed=0,auto_arm_settle_ms=2000\n",
+                (unsigned long)boot);
+#else
   Serial.printf("#SIGNALV2,boot=%lu,mode=CAN,armed=0,usb_arm_required=1\n",
                 (unsigned long)boot);
+#endif
 #else
   Serial.printf(
       "#SIGNALV2,boot=%lu,mode=DEMO,can_tx_disabled=1,physical_tx=0\n",
@@ -594,7 +638,13 @@ bool begin(NimBLEServer *server) {
 void attachCan(m5can::CanMonitor* m){owner.attach(m);}
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
 CanTxDisplay canTxDisplay(){
-  return {can_armed.load(),display_busy.load(),display_reason.load()};
+  return {can_armed.load(),display_busy.load(),display_reason.load()
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+    ,manual_stop.load()
+#else
+    ,false
+#endif
+  };
 }
 #endif
 #endif
@@ -627,7 +677,7 @@ void disconnected(uint16_t handle) {
   // that epoch must not validate this disconnected link. Publish revocation
   // before clearing the flag so a concurrent grant cannot survive the clear.
   const uint32_t revoked=++can_authorization_epoch;
-  can_armed=false; // New connection requires a new local USB arm.
+  can_armed=false; // A new authorization epoch is required after reconnect.
   owner.revokeAuthorization(revoked); // Thread-safe lease revoke; no sample/selector mutation.
 #endif
 }
@@ -647,6 +697,59 @@ void gap(ble_gap_event *e) {
     }
   portEXIT_CRITICAL(&mux);
 }
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+// UI thread: revoke immediately, defer session/cache mutation to BLE app owner.
+void manualCanStop() {
+  manual_stop=true;
+  manual_stop_pending=true;
+  const uint32_t revoked=++can_authorization_epoch;
+  can_armed=false;
+  owner.revokeAuthorization(revoked);
+}
+void serviceAutoArm(uint32_t now) {
+  const uint32_t seen=can_authorization_epoch.load();
+  if(manual_stop.load() || owner.stopReason()) {
+    auto_session={};
+    return;
+  }
+  // Bind to one exact link generation and protocol session, never aggregate peers.
+  int candidate=-1;
+  for(unsigned i=0;i<2;++i) {
+    const auto l=snapshot(i);
+    if(l.active && l.status && l.data && authorized(l) &&
+       peers[i].generation==l.generation && peers[i].session.active(now)) {
+      if(!auto_session.tracking || (auto_session.slot==i &&
+         auto_session.generation==l.generation &&
+         auto_session.session==peers[i].session.id())) {candidate=int(i);break;}
+    }
+  }
+  if(candidate<0 || (auto_session.tracking && auto_session.epoch!=seen)) {
+    auto_session={};
+    if(can_armed) {
+      owner.noteAuthorizationEnd("SESSION_ENDED");
+      const uint32_t revoked=++can_authorization_epoch;
+      can_armed=false;
+      owner.revokeAuthorization(revoked);owner.invalidate(10);
+    }
+    return; // a replacement session starts a fresh settle window next tick
+  }
+  if(!auto_session.tracking) {
+    const auto l=snapshot(unsigned(candidate));
+    auto_session.tracking=true;
+    auto_session.slot=unsigned(candidate);
+    auto_session.generation=l.generation;
+    auto_session.session=peers[candidate].session.id();
+    auto_session.epoch=seen;
+    auto_session.since=now;
+  }
+  if(can_armed) {
+    // Only the bound, still-secured active session can extend the USB ARM TTL.
+    armed_until=now+600000;
+  } else if(uint32_t(now-auto_session.since)>=2000 && !owner.busy()) {
+    if(grantCanArm(now,seen))auto_session.epoch=seen+1;
+  }
+}
+#endif
 bool usbCommand(const char *command) {
   if (std::strncmp(command, "SIGV2 ", 6))
     return false;
@@ -660,6 +763,9 @@ void poll() {
   if (!inbox)
     return;
   uint32_t now = millis();
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+  if(manual_stop_pending.exchange(false))manage("SIGV2 CAN STOP",now);
+#endif
   char cmd[129];
   if (xQueueReceive(admin, cmd, 0) == pdTRUE)
     manage(cmd, now);
@@ -670,6 +776,9 @@ void poll() {
       peers[i].session.demand(now, demand);
   }
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+  serviceAutoArm(now);
+#endif
   if(can_armed && int32_t(armed_until-now)<=0){
     owner.noteAuthorizationEnd("USB_ARM_EXPIRED");
     can_armed=false;const uint32_t revoked=++can_authorization_epoch;

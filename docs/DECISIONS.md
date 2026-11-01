@@ -424,3 +424,39 @@ real CanOwner and stubbed monitor IO. They interrupt after the session check,
 on both sides of the armed store, and after ARM returns, then check disarm and
 zero submitted queries after reconnect without a new ARM. These are software
 interleaving checks; physical CAN and vehicle acceptance remain pending.
+
+### 2026-11-01 — Owner addendum: plug-and-power auto ARM (owner_live only)
+
+**Verbatim owner decision:** 「コマンド必要なの？パソコン繋げられないので、刺して電源入れるだけの状態にして」
+
+This supersedes the USB-required start, 600000ms authorization expiry and
+no-reconnect-auto-ARM statements above **only** for
+`m5dial_signal_v2_can_29bit_5hz_owner_live`, with the additional explicit
+`M5CAN_SIGNAL_V2_OWNER_AUTO_ARM=1`. It is a Phase 4B / Signal V2-2 owner
+operation change, not a new hardware acceptance claim. All other envs retain
+their policies. Boot remains TWAI LISTEN_ONLY, without a lease or TX.
+
+After a registered, encrypted and bonded central subscribes to STATUS/DATA,
+accepts HELLO/PROFILE and holds an active 3s KeepAlive lease continuously for
+2s, automatic ARM uses the same epoch snapshot -> CAS -> armed publication ->
+post-check as USB ARM. Authorization is bound to that link generation and
+protocol session. Only that secured active session extends the ARM TTL; the
+600000ms boundary cannot interrupt it. Disconnect, lease expiry or session end
+revokes authorization and Invalidates data. A subsequent active session must
+settle again and obtain a new epoch; queued old completions cannot become Fresh.
+
+Any owner/monitor fault (including bus error/BUS-OFF, RX accounting, budget,
+response verification and TX failure) remains latched through epoch changes
+until power cycle. Automatic ARM and USB ARM cannot clear it. Any screen tap
+immediately revokes TX through the thread-safe boundary and defers cache cleanup
+to the BLE owner task; it and USB STOP latch manual STOP until power cycle.
+Explicit USB ARM may clear manual STOP only. LCD: WAITING, LIVE (green,
+authorization state), STOPPED F:reason (red), STOPPED (manual). A sent frame
+cannot be recalled; an in-flight operation may still be draining after STOP.
+
+120ms deadlines, physical RP8 `{18DAF101}` only, discovery rules, >=200ms
+cadence, both budget admission gates and all read-only request forms are
+unchanged. No functional request or raw TX API is added. No device access or
+vehicle testing is authorized by this implementation; ROADMAP gates remain.
+See the appended [owner procedure](qa/signal-v2-owner-live.md#追加訂正電源投入だけで開始)
+and [vehicle runbook addendum](qa/signal-v2-2-29bit-vehicle-runbook.md#2026-11-01-owner-addendum-plug-and-power).

@@ -111,5 +111,12 @@ int main() {
   owner.tick(802,demand,false,6);
   assert(std::strcmp(owner.stopReason(),"RX_ACCOUNTING_OR_BUS_FAULT")==0);
   assert(requests.size()==3);
+#if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
+  // Neither a new grant epoch nor recovered counters can clear a boot fault.
+  health={};
+  owner.tick(803,demand,true,7);
+  assert(owner.stopped()&&!owner.busy()&&requests.size()==3);
+  assert(std::strcmp(owner.stopReason(),"RX_ACCOUNTING_OR_BUS_FAULT")==0);
+#endif
   std::cout<<"PASS owner-live ARM -> GROUP -> Fresh five PID, continuous 5Hz, STOP/no auto-ARM\n";
 }
