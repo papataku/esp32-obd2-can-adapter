@@ -1,5 +1,5 @@
 #pragma once
-#include "signal_v2_can_route.h"
+#include "signal_v2_vehicle_profile.h"
 #include <cstdint>
 namespace signal_v2 {
 // N1 PR-B: owner-approved, evidence-backed physical discovery candidates.
@@ -9,8 +9,10 @@ namespace signal_v2 {
 struct DiscoveryCandidate {
   CanIdWidth width;
   uint32_t response_id;
+  uint32_t request_id;
   EcuRoute route()const{
-    return EcuRoute::fromResponse(response_id,width==CanIdWidth::Extended29);
+    EcuRoute r{};r.width=width;r.response_id=response_id;r.request_id=request_id;
+    return r;
   }
 };
 struct DiscoveryProfile {
@@ -18,15 +20,15 @@ struct DiscoveryProfile {
 #if defined(M5CAN_SIGNAL_V2_RP8_PROFILE)
   // RP8 provisional source preference; other observed responders are
   // deliberately NOT candidates until a separately approved profile revision.
-  static constexpr uint8_t kCount=1;
+  static constexpr uint8_t kCount=profiles::kLegacyRp8.candidate_count;
   static constexpr DiscoveryCandidate kCandidates[kMaxCandidates]={
-    {CanIdWidth::Extended29,0x18DAF101U},{CanIdWidth::Unknown,0},
-    {CanIdWidth::Unknown,0},{CanIdWidth::Unknown,0}};
+    {profiles::kLegacyRp8.width,profiles::kLegacyRp8.responder,profiles::kLegacyRp8.request_id},{CanIdWidth::Unknown,0,0},
+    {CanIdWidth::Unknown,0,0},{CanIdWidth::Unknown,0,0}};
 #else
   static constexpr uint8_t kCount=0;
   static constexpr DiscoveryCandidate kCandidates[kMaxCandidates]={
-    {CanIdWidth::Unknown,0},{CanIdWidth::Unknown,0},
-    {CanIdWidth::Unknown,0},{CanIdWidth::Unknown,0}};
+    {CanIdWidth::Unknown,0,0},{CanIdWidth::Unknown,0,0},
+    {CanIdWidth::Unknown,0,0},{CanIdWidth::Unknown,0,0}};
 #endif
   static_assert(kCount<=kMaxCandidates,"N1 caps physical discovery at 4");
   // C++11 constexpr: single-return recursion over candidates [i, kCount).
