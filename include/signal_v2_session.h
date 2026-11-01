@@ -1,5 +1,6 @@
 #pragma once
 #include "signal_v2_codec.h"
+#include "signal_v2_profile_binding.h"
 #include "signal_v2_simulator.h"
 #include "signal_v2_can_samples.h"
 namespace signal_v2 {
@@ -45,10 +46,13 @@ class Session {
   bool snapshot_ = false;
   uint32_t snapshot_request_id_ = 0;
   uint32_t observed_ms_ = 0, heartbeat_ = 0;
+  ProfileBinding binding_;
   void ack(const Packet &, Result, const uint8_t *, size_t, Packet &);
 
 public:
   void connect(uint32_t boot, uint32_t session);
+  // Metadata only: does not grant a lease, select a profile or authorize TX.
+  void bindingContext(const BindingContext &context) { binding_.context = context; }
   void invalidate() { connect(boot_, id_); }
   bool active(uint32_t now) const {
     return hello_ && !paused_ && count_ && int32_t(deadline_ - now) > 0;

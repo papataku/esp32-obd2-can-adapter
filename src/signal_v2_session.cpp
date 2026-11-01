@@ -7,6 +7,7 @@ constexpr uint16_t Simulator::Pids[5];
 void Session::connect(uint32_t boot, uint32_t session) {
   for (auto &h : history_)
     h.used = false;
+  binding_ = ProfileBinding{};
   cursor_ = 0;
   high_ = 0;
   boot_ = boot;
@@ -72,9 +73,12 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
   for (const auto &h : history_)
     if (h.used && u32(h.request.payload()) == rid) {
       if (h.request.size == req.size &&
-          std::equal(p, p + n + 12, h.request.payload()))
-        out = h.ack;
-      else
+          std::equal(p, p + n + 12, h.request.payload())) {
+        if (op == 11)
+          ack(req, ProtocolError, nullptr, 0, out); // binding ACKs are single-use
+        else
+          out = h.ack;
+      } else
         ack(req, ProtocolError, nullptr, 0, out);
       return;
     }
@@ -253,6 +257,13 @@ void Session::control(const Packet &req, bool authorized, uint32_t now,
         w64(reply + 8, uint64_t(now) * 1000);
         reply_n = 16;
       }
+      break;
+    case 11:
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL) && defined(M5CAN_SIGNAL_V2_RP8_PROFILE)
+      result = static_cast<Result>(binding_.control(b, n, boot_, id_, reply, reply_n));
+#else
+      result = Unsupported;
+#endif
       break;
     case 10:
       if (n)

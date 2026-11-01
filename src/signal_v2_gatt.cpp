@@ -1074,6 +1074,27 @@ void poll() {
       p.ackoff = 0;
       p.ack_transfer = ++p.transfer;
       p.progress = now;
+#if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
+      // Read-only O-2 metadata. Observe existing data, never collect evidence.
+      BindingContext binding;
+      const auto &observed=owner.samples();
+      binding.authorization_epoch=can_authorization_epoch.load();
+      binding.source_generation=observed.source_generation;
+      binding.mode_epoch=observed.mode_epoch;
+      const auto sample=observed.sample(0x0c);
+      binding.current_session_evidence=can_armed.load() && !owner.stopped() &&
+          arm_owner.known && arm_owner.epoch==binding.authorization_epoch &&
+          arm_owner.handle==l.handle && arm_owner.generation==l.generation &&
+          arm_owner.session==p.session.id() && p.session.active(now) && sample &&
+          sample->quality<=1 && sample->observed_us &&
+          uint64_t(now)*1000>=sample->observed_us &&
+          uint64_t(now)*1000-sample->observed_us<=600000;
+      if(binding.current_session_evidence) {
+        binding.acquisition=observed.acquired;binding.sequence=sample->sequence;
+        binding.observed_us=sample->observed_us;binding.route=observed.source_id;
+      }
+      p.session.bindingContext(binding);
+#endif
       p.session.control(p.input, authorized(l) && l.status && l.data, now,
                         p.ack);
       auto op = p.input.payload()[8];
