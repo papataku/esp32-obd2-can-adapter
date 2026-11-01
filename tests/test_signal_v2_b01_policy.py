@@ -157,7 +157,6 @@ class SerialHilB01(unittest.TestCase):
         end = '  // PR-C2 stage S1'
         self.assertEqual(source.count(begin), 1, "production GATT ARM branch changed")
         part = begin + source.split(begin, 1)[1].split(end, 1)[0]
-        self.assertIn("can_armed=secured;", part)
         self.assertIn("M5CAN_SIGNAL_V2_STAGE_GATED", part)
         # Compile the unchanged production GATT ARM branch, not a hand-written
         # approximation. Only BLE secure-link/Serial dependencies are stubbed.

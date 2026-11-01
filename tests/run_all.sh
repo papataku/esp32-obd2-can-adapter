@@ -112,6 +112,7 @@ c++ -std=c++11 -Wall -Wextra -Wno-unused-function -Werror -pthread \
 /tmp/m5can-v22-stage-s1-monitor
 python3 tests/test_signal_v2_elf_policy.py
 python3 tests/test_signal_v2_b01_policy.py
+python3 tests/test_signal_v2_arm_disconnect.py
 c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   -Itests/host_stubs -Iinclude -Isrc tests/test_diagnostic_review_capacity.cpp \
   src/diagnostic_policy.cpp src/diagnostic_transaction.cpp src/isotp_reassembler.cpp \

@@ -1,0 +1,84 @@
+// The runner inserts unchanged production ARM and disconnect functions.
+#include "signal_v2_can_owner.h"
+#include <atomic>
+#include <cassert>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+
+SerialStub Serial;
+uint32_t g_test_millis=0;
+static unsigned tx=0;
+namespace m5can {
+CanStats CanMonitor::stats() const { return {}; }
+void CanMonitor::revokeLease() {}
+bool CanMonitor::acquireLease(uint32_t) { return true; }
+bool CanMonitor::submitQuery(const DiagnosticRequest&) { ++tx; return true; }
+bool CanMonitor::pollQueryResult(DiagnosticResult&) { return false; }
+void CanMonitor::endObservationAudit(ObservationAudit& a,CanStats& s){a=audit_;s=stats_;}
+}
+namespace hil { void note(const char*,...) {} }
+signal_v2::CanOwner owner;
+struct Link {
+  uint16_t handle=7;
+  bool active=true,status=true,data=true;
+} links[2];
+portMUX_TYPE mux;
+static unsigned race=0;
+static bool fired=false;
+void disconnected(uint16_t);
+void interrupt(unsigned point) {
+  if(!fired && race==point) { fired=true; disconnected(7); }
+}
+// Store hooks force callback preemption on either side of ARM's flag store.
+// The flag itself retains atomic load/store semantics.
+struct ArmedFlag {
+  std::atomic<bool> value{false};
+  operator bool() const { return value.load(); }
+  bool load() const { return value.load(); }
+  void operator=(bool v) {
+    if(v)interrupt(1);
+    value.store(v);
+    if(v)interrupt(2);
+  }
+} can_armed;
+std::atomic<uint32_t> can_authorization_epoch{2};
+uint32_t armed_until=0;
+Link snapshot(unsigned i) { return links[i]; }
+bool authorized(const Link&) { return true; }
+struct Session {
+  bool active(uint32_t) const { interrupt(0); return true; }
+};
+struct Peer { Session session; } peers[2];
+@DISCONNECT@
+void manage(const char* cmd,uint32_t now) {
+@ARM@
+}
+int main(int argc,char** argv) {
+  assert(argc==3); race=std::atoi(argv[1]);
+  m5can::CanMonitor monitor; owner.attach(&monitor);
+  signal_v2::Simulator::Demand off{},demand{{200,200,200,200,200}};
+  owner.tick(0,off,false,can_authorization_epoch.load());
+  manage("SIGV2 CAN ARM",100);
+  if(race==3) { assert(can_armed); disconnected(7); }
+  assert(fired || race==3);
+  assert(!links[0].active && !links[1].active);
+  if(!std::strcmp(argv[2],"armed")) {
+    assert(!can_armed.load());
+  } else {
+    // Poll once disconnected, then reconnect with a fresh secured session
+    // and full demand, but deliberately issue no new USB ARM.
+    owner.tick(101,off,can_armed,can_authorization_epoch.load());
+    for(auto& l:links) l=Link{};
+    for(uint32_t now=102;now<1000;now+=10)
+      owner.tick(now,demand,can_armed,can_authorization_epoch.load());
+    assert(tx==0);
+    // Positive control: a new explicit USB ARM reaches real CanOwner IO.
+    fired=true;
+    manage("SIGV2 CAN ARM",1001);
+    assert(can_armed);
+    owner.tick(1001,demand,can_armed,can_authorization_epoch.load());
+    assert(tx==1);
+  }
+  std::cout<<"PASS race="<<race<<" check="<<argv[2]<<"\n";
+}

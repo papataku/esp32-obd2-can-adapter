@@ -407,3 +407,20 @@ not independently measured on-wire traffic. This implementation task permits
 no device access, flashing or vehicle test, and does not advance ROADMAP
 hardware acceptance gates. See the [runbook addendum](qa/signal-v2-2-29bit-vehicle-runbook.md#2026-11-01-owner-addendum-continuous-5hz)
 and [short Japanese operating procedure](qa/signal-v2-owner-live.md).
+
+### PR69 review: disconnect wins over an in-flight USB ARM
+
+Generic ARM snapshots the authorization epoch before checking the secured
+central, grants only by compare-exchange to the next epoch, and checks again
+after publishing the armed flag. Disconnect first invalidates its link, then
+advances the epoch, then clears the flag and revokes the monitor lease. This
+ordering also protects S1: an ARM checking before disconnect either loses its
+grant or withdraws it; an ARM observing the new epoch cannot reuse the old
+link. Reconnect alone cannot restore authorization. The callback never mutates
+Session or owner sample/selector storage.
+
+Host regressions compile the unchanged production ARM/disconnect bodies with
+real CanOwner and stubbed monitor IO. They interrupt after the session check,
+on both sides of the armed store, and after ARM returns, then check disarm and
+zero submitted queries after reconnect without a new ARM. These are software
+interleaving checks; physical CAN and vehicle acceptance remain pending.
