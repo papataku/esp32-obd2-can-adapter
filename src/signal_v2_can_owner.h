@@ -3,6 +3,7 @@
 #include "can_monitor.h"
 #include "ecu_physical_selector.h"
 #include "signal_v2_can_budget.h"
+#include "signal_v2_pid_diagnostics.h"
 #include "signal_v2_can_samples.h"
 #include "signal_v2_can_route.h"
 #include "signal_v2_discovery_profile.h"
@@ -61,6 +62,10 @@ class CanOwner {
 #endif
 // P5_END
   void stop(const char* reason,uint8_t quality=10){
+    if(!std::strcmp(reason,"LOAD_BUDGET_ESSENTIAL"))pid_diagnostics_.deny(true);
+    if(!std::strcmp(reason,"QUERY_ADMISSION_FAILED")&&ecu_.fixed())pid_diagnostics_.deny(essential_);
+    pid_diagnostics_.cancel();
+    pid_diagnostics_.active=false;
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
     if(!stop_reason_)stop_reason_=reason;
 #endif
@@ -286,6 +291,7 @@ class CanOwner {
       }
     }
     ecu_.observeSingle(valid,r.status);
+    pid_diagnostics_.finish(valid);
     if(!valid){
 #if defined(M5CAN_SIGNAL_V2_OWNER_AUTO_ARM)
       if(r.status!=m5can::DiagnosticStatus::NoData){
@@ -344,6 +350,7 @@ public:
   }
   bool stageS1()const{return s1_;}
   const CanSamples &samples()const{return samples_;}
+  const PidDiagnostics &pidDiagnostics()const{return pid_diagnostics_;}
   bool stopped()const{return stopped_;}
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
   const char* stopReason()const{return stop_reason_;}
@@ -419,6 +426,7 @@ public:
         can_->beginObservationAudit(s1_base_);
       }
     }
+    pid_diagnostics_.observe(now,demand,armed&&!stopped_&&!s1_,epoch?epoch:epoch_+(armed!=previously_armed_));
     if(armed && !stopped_) {
       const auto health=can_->stats();
       if(health.driver_rx_missed || health.driver_rx_overrun ||
@@ -543,6 +551,7 @@ public:
       // Shed only regular auxiliary reads; keep the same pinned ECU and
       // reserve the entire SF-only essential transaction before submission.
       essential_=true;req.signal_v2_essential=true;req.length=3;
+      pid_diagnostics_.shedAux();
       for(unsigned i=0;i<3;++i)req.data[i]=profiles::kLegacyRp8.probe_request[i];
       if(!budget_.reserve(now,profiles::kLegacyRp8.essential_frames,profiles::kLegacyRp8.deadline_ms)){stop("LOAD_BUDGET_ESSENTIAL");return;}
     }
@@ -556,9 +565,12 @@ public:
       stop("QUERY_ADMISSION_FAILED",10);return;
     }
     physical_=!discovery;
+    if(!discovery)pid_diagnostics_.admit(essential_);
     submitted_epoch_=epoch_;
     in_flight_=true;
   }
+private:
+  PidDiagnostics pid_diagnostics_{}; // Append storage: preserve existing member offsets.
 };
 } // namespace signal_v2
 #endif

@@ -1,5 +1,7 @@
 # PID expansion slice 1 — budget audit / implementation blocked
 
+先行監査の履歴。PM 2026-11-03判断後の実装契約は [S1 diagnostics](pid-s1-diagnostics-20261103.md) を参照。以下は停止時点の記録。
+
 状態: **監査のみ。PID別カウンタ実装・slice受入は未完了**。実装を禁止された隔離checkerの変更が必要になるため、PMへ選択肢を報告して停止する。
 
 ## 固定根拠と範囲
