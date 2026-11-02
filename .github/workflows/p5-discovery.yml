@@ -1,0 +1,25 @@
+name: P5 CAN-less discovery isolation
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  lab-isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install platformio
+      - name: Host serial shim and temporary mutation proofs (no devices)
+        run: |
+          python tests/run_p5_discovery.py
+          python tools/test_p5_scope.py
+          python tools/test_p5_mutations.py
+      - name: Compile only; vehicle TX and flashing are not approved
+        run: pio run -e m5dial_signal_v2_can_11bit_discovery_lab -e m5dial_signal_v2_can_29bit_5hz_owner_live
+      - name: Check actual owner_live and CAN-less lab ELFs
+        run: python tools/check_p5_elf.py --nm "$HOME/.platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-nm"

@@ -1,0 +1,5 @@
+PASS killed ninth exit=-6 Assertion failed: (!d.receive(0x7E8,false,false,false,8,(const uint8_t*)"\006\101\00012345",2000)), function main, file p5_discovery.cpp, line 81.
+PASS killed fc exit=-6 Assertion failed: (m.stats().tx_attempts==0), function main, file p5_discovery.cpp, line 104.
+PASS killed one-query exit=-6 Assertion failed: (CanOwnerTestAccess::again(*monitor)!=ESP_OK), function p5TimeHook, file p5_discovery.cpp, line 53.
+PASS killed isolation: platformio.ini
+PASS temporary mutation trees removed

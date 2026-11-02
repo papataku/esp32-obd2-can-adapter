@@ -12,6 +12,11 @@
 #include "raw_can_capture.h"
 #include "signal_v2_can_budget.h"
 
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+#include "signal_v2_11bit_discovery.h"
+#endif
+// P5_END
 namespace signal_v2 { struct CanOwnerTestAccess; } // host fixtures only
 namespace m5can {
 
@@ -194,6 +199,13 @@ class CanMonitor {
              TickType_t wait_ticks);
 
  private:
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  signal_v2::Discovery11 discovery11_{};
+  uint32_t discovery11_arm_ms_=0;
+  void performDiscovery11(const DiagnosticRequest&, DiagnosticResult&);
+#endif
+// P5_END
   static void rxTaskThunk(void* arg);
   void rxTask();
   void processAuditCloseOnOwner();

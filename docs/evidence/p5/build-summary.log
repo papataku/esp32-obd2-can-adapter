@@ -1,0 +1,39 @@
+Initial matrix: 26 PASS, vehicle-trial build gate refused missing compile inputs.
+Environment                                Status    Duration
+-----------------------------------------  --------  ------------
+m5dial_legacy_single                       SUCCESS   00:00:20.249
+m5dial_dual_ble_bench                      SUCCESS   00:00:19.746
+m5dial_dual_ble_mtu_bench                  SUCCESS   00:00:17.373
+m5dial_dual_ble_canmode_dry_bench          SUCCESS   00:00:17.999
+m5dial_dual_ble_multipid_bench             SUCCESS   00:00:17.390
+m5dial                                     SUCCESS   00:00:02.619
+m5dial_dual_ble_fault_fixture              SUCCESS   00:00:17.064
+m5dial_mtu23_bench                         SUCCESS   00:00:14.075
+m5dial_mtu_bench                           SUCCESS   00:00:13.764
+m5dial_integrated_soak                     SUCCESS   00:00:17.014
+m5dial_memory_diagnostic_baseline          SUCCESS   00:00:17.889
+m5dial_flash_layout_eval                   SUCCESS   00:00:16.687
+m5dial_single_app_layout_eval              SUCCESS   00:00:17.145
+m5dial_dual_ble_multipid_mtu_bench         SUCCESS   00:00:17.126
+m5dial_v2_owner_compile                    SUCCESS   00:00:16.499
+m5dial_v2_authenticated_lab                SUCCESS   00:00:17.009
+m5dial_v2_fresh_flash_lab                  SUCCESS   00:00:19.195
+m5dial_v2_fresh_flash_window16_lab         SUCCESS   00:00:18.569
+m5dial_v2_fresh_flash_mtu247_lab           SUCCESS   00:00:20.528
+m5dial_existing_singleapp_vehicle_trial    FAILED    00:00:02.438
+m5dial_signal_v2_can_disabled_lab          SUCCESS   00:00:20.565
+m5dial_signal_v2_can_29bit_5hz_lab         SUCCESS   00:00:19.010
+m5dial_signal_v2_can_29bit_5hz_owner_live  SUCCESS   00:00:19.681
+m5dial_signal_v2_can_29bit_serial_hil      SUCCESS   00:00:20.045
+m5dial_signal_v2_can_29bit_10hz_lab        SUCCESS   00:00:19.532
+m5dial_signal_v2_can_29bit_passive         SUCCESS   00:00:10.056
+m5dial_signal_v2_can_11bit_discovery_lab   SUCCESS   00:00:02.261
+==================== 1 failed, 26 succeeded in 00:07:11.528 ====================
+
+Retry using synthetic build-only inputs (no device approval):
+
+Environment                              Status    Duration
+---------------------------------------  --------  ------------
+m5dial_existing_singleapp_vehicle_trial  SUCCESS   00:00:18.404
+========================= 1 succeeded in 00:00:18.404 =========================
+Final aggregate: all 27 envs built successfully.

@@ -1,0 +1,4 @@
+PASS P5 fixed-base scope: existing production files/config restored exactly after removing guarded additions
+PASS 346 fixed-base files byte-identical; Session/GATT restored exactly after removing metadata-only additions
+PASS out-of-scope changes=0: TX bytes/IDs/rates/budgets/deadline/lease/epoch; autoARM/settle/fault/tap/unsubscribe/non-owner; envs/BLE/registration/NUS
+PASS added MAC leak=0; no new identity input/log/export/store API; synthetic fixtures only

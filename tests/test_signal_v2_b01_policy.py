@@ -88,6 +88,14 @@ class SerialHilB01(unittest.TestCase):
                 self.assertTrue(active(defs,"M5CAN_SIGNAL_V2_RP8_PROFILE"))
                 self.assertFalse(hil or disabled)
                 self.assertFalse(active(defs,"M5CAN_SIGNAL_V2_STAGE_GATED"))
+            # P5_BEGIN
+            if env=="env:m5dial_signal_v2_can_11bit_discovery_lab":
+                self.assertTrue(v2 and hil and stage_one(defs))
+                self.assertTrue(active(defs,"M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB"))
+                self.assertFalse(owner or auto or disabled)
+                self.assertFalse(active(defs,"M5CAN_SIGNAL_V2_RP8_PROFILE"))
+                continue
+            # P5_END
             if hil or owner:
                 exceptions.append(env)
                 self.assertEqual(env,HIL if hil else OWNER)
@@ -96,6 +104,18 @@ class SerialHilB01(unittest.TestCase):
                 self.assertTrue(stage_one(defs),(env,"requires STAGE_GATED=1"))
         self.assertCountEqual(exceptions,[HIL,OWNER])
 
+    # P5_BEGIN
+    def test_p5_lab_requires_all_isolation_flags(self):
+        _,flags=flags_by_env()
+        lab="env:m5dial_signal_v2_can_11bit_discovery_lab"
+        for macro in ("M5CAN_SIGNAL_V2_STAGE_GATED","M5CAN_SIGNAL_V2_SERIAL_HIL",
+                      "M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB"):
+            mutated={k:list(v) for k,v in flags.items()}
+            mutated[lab]=[x for x in mutated[lab] if macro not in x]
+            with self.subTest(macro=macro),self.assertRaises(AssertionError):
+                self.assert_vehicle_policy(mutated)
+
+    # P5_END
     def test_b01_vehicle_capable_v2_envs_have_exact_exceptions(self):
         config,flags=flags_by_env()
         self.assert_vehicle_policy(flags)
