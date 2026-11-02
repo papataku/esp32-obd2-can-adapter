@@ -150,3 +150,9 @@ python3 tests/test_signal_v2_disconnect_owner.py
 
 # P2 versioned built-in data and immutable-main TX equivalence (no devices).
 bash tests/run_p2_profile.sh
+
+# P3 optional read-only profile tuple; immutable-base legacy wire equivalence.
+bash tests/run_p3_binding.sh
+python3 tests/test_p3_binding_context.py
+python3 tools/test_p3_legacy_equivalence.py
+python3 tools/test_p3_scope.py

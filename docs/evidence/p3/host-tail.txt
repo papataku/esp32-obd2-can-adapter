@@ -1,0 +1,54 @@
+Command: PATH="$PWD/../tool-bin:$PATH" bash tests/run_all.sh (python3 -> /opt/homebrew/bin/python3.11)
+Exit: 0
+Full local log SHA256: fa55b48fee30825963a97ba3ffd0191ea9b621c513a1fffeb15fb2b22c028874
+
+----------------------------------------------------------------------
+Ran 9 tests in 4.036s
+
+OK
+delayed PASS: overflow disconnect_requests=1 session_invalidated=1 samples_invalid=1 fresh_session_settled=1 post-overflow actual monitor driver TX=0
+failed PASS: overflow disconnect_requests=1 session_invalidated=1 samples_invalid=1 fresh_session_settled=1 post-overflow actual monitor driver TX=0
+legacy status PASS
+owner status PASS
+unknown status PASS
+lease status PASS
+transition status PASS
+expired status PASS
+generation status PASS
+unsubscribe status PASS
+bounce status PASS
+nonowner_unsubscribe status PASS
+unknown_unsubscribe status PASS
+legacy data PASS
+owner data PASS
+unknown data PASS
+lease data PASS
+transition data PASS
+expired data PASS
+generation data PASS
+unsubscribe data PASS
+bounce data PASS
+nonowner_unsubscribe data PASS
+unknown_unsubscribe data PASS
+.
+----------------------------------------------------------------------
+Ran 1 test in 2.048s
+
+OK
+PASS schema/revision 1, P1 PID/width/responder, unknown/empty 0 candidates
+PASS schema/revision 1, P1 PID/width/responder, unknown/empty 0 candidates
+PASS host 5 Hz 9592ee3927d01862ab965023bb2d262a01b6e08e4b4428bfb1291cc5361fd7c7
+PASS host 10 Hz 9592ee3927d01862ab965023bb2d262a01b6e08e4b4428bfb1291cc5361fd7c7
+PASS serial 5 Hz c0b83effa94e519769061bf0039c616881e68b20d422bf04b1ac25ff5c0ce4eb
+PASS serial 10 Hz 2e6e536093d762babf4aad0cda700deb106e2594b1d7993c280e2841d8e7aaf3
+budget boundary base=1,5000 head=1,5000
+PASS fixed-base equivalence de635e9f628d46e26050019c15cf337482789276
+PASS codec/session: unknown version, revision/schema/ID mismatch, old boot/session/epoch, replay, switch, forged/lost evidence, source/mode change; dynamic LIVE/TX=0 before and after ACK
+PASS codec/session: unknown version, revision/schema/ID mismatch, old boot/session/epoch, replay, switch, forged/lost evidence, source/mode change; dynamic LIVE/TX=0 before and after ACK
+PASS production GATT evidence: same owner/link/session/epoch, freshness/quality/route; no cross-session/stale/fault evidence
+PASS demo PDUs+active/lease/revision/demand 15f9fd1ae4c2a8d482129a17078c5b9658400aeec5ad10075dd9543e777f295e
+PASS can PDUs+active/lease/revision/demand d233954d4ea894a868f04acf5d44691a0c7a79ebebf6256bb27ef171e1c29e8c
+PASS fixed-base legacy equivalence 18188eed1b45534a7aadc6a2c390f2d594d92921
+PASS 346 fixed-base files byte-identical; Session/GATT restored exactly after removing metadata-only additions
+PASS out-of-scope changes=0: TX bytes/IDs/rates/budgets/deadline/lease/epoch; autoARM/settle/fault/tap/unsubscribe/non-owner; envs/BLE/registration/NUS
+PASS added MAC leak=0; no new identity input/log/export/store API; synthetic fixtures only

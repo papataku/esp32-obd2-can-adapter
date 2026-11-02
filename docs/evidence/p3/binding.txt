@@ -1,0 +1,3 @@
+PASS codec/session: unknown version, revision/schema/ID mismatch, old boot/session/epoch, replay, switch, forged/lost evidence, source/mode change; dynamic LIVE/TX=0 before and after ACK
+PASS codec/session: unknown version, revision/schema/ID mismatch, old boot/session/epoch, replay, switch, forged/lost evidence, source/mode change; dynamic LIVE/TX=0 before and after ACK
+PASS production GATT evidence: same owner/link/session/epoch, freshness/quality/route; no cross-session/stale/fault evidence
