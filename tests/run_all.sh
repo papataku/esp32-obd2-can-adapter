@@ -156,3 +156,7 @@ bash tests/run_p3_binding.sh
 python3 tests/test_p3_binding_context.py
 python3 tools/test_p3_legacy_equivalence.py
 python3 tools/test_p3_scope.py
+
+# P5 isolated CAN-less discovery and fixed-base preprocessor scope.
+python3 tests/run_p5_discovery.py
+python3 tools/test_p5_scope.py

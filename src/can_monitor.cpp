@@ -21,6 +21,11 @@
 #include "twai_hil.h"
 #endif
 
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+constexpr uint8_t signal_v2::Discovery11::Request[8];
+#endif
+// P5_END
 namespace m5can {
 namespace {
 
@@ -270,6 +275,16 @@ CapturedFrame CanMonitor::captureMessage(const twai_message_t& message,
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   // Do not wait for the BLE owner to observe the counter: a queued S1 or
   // Flow Control must lose its TX capability at this RX boundary too.
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  if(discovery11_.guard) {
+    if(!recordObservedDiagnostic(static_cast<uint32_t>(timestamp_us/1000)) ||
+       !discovery11_.receive(frame.identifier,frame.extended,frame.rtr,frame.self,
+                             frame.dlc,frame.data,timestamp_us))
+      enterFaultLocked("P5 RX contract");
+  } else
+#endif
+// P5_END
   if(!frame.extended && frame.identifier>=0x7E8 && frame.identifier<=0x7EF)
     enterFaultLocked("V2 11bit OBD response");
   if(frame.extended &&
@@ -523,6 +538,11 @@ bool CanMonitor::beginStageS1(uint32_t epoch) {
     stage_authorized_ = true;
     stage_s1_consumed_ = false;
     stage_submit_us_ = 0;
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+    discovery11_arm_ms_=millis();
+#endif
+// P5_END
   }
   xSemaphoreGive(tx_gate_);
   return accepted;
@@ -605,6 +625,16 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   (void)wait_ms;
   return ESP_FAIL;
 #else
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  // Conflict/FC attempts invalidate the whole discovery, even if TX is refused.
+  if(stage_s1_consumed_ || message.extd || message.rtr || message.self || !message.ss ||
+     message.identifier!=0x7DF || message.data_length_code!=8 ||
+     std::memcmp(message.data,signal_v2::Discovery11::Request,8)!=0) {
+    enterFaultLocked("P5 conflicting TX/FC attempt");return ESP_FAIL;
+  }
+#endif
+// P5_END
   // Preflight is not an authorization: STOP can intervene before the gate.
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if (!tx_gate_) return ESP_FAIL;
@@ -629,6 +659,16 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
   }
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
   // Sole epoch right: physical Mode01 0C/0D; never FC or group.
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  const bool valid_discovery11=!message.extd && !message.rtr && !message.self && message.ss &&
+      message.identifier==0x7DF && message.data_length_code==8 &&
+      std::memcmp(message.data,signal_v2::Discovery11::Request,8)==0;
+  if(!valid_discovery11) {xSemaphoreGive(tx_gate_);return ESP_FAIL;}
+  // The existing stage right is consumed below, including pre-TX drain.
+  const bool discovery11_override=true;
+#endif
+// P5_END
   const bool valid_s1=message.extd && !message.rtr && !message.self &&
       message.ss &&
       message.identifier==0x18DA01F1U && message.data_length_code==8 &&
@@ -636,6 +676,13 @@ esp_err_t CanMonitor::transmitOwnedFrame(const twai_message_t& message,
       message.data[2]==0x0C && message.data[3]==0x0D &&
       !message.data[4] && !message.data[5] &&
       !message.data[6] && !message.data[7];
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  (void)valid_s1;
+  if(discovery11_override) { /* exact SF gate above replaces physical S1 */ }
+  else
+#endif
+// P5_END
   if (!valid_s1 || stage_s1_consumed_) {
     if (tx_gate_) xSemaphoreGive(tx_gate_);
     return ESP_FAIL;
@@ -787,6 +834,12 @@ void CanMonitor::performQuery(
     result.status = DiagnosticStatus::ModeError;
     return;
   }
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  performDiscovery11(request,result);
+  return;
+#endif
+// P5_END
   if (!DiagnosticPolicy::allowedReadRequest(request)) {
     result.status = DiagnosticStatus::InvalidRequest;
     return;
@@ -1050,6 +1103,11 @@ void CanMonitor::performQuery(
   return;
 }
 
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+#include "signal_v2_11bit_monitor.inc"
+#endif
+// P5_END
 bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   if(!request.signal_v2)return false; // USB/V1 BLE cannot transmit in this image.
@@ -1065,9 +1123,22 @@ bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
       request.authorization_epoch != lease_epoch_ || !leaseAllowsBudget(1)) return false;
 #endif
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  if(!signal_v2::Discovery11::validRequest(request.can_id,request.length,request.data) ||
+     !request.signal_v2 || request.signal_v2_essential)return false;
+  const bool discovery11_override=true;
+#endif
+// P5_END
   const bool valid_s1=request.signal_v2 && request.can_id==0x18DA01F1U &&
       request.length==3 && request.data[0]==1 && request.data[1]==0x0C &&
       request.data[2]==0x0D && !request.signal_v2_essential;
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  (void)valid_s1;
+  if(discovery11_override) {} else
+#endif
+// P5_END
   if (!valid_s1) return false;
   const bool stage_allows=stage_authorized_ && !stage_s1_consumed_ &&
       request.authorization_epoch==stage_epoch_ && stage_epoch_>revoked_stage_epoch_ && !fault_locked_;
@@ -1079,6 +1150,15 @@ bool CanMonitor::submitQuery(const DiagnosticRequest& request) {
   const bool accepted = !fault_locked_ && !query_in_flight_ && !log_checkpoint_active_;
   if (accepted) query_in_flight_ = true;
   portEXIT_CRITICAL(&query_mux_);
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  if(!accepted) {
+    // Admission already holds tx_gate_; latch STOP without recursively locking.
+    fault_locked_=true;
+    portENTER_CRITICAL(&lease_mux_);lease_deadline_ms_=0;portEXIT_CRITICAL(&lease_mux_);
+  }
+#endif
+// P5_END
   if (!accepted) return false;
 
   DiagnosticResult stale{};

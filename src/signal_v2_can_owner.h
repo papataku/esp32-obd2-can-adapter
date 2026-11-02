@@ -53,6 +53,13 @@ class CanOwner {
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
   const char* stop_reason_=nullptr; // Owner task only; copied to atomic LCD view.
 #endif
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  bool discovery11_active_=false;
+  uint32_t discovery11_epoch_=0,discovery11_start_=0;
+  void tickDiscovery11(uint32_t now,bool armed,uint32_t epoch);
+#endif
+// P5_END
   void stop(const char* reason,uint8_t quality=10){
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
     if(!stop_reason_)stop_reason_=reason;
@@ -315,6 +322,18 @@ class CanOwner {
 #endif
   }
 public:
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+  CanOwner() { stopped_=true; }
+  bool armDiscovery11(uint32_t now,uint32_t epoch,bool live) {
+    if(live || !stopped_ || discovery11_active_ || in_flight_ || !can_ || !epoch ||
+       epoch<=discovery11_epoch_ || epoch<=revoked_epoch_.load() || can_->faultLocked())return false;
+    if(!can_->beginStageS1(epoch))return false;
+    discovery11_epoch_=epoch;discovery11_start_=now;discovery11_active_=true;
+    epoch_=epoch;stopped_=false;samples_.invalidate(10);return true;
+  }
+#endif
+// P5_END
   void attach(m5can::CanMonitor* can){can_=can;}
   // Called with the authorization epoch increment of `SIGV2 CAN S1` only.
   void requestStageS1(uint32_t epoch){s1_requested_epoch_.store(epoch);}
@@ -347,6 +366,12 @@ public:
   void invalidate(uint8_t reason=10){samples_.invalidate(reason);if(can_)can_->revokeLease();}
   void tick(uint32_t now,const Simulator::Demand &demand,bool armed,uint32_t epoch=0){
     if(!can_)return;
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+    (void)demand;
+    tickDiscovery11(now,armed,epoch);return;
+#endif
+// P5_END
     // Optional edge-derived epoch preserves callers outside the GATT boundary.
     if(!epoch)epoch=epoch_+(armed!=previously_armed_);
     if(epoch!=epoch_){
@@ -537,3 +562,8 @@ public:
 };
 } // namespace signal_v2
 #endif
+// P5_BEGIN
+#if defined(M5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB)
+#include "signal_v2_11bit_owner.inc"
+#endif
+// P5_END

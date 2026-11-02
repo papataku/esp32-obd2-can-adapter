@@ -1,0 +1,5 @@
+PASS killed ninth exit=-6 p5: /tmp/tmpq6lky90i/ninth/tests/p5_discovery.cpp:81: int main(int, char**): Assertion `!d.receive(0x7E8,false,false,false,8,(const uint8_t*)"\006\101\00012345",2000)' failed.
+PASS killed fc exit=-6 p5: /tmp/tmpq6lky90i/fc/tests/p5_discovery.cpp:104: int main(int, char**): Assertion `m.stats().tx_attempts==0' failed.
+PASS killed one-query exit=-6 p5: /tmp/tmpq6lky90i/one-query/tests/p5_discovery.cpp:53: void p5TimeHook(): Assertion `CanOwnerTestAccess::again(*monitor)!=ESP_OK' failed.
+PASS killed isolation: platformio.ini
+PASS temporary mutation trees removed

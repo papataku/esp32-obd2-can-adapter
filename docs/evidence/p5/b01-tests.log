@@ -1,0 +1,19 @@
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 3.940s
+
+OK
+PASS production guard owner accepted
+PASS production guard auto_zero rejected
+PASS production guard auto_without_owner rejected
+PASS production guard auto_hil rejected
+PASS production guard other_unstaged_vehicle rejected
+PASS production guard owner_zero rejected
+PASS production guard owner_no_rp8 rejected
+PASS production guard owner_10hz rejected
+PASS production guard owner_hil rejected
+PASS production guard owner_staged rejected
+PASS GATT ARM env:m5dial_signal_v2_can_29bit_serial_hil USB_VERIFIED ttl=600000
+PASS GATT ARM env:m5dial_signal_v2_can_29bit_5hz_owner_live USB_VERIFIED ttl=600000
+PASS GATT ARM env:m5dial_signal_v2_can_29bit_5hz_lab STAGE_AUTHORIZATION_REQUIRED
+PASS owner-live ARM -> GROUP -> Fresh five PID, continuous 5Hz, STOP/no auto-ARM
