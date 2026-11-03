@@ -13,6 +13,13 @@ struct PidDiagnostics {
   uint64_t active_ms=0;
   uint32_t last=0, due=0, epoch=0;
   bool active=false, pending=false, essential=false;
+  // Same merged-period floor as CanOwner::tick (profiles::kLegacyRp8
+  // period_5hz_ms / period_10hz_ms); tests/pid_s1.cpp static_asserts equality.
+#if defined(M5CAN_SIGNAL_V2_10HZ_LAB)
+  static constexpr uint16_t kPeriodFloorMs=100;
+#else
+  static constexpr uint16_t kPeriodFloorMs=200;
+#endif
   static void add(uint64_t &v,uint64_t n=1) { v=UINT64_MAX-v<n?UINT64_MAX:v+n; }
   void cancel() {
     if(pending)for(unsigned i=0;i<(essential?2U:5U);++i)add(pid[i].cancelled);
@@ -21,11 +28,7 @@ struct PidDiagnostics {
   template<class Demand> void observe(uint32_t now,const Demand &d,bool enabled,uint32_t e) {
     uint16_t period=10000; bool any=false;
     for(auto p:d)if(p){any=true;if(p<period)period=p;}
-#if defined(M5CAN_SIGNAL_V2_10HZ_LAB)
-    if(period<100)period=100;
-#else
-    if(period<200)period=200;
-#endif
+    if(period<kPeriodFloorMs)period=kPeriodFloorMs;
 #if defined(M5CAN_SIGNAL_V2_STAGE_GATED)
     enabled=false; // staged observation never represents LIVE gauge demand
 #endif

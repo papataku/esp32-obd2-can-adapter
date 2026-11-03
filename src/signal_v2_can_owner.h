@@ -426,7 +426,7 @@ public:
         can_->beginObservationAudit(s1_base_);
       }
     }
-    pid_diagnostics_.observe(now,demand,armed&&!stopped_&&!s1_,epoch?epoch:epoch_+(armed!=previously_armed_));
+    pid_diagnostics_.observe(now,demand,armed&&!stopped_&&!s1_,epoch_);
     if(armed && !stopped_) {
       const auto health=can_->stats();
       if(health.driver_rx_missed || health.driver_rx_overrun ||

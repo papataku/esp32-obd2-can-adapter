@@ -28,6 +28,13 @@ struct CanOwnerTestAccess {
 };
 }
 using namespace signal_v2;
+static_assert(PidDiagnostics::kPeriodFloorMs==
+#if defined(M5CAN_SIGNAL_V2_10HZ_LAB)
+  profiles::kLegacyRp8.period_10hz_ms,
+#else
+  profiles::kLegacyRp8.period_5hz_ms,
+#endif
+  "demand floor must equal the owner merge floor");
 static Simulator::Demand demand{{100,100,100,100,100}};
 static void tick(CanOwner& o,uint32_t t,bool arm=true,uint32_t epoch=1){g_test_millis=t;o.tick(t,demand,arm,epoch);}
 #if defined(M5CAN_SIGNAL_V2_RP8_PROFILE)
@@ -115,8 +122,36 @@ int main(){
  CanOwner loss;loss.attach(&m);tick(loss,50000);good();tick(loss,50010);tick(loss,50200);
  group();health.driver_rx_overrun=1;tick(loss,50320);health={};
  for(const auto& c:loss.pidDiagnostics().pid)assert(c.cancelled==1&&c.completed==0);
+ // FC: a multi-frame group (FF+2CF RAW, one monitor FC) is one instrument
+ // admission and exactly one completion; the FC is not an owner request.
+ CanOwner fc;fc.attach(&m);tick(fc,60000);good();tick(fc,60010);tick(fc,60200);
+ const auto fc_tx=requests.size();
+ group();response.raw_frame_count=3;health.signal_v2_fc=1;health.signal_v2_rx=3;
+ tick(fc,60320);tick(fc,60321);
+ assert(requests.size()==fc_tx);
+ for(const auto& c:fc.pidDiagnostics().pid)assert(c.admitted==1&&c.completed==1&&c.failed==0);
+ // All-RX: unrelated bus traffic charged by the monitor never changes demand,
+ // admission or completion; only the owner cadence does.
+ health.rx_frames=100000;health.signal_v2_rx=50000;
+ const auto fc_before=fc.pidDiagnostics();
+ tick(fc,60322);tick(fc,60399);
+ for(unsigned i=0;i<5;++i){
+   assert(fc.pidDiagnostics().pid[i].demand==fc_before.pid[i].demand);
+   assert(fc.pidDiagnostics().pid[i].completed==fc_before.pid[i].completed);
+ }
+ health={};
+ // TX=0 after STOP: 100 more armed ticks (5s) after a fault STOP send nothing,
+ // and the closed window accrues neither demand nor active time.
+ health.driver_rx_missed=1;tick(fc,60400);health={};
+ assert(fc.stopped());
+ const auto stop_tx=requests.size();const auto at_stop=fc.pidDiagnostics();
+ for(uint32_t t=60450;t<65450;t+=50){tick(fc,t);if(t%200==0){good();}}
+ ready=false;
+ assert(requests.size()==stop_tx);
+ assert(fc.pidDiagnostics().active_ms==at_stop.active_ms);
+ for(unsigned i=0;i<5;++i)assert(fc.pidDiagnostics().pid[i].demand==at_stop.pid[i].demand);
  // Saturation must not wrap a regressed counter to a deceptively small value.
  PidDiagnostics d;d.pid[0].completed=UINT64_MAX;d.admit(false);d.finish(true);
  assert(d.pid[0].completed==UINT64_MAX);
- std::cout<<"PASS PID S1 120ms/busy/missed due/concurrent demand/shed/overrun/uncertain/STOP/invalid/saturation\n";
+ std::cout<<"PASS PID S1 120ms/rolling boundary/busy/missed due/concurrent demand/shed/FC/all-RX/overrun/uncertain/STOP TX0/invalid/saturation\n";
 }
