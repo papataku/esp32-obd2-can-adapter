@@ -160,3 +160,7 @@ python3 tools/test_p3_scope.py
 # P5 isolated CAN-less discovery and fixed-base preprocessor scope.
 python3 tests/run_p5_discovery.py
 python3 tools/test_p5_scope.py
+
+# PID S1 read-only diagnostics, PM Claude 2026-11-03.
+python3 tools/test_pid_s1_scope.py
+python3 tools/test_pid_s1.py

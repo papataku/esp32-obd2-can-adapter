@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """Fixed P3-main scope and preprocessor isolation; no devices, no TX."""
 import os, pathlib, re, subprocess, tempfile
+from test_pid_s1_scope import strip_s1
+# PM Claude decision 2026-11-03 (PID S1, PR #76) -- narrow allowlist. Only the
+# exact read-only S1 hooks (tools/test_pid_s1_scope.py::HOOKS: #include
+# "signal_v2_pid_diagnostics.h", signal_v2::PidDiagnostics storage
+# CanOwner::pid_diagnostics_, const CanOwner::pidDiagnostics() and the
+# observe/admit/finish/cancel/shedAux/deny calls) and the 2-line S1 test
+# registration at the end of tests/run_all.sh are removed before the unchanged
+# fixed-base comparison and the preprocessor token comparison. The discovery
+# symbol checks still run on the raw, unstripped preprocessor output.
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BASE='0424017cb6bdb1446609d7f1318d98fd2a9ef125'
 LAB='env:m5dial_signal_v2_can_11bit_discovery_lab'
@@ -15,6 +24,8 @@ def check_tree(root=ROOT):
     old=subprocess.check_output(['git','ls-tree','-r','--name-only',BASE],cwd=ROOT,text=True).splitlines()
     for path in old:
         value=(root/path).read_bytes()
+        # PM Claude 2026-11-03 (S1): exact hooks/registration only, see header comment.
+        if path in {'src/signal_v2_can_owner.h','tests/run_all.sh'}:value=strip_s1(path,value.decode()).encode()
         if path in SOURCES:value=strip_p5(value.decode()).encode()
         elif path=='platformio.ini':value=value.split(b'\n; P5 host/serial-HIL ONLY.')[0]
         elif path=='tests/run_all.sh':value=value.split(b'\n# P5 isolated')[0]
@@ -47,13 +58,19 @@ def preprocess(root=ROOT):
             flags=[x for x in effective[section] if x.startswith(('-D','-U'))]
             for path in ('src/can_monitor.cpp','src/signal_v2_can_owner.h','src/discovery11_lab.cpp'):
                 new=subprocess.check_output([*common,*flags,str(root/path)],stderr=subprocess.DEVNULL)
+                # PM Claude 2026-11-03 (S1): token equivalence uses the owner
+                # with only the exact S1 hooks removed; discovery checks use raw new.
+                comparison=new
+                if path=='src/signal_v2_can_owner.h':
+                    source=base/'s1-owner.h';source.write_text(strip_s1(path,(root/path).read_text()))
+                    comparison=subprocess.check_output([*common,*flags,str(source)],stderr=subprocess.DEVNULL)
                 if section!=LAB:
                     assert not re.search(rb'Discovery11|discovery11_|P5_',new),(section,path)
                     if path in SOURCES:
                         old=subprocess.check_output([*common,*flags,str(base/path)],stderr=subprocess.DEVNULL)
                         # __FILE__ in assertions can differ by checkout location.
                         old=old.replace(str(base).encode(),str(root).encode())
-                        assert new.split()==old.split(),(section,path,'preprocessor token drift')
+                        assert comparison.split()==old.split(),(section,path,'preprocessor token drift')
             print('PASS preprocessor',section, 'discovery='+('lab-only' if section==LAB else '0'))
         flags=['-DM5CAN_SIGNAL_V2_CAN_EXPERIMENTAL=1','-DM5CAN_SIGNAL_V2_RP8_PROFILE=1','-DM5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE=1','-DM5CAN_SIGNAL_V2_OWNER_AUTO_ARM=1','-DM5CAN_SIGNAL_V2_11BIT_DISCOVERY_LAB=1']
         result=subprocess.run([*common,*flags,str(root/'src/can_monitor.cpp')],capture_output=True)

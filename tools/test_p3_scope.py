@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """P3 fixed-base production freeze; only read-only metadata additions allowed."""
 import pathlib, re, subprocess
+from test_pid_s1_scope import strip_s1, NEW as S1_NEW, HOOKS as S1_HOOKS
+# PM Claude decision 2026-11-03 (PID S1, PR #76) -- narrow allowlist, nothing
+# else relaxed. New files allowed: exactly the five listed below. Production
+# symbols allowed: signal_v2::PidDiagnostics (include/signal_v2_pid_diagnostics.h),
+# CanOwner::pid_diagnostics_ and const CanOwner::pidDiagnostics(), added only by
+# the 8 exact hooks in tools/test_pid_s1_scope.py::HOOKS, which are removed from
+# src/signal_v2_can_owner.h before the unchanged fixed-base byte comparison.
+S1_ALLOWED_NEW={'include/signal_v2_pid_diagnostics.h','tests/pid_s1.cpp',
+ 'tools/test_pid_s1.py','tools/test_pid_s1_load.py','tools/test_pid_s1_scope.py'}
+assert S1_NEW==S1_ALLOWED_NEW and len(S1_HOOKS)==8,'S1 allowlist widened'
+assert all(l=='private:' or 'pid_diagnostics' in l or 'PidDiagnostics' in l for _,add in S1_HOOKS for l in add.splitlines()),'S1 hook adds a non-diagnostic line'
 from test_p5_scope import strip_p5, check_tree as check_p5
 check_p5()
 ROOT=pathlib.Path(__file__).resolve().parents[1]
@@ -12,6 +23,8 @@ old_files=set(git('ls-tree','-r','--name-only',BASE).splitlines())
 modified={'include/signal_v2_session.h','src/signal_v2_session.cpp','src/signal_v2_gatt.cpp','tests/run_all.sh'}
 for path in old_files-modified:
     value=(ROOT/path).read_text()
+    # PM Claude 2026-11-03 (S1): remove only the exact S1_HOOKS; then byte-compare as before.
+    if path=='src/signal_v2_can_owner.h':value=strip_s1(path,value)
     if path in {'src/can_monitor.cpp','src/can_monitor.h','src/signal_v2_can_owner.h','tests/test_signal_v2_b01_policy.py'}: value=strip_p5(value)
     if path=='platformio.ini': value=value.split('\n; P5 host/serial-HIL ONLY.')[0]
     assert value.encode()==subprocess.check_output(['git','show',BASE+':'+path],cwd=ROOT),path
@@ -42,7 +55,8 @@ allowed_new={'include/signal_v2_profile_binding.h','tests/run_p3_binding.sh','te
  'docs/protocol/vehicle-profile-p3-wire.md'}
 added=set(git('ls-files','--cached','--others','--exclude-standard').splitlines())-old_files
 p5_new={'.github/workflows/p5-discovery.yml','include/signal_v2_11bit_discovery.h','src/discovery11_lab.cpp','src/signal_v2_11bit_monitor.inc','src/signal_v2_11bit_owner.inc','tests/p5_discovery.cpp','tests/p5_serial.cpp','tests/run_p5_discovery.py','tools/test_p5_scope.py','tools/check_p5_elf.py','tools/compare_p5_owner_image.py','tools/test_p5_mutations.py','docs/protocol/vehicle-profile-p5-discovery.md'}
-assert all(x in allowed_new or x in p5_new or x.startswith(('docs/evidence/p3/','docs/evidence/p5/')) for x in added),added-allowed_new-p5_new
+# PM Claude 2026-11-03 (S1): only S1_ALLOWED_NEW is added to the new-file allowlist.
+assert all(x in S1_ALLOWED_NEW or x in allowed_new or x in p5_new or x.startswith(('docs/evidence/p3/','docs/evidence/p5/')) for x in added),added-allowed_new-p5_new
 # No new peer identity source or logging/sending/storage API in the extension.
 new=(ROOT/'include/signal_v2_profile_binding.h').read_text()
 assert not re.search(r'(Serial\.|printf\(|Preferences|NimBLE|transmit\(|getAddress\(|macAddress\()',new)
