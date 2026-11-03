@@ -5,7 +5,7 @@
 PM Claude 2026-11-03の決定により、adapter内のP3/P5 scopeだけに、以下の完全一致allowlistを追加する。iOS Public/Personal、Golden、liveAllowed、既存legacy-equivalence試験には変更しない。
 
 - 診断ファイル: `include/signal_v2_pid_diagnostics.h`。
-- 製品側追加symbol: `signal_v2::PidDiagnostics`（Count、pid、active_ms、last、due、epoch、active、pending、essential、add、observe、admit、finish、cancel、shedAux、deny）、`CanOwner::pid_diagnostics_`、`CanOwner::pidDiagnostics`。
+- 製品側追加symbol: `signal_v2::PidDiagnostics`（Count、pid、active_ms、last、due、epoch、active、pending、essential、kPeriodFloorMs、add、observe、admit、finish、cancel、shedAux、deny）、`CanOwner::pid_diagnostics_`、`CanOwner::pidDiagnostics`。
 - 専用検査: `tools/test_pid_s1_scope.py`、`tools/test_pid_s1.py`、`tools/test_pid_s1_load.py`、`tests/pid_s1.cpp`。run_all末尾の2試験だけを追加する。
 
 P3/P5では診断の完全一致挿入箇所だけを除去して元の固定base比較を実行する。P5のdiscovery検査は除去前のpreprocessor出力を使う。S1専用scopeはownerとrun_allを固定baseへ完全復元できること、診断ヘッダにCAN/lease/送信APIへの依存がないこと、要求長mutationが復元比較を通らないことを検査する。200 bits/frame、5000 bits/100ms、25000 bits/1s、二段gate、STAGE_GATED、要求集合、owner_live 5Hzと操作・fault規則は変更しない。
@@ -29,21 +29,38 @@ P3/P5では診断の完全一致挿入箇所だけを除去して元の固定bas
 
 ## 再現する検査
 
-`python3 tools/test_pid_s1.py` は新カウンタの独立期待値と、completion欠落・essentialを全PID成功に誤計数・shed欠落・busyの需要過小計数・cancel欠落・admit後だけ需要計数・飽和wrapの7 mutationを実行する。compile失敗を検出成功に数えない。変更対象は一時コピーだけ。
+`python3 tools/test_pid_s1.py`（run_all末尾で実行、固定baseはshallow checkoutでも `git cat-file -e BASE^{commit} || git fetch --no-tags origin BASE` で取得）:
 
-固定baseはshallow checkoutでも必要時にfetchする。既存owner_live、5Hz cadence、10Hz lab cadence、owner異常のfixtureに、tick時刻/epoch/需要・要求byte/ID/deadline・完成PDU/RAW RXを記録する処理を一時的に加え、base/通常/極端counter版のtraceを比較する。既存production monitorのM1/M2/M3/M6/M7/m1/controls/R1/R2/R3は別プロセスで走らせ、実driver境界の全TX（FC含む）/RX byte・時刻をbaseと比較する。元のfixtureとlegacy-equivalence検査は編集しない。
+1. `tests/pid_s1.cpp` の独立期待値を、RP8既定構成と owner_live env の実効フラグの2構成で実行する。対象: 120ms遅延とbusy中の需要、rolling予約の219/220msと1119/1120ms境界、FC（FF+2CF RAW・FC 1回でもadmit 1/complete 1、ownerは追加TXしない）、all-RX（無関係RX 10万件でもdemand/completedは不変）、overrun、uncertain admission（submit失敗はSTOP、再試行TXなし）、STOP後100 tick（5秒）TX=0かつdemand/active_ms不変、同時需要（周期の異なる5 PIDを最短周期1本へmerge）、invalid応答、飽和加算。
+2. 一時コピーだけで18 mutationを入れ、すべて実行時assertionで検出（compile失敗は検出に数えない）。ヘッダ7件（completion削除、essentialで全PID計上、shed削除、busy需要の過小計数、cancel削除、admission後だけ需要計数、飽和wrap）、ownerフック7件（shedAux/finish/admit/STOP cancel/2種のdeny削除、STOP後の需要計数）、owner挙動4件（常時shed、shedせずSTOP、uncertain admissionの再試行、STOP後TX）。
+3. 既存ownerシナリオ11構成（owner_live実効フラグ、serial-HIL B-01、PR65 cadence 5Hz/10Hz lab、PR65 owner empty/RP8/10Hz lab、bounded discovery、stage S1 通常/STAGE_GATED、review owner）で、base `3e43dfe`・head・counter全項目UINT64_MAX強制・counter 0+内部状態(pending/essential/active/due/last/epoch)攪乱の4版の tick/TX/RX trace が完全一致。正の対照として deadline+1ms のTX変異はtraceを変える。
+4. 既存production monitorのM1/M2/M3/M6/M7/m1/controls/R1/R2/R3で、driver境界の全TX（FC 12件を含む）と全RXがbase・head・極端counter版で一致。
 
-新しい120ms delay/busy/同時需要/STOP/overrun/uncertain admission/invalid試験、rolling予約の219/220msと1119/1120ms境界に加え、既存suiteのFC/all-RX/uncertain retry/STOP実driver境界検査をすべて維持する。
+`python3 tools/test_pid_s1_scope.py`: ownerとrun_allから8箇所の完全一致フックだけを除くと固定baseとbyte一致、診断ヘッダはCAN/lease/送信API・`this`・friendを含まず、struct/メソッド名が列挙どおり、内容はSHA-256で固定。P3/P5 scopeは同じフック一覧を使い、追加ファイル5件と記号名をリテラルで列挙（2026-11-03 PM決定を引用）。それ以外の判定は変更しない。
 
-全suite: Python 3.11 + clang と `docker run --rm -v "$PWD:/work" -w /work python:3.12 bash -c './tests/run_all.sh'`（GCC 14）。全envはplatformio.iniの27 `env:`を明示列挙してpio runする（defaultのm5dialだけでは全env合格としない）。
+全suite: Python 3.11 + Apple clang と `docker run --rm -v "$PWD:/work" -w /work python:3.12 bash -c './tests/run_all.sh'`（GCC 14.2）。両方exit 0、warning 0。全envは platformio.ini の全 `env:` を列挙して `pio run -e` する。
 
-## LOAD差分を説明する方法
+## owner_live LOAD差分の説明（base 3e43dfe → S1 code commit 7f176e7）
 
-`tools/test_pid_s1_load.py --base BASE_ELF --head HEAD_ELF --erased CONTROL_ELF --tool-prefix PREFIX`。
+`tools/test_pid_s1_load.py` で、同じtoolchainの通常buildと `-Wl,--emit-relocs` build（LOAD byteが通常buildと完全一致することを先に確認）を比べる。関数ごとにリンカ再配置箇所をmaskし、分岐/call先はsymbol+offset、`l32r` は読み込むliteralの値（文字列は内容）で比較する。
 
-CONTROLは診断追加を除去したhead（owner/run_allが固定baseと一致）を同じenv・toolchainでビルドしたもの。最初の監査commit `ec17bbaaa55d9dfd6cebba133ee8050605112798` は文書だけの変更で、この対照に使える。baseとCONTROLは `.flash.rodata` の40-byte build SHA文字列1個を正規化すると、全6 LOADのVMA/LMA/長さ/全byteが一致する。
+| LOAD | base | head | 差 | 説明 |
+|---|---:|---:|---:|---|
+| .iram0.vectors | 1027 | 1027 | 0 | 一致 |
+| .iram0.text | 80195 | 80195 | 0 | 移動したflash/bss番地を指す語だけ。指す先は同じ |
+| .dram0.data | 126524 | 126828 | +304 | owner object末尾に `PidDiagnostics`（sizeof 304、全0初期値）を追加。先頭1632 byteは同一（移動した文字列pointer 1個は同じ文字列）。後続の.data/.bss番地は+304移動 |
+| .flash.text | 549635 | 550399 | +764 | 下記 |
+| .flash.appdesc | 256 | 256 | 0 | 一致 |
+| .flash.rodata | 176508 | 176508 | 0 | build SHA 40 byte、同じ30文字列のmerge順変更（strcmpで使う "LOAD_BUDGET_ESSENTIAL"/"QUERY_ADMISSION_FAILED" がstop()側の文字列sectionへ移動）、移動したcode番地（EH pc_begin、CIE personality、jump table）、S1関数とrelaxのみの関数の unwind/LSDA byte |
 
-通常headはcounter storage・診断更新code・const read-outを加える。section長、配置、hashとowner/診断symbolサイズを記録し、増分本体に伴うlinker relocation/alignment、build identityを区別する。診断を除いたときに全LOADが戻ること、scope完全復元と実行trace一致を組み合わせて差の由来を限定する。通常headのLOADがbaseとbyte一致するとは主張しない。owner_liveのdiscovery symbolは0を要求する。
+.flash.text の関数差分:
+
+- 計数コード（許可）: `CanOwner::tick`（1456→1946）、`CanOwner::stop`（102→244、strcmp 2回とdeny/cancel）、`CanOwner::result`（999→1043、finish）、新規 `PidDiagnostics::add`（52 byte）・`PidDiagnostics::cancel()`（55 byte）。observe/admit/shedAux/deny/finishはインライン化。`pidDiagnostics()` read-outは製品コードから呼ばれないため機械語なし。
+- 同じ翻訳単位 `signal_v2_gatt.cpp` の8関数はGCC出力が同一で、assembler/linkerのalignment・narrow/wide選択だけが異なる: `validProbe`・`probeResult`・`pin`・`reportS1`（GCC `-S` 命令列がbase/headで完全一致）、`grantCanArm`・`manage`・`poll`・`begin`（alignment fillとdensity形を同一視すると命令・分岐先・literal値が一致）。
+- 他の全関数は再配置maskとsymbolic比較で一致（161 segmentは移動番地だけ）。literal pool 9領域はpool配置/共有の差で、使用側 `l32r` の値は関数ごとに一致を確認済み。
+- owner_live の discovery symbol は base/head とも 0。
+
+再現: base/headそれぞれの clone で `pio run -e m5dial_signal_v2_can_29bit_5hz_owner_live` と、clone外の `PLATFORMIO_BUILD_DIR` に `PLATFORMIO_BUILD_FLAGS=-Wl,--emit-relocs` で同envをbuildする。`pio run -v` の `src/signal_v2_gatt.cpp.o` compile行の `-c`/`-o` を `-S`/`-o *.s` に替えて GCC 出力を得る。その後 `python3 tools/test_pid_s1_load.py --base … --head … --base-relocs … --head-relocs … --asm-base … --asm-head … --tool-prefix …/xtensa-esp32s3-elf- --allow 'signal_v2::CanOwner::tick(…)' …`（許可は上記5関数だけ）。docs/tools だけを変更した最終headは、上記S1 code commitとbuild SHA文字列だけが異なることを別に確認する。
 
 ## 範囲外・未実施
 
