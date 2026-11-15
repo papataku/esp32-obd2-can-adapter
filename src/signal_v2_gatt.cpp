@@ -9,6 +9,9 @@
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
 #include "signal_v2_can_owner.h"
 #endif
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+#include "signal_v2_flight_recorder.h"
+#endif
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <Preferences.h>
@@ -192,6 +195,9 @@ void serviceControlRevocations(uint32_t now) {
   if(!slots)return;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   owner.noteAuthorizationEnd("CONTROL_FIFO_OVERFLOW");
+#if defined(M5CAN_V2REC_LINKED)
+  recorder::authEnd(now,recorder::AuthControlFifoOverflow);
+#endif
   owner.invalidate(10);
 #endif
   for(unsigned i=0;i<2;++i) {
@@ -214,6 +220,9 @@ void serviceUnsubscribeRevocations(uint32_t now) {
   if(!slots)return;
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   owner.noteAuthorizationEnd("CENTRAL_UNSUBSCRIBE");
+#if defined(M5CAN_V2REC_LINKED)
+  recorder::authEnd(now,recorder::AuthCentralUnsubscribe);
+#endif
   owner.invalidate(10);
 #endif
   for(unsigned i=0;i<2;++i) {
@@ -351,6 +360,9 @@ void manage(const char *cmd, uint32_t now) {
     manual_stop=true;
 #endif
     owner.noteAuthorizationEnd("OPERATOR_STOP");
+#if defined(M5CAN_V2REC_LINKED)
+    recorder::authEnd(now,recorder::AuthOperatorStop);
+#endif
     can_armed=false;const uint32_t revoked=++can_authorization_epoch;
     owner.revokeAuthorization(revoked);owner.invalidate(10);
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
@@ -566,6 +578,9 @@ void send(Peer &p, const Link &l, uint32_t now) {
   if(p.output.size && (p.output.bytes[4]==0x20 ||
                        p.output.bytes[4]==0x21) &&
      !p.session.canPacketCurrent(now,p.output,owner.samples())){
+#if defined(M5CAN_V2REC_LINKED)
+    recorder::discarded(recorder::DiscardStaleInSend,p.output.bytes[4]);
+#endif
     p.output.size=0;
     p.dataoff=0;
     p.session.clearDemoCache(now);
@@ -863,6 +878,9 @@ void serviceAutoArm(uint32_t now) {
     auto_session={};
     if(can_armed) {
       owner.noteAuthorizationEnd("SESSION_ENDED");
+#if defined(M5CAN_V2REC_LINKED)
+      recorder::authEnd(now,recorder::AuthSessionEnded);
+#endif
       const uint32_t revoked=++can_authorization_epoch;
       can_armed=false;
       owner.revokeAuthorization(revoked);owner.invalidate(10);
@@ -883,6 +901,9 @@ void serviceAutoArm(uint32_t now) {
     armed_until=now+600000;
   } else if(uint32_t(now-auto_session.since)>=2000 && !owner.busy()) {
     if(grantCanArm(now,seen))auto_session.epoch=seen+1;
+#if defined(M5CAN_V2REC_LINKED)
+    if(can_armed)recorder::authEnd(now,recorder::AuthAutoArmGranted);
+#endif
   }
 }
 #endif
@@ -958,6 +979,9 @@ void poll() {
 #endif
   if(can_armed && int32_t(armed_until-now)<=0){
     owner.noteAuthorizationEnd("USB_ARM_EXPIRED");
+#if defined(M5CAN_V2REC_LINKED)
+    recorder::authEnd(now,recorder::AuthUsbArmExpired);
+#endif
     can_armed=false;const uint32_t revoked=++can_authorization_epoch;
     owner.revokeAuthorization(revoked);owner.invalidate(10);
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
@@ -970,6 +994,16 @@ void poll() {
 #if defined(M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE)
   display_reason.store(owner.stopReason());
   display_busy.store(owner.busy());
+#endif
+#if defined(M5CAN_V2REC_LINKED)
+  { // Flight recorder: copies values / const refs only, after the owner tick.
+    recorder::OwnerView view;
+    view.armed=can_armed.load();view.manual=manual_stop.load();view.epoch=can_authorization_epoch.load();
+    view.stopped=owner.stopped();view.busy=owner.busy();view.reason=owner.stopReason();
+    for(unsigned i=0;i<2;++i){const auto l=snapshot(i);view.link[i]=l.active;
+      view.subscribed[i]=l.status&&l.data;view.generation[i]=l.generation;}
+    recorder::observe(now,view,owner.pidDiagnostics(),owner.samples());
+  }
 #endif
   static uint32_t stopped_ack_epoch=0;
   if(!can_armed && !owner.busy() && stopped_ack_epoch!=can_authorization_epoch.load()){
@@ -993,6 +1027,9 @@ void poll() {
   // STOP or source invalidation. Snapshot cannot resurrect pre-error records.
   if((unsafe && !last_unsafe) || (!unsafe && source_transition)){
     for(auto &p:peers){
+#if defined(M5CAN_V2REC_LINKED)
+      if(p.output.size)recorder::discarded(recorder::DiscardSourceTransition,p.output.bytes[4]);
+#endif
       p.output.size=p.dataoff=0;
       p.session.clearDemoCache(now);
     }
@@ -1041,6 +1078,9 @@ void poll() {
     // expiry, even when a notify fragment was previously backpressured.
     if (!p.session.active(now) && p.output.size &&
         (p.output.bytes[4] == 0x20 || p.output.bytes[4] == 0x21)) {
+#if defined(M5CAN_V2REC_LINKED)
+      recorder::discarded(recorder::DiscardLeaseExpired,p.output.bytes[4]);
+#endif
       p.output.size = 0;
       p.dataoff = 0;
     }
@@ -1052,6 +1092,9 @@ void poll() {
                           )) {
       p.dataoff = 0;
       p.data_transfer = ++p.transfer;
+#if defined(M5CAN_V2REC_LINKED)
+      recorder::produced(p.output.bytes[4],p.output.bytes[4]==0x21?p.output.payload()[12]:p.output.payload()[0]);
+#endif
     }
     send(p, l, now);
   }
@@ -1098,8 +1141,14 @@ void poll() {
       p.session.control(p.input, authorized(l) && l.status && l.data, now,
                         p.ack);
       auto op = p.input.payload()[8];
+#if defined(M5CAN_V2REC_LINKED)
+      recorder::control(op, p.ack.size ? p.ack.payload()[5] : 0xFF);
+#endif
       if (p.ack.size && p.ack.payload()[5] == Accept &&
           (op == 2 || op == 3 || op == 5 || op == 6 || op == 7 || op == 10)) {
+#if defined(M5CAN_V2REC_LINKED)
+        if(p.output.size)recorder::discarded(recorder::DiscardControlAccept,p.output.bytes[4]);
+#endif
         p.output.size = 0;
         p.dataoff = 0;
       }

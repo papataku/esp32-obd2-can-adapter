@@ -43,7 +43,9 @@ def check():
         subprocess.run(['git','fetch','--no-tags','origin',BASE],cwd=ROOT,check=True)
     for path in ('src/signal_v2_can_owner.h','tests/run_all.sh'):
         old=subprocess.check_output(['git','show',BASE+':'+path],cwd=ROOT,text=True)
-        assert strip_s1(path,(ROOT/path).read_text())==old,path
+        # PM Claude 2026-11-15 (V2 flight recorder): its exact pinned hooks are removed first.
+        from test_v2_flight_recorder_scope import strip_v2rec
+        assert strip_s1(path,strip_v2rec(path,(ROOT/path).read_text()))==old,path
     # All counter writes are isolated from scheduling: owner additions are the
     # exact side-effect-only calls above plus a const diagnostic read-out.
     diagnostic=(ROOT/'include/signal_v2_pid_diagnostics.h').read_text()

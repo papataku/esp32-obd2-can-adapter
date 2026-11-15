@@ -15,8 +15,13 @@ class EvidenceFlash {
 };
 class EvidenceStore {
  public:
-  static constexpr uint32_t kSector=4096,kMaxBlob=2304,kKeys=20;
-  enum Type:uint16_t {Probe=1,Failure=2,Ble=3};
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+  static constexpr uint32_t kV2RecSlots=48; // Signal V2 flight recorder pages
+#else
+  static constexpr uint32_t kV2RecSlots=0;
+#endif
+  static constexpr uint32_t kSector=4096,kMaxBlob=2304,kKeys=20+kV2RecSlots;
+  enum Type:uint16_t {Probe=1,Failure=2,Ble=3,V2Rec=4};
   struct Status {
     bool ready=false,foreign=false;
     uint32_t sectors=0,commits=0,errors=0,corrupt=0,uncommitted=0;
@@ -41,6 +46,9 @@ class EvidenceStore {
   bool owner(const Header& h) const;
   bool valid(uint32_t offset,Header& h);
   bool protectedSector(uint32_t offset) const;
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+  bool reusableByV2Rec(uint32_t offset); // blank or already a V2Rec sector
+#endif
   EvidenceFlash* flash_=nullptr;
   Status status_{};
   Index index_[kKeys]{};

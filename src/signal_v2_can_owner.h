@@ -8,6 +8,9 @@
 #include "signal_v2_can_route.h"
 #include "signal_v2_discovery_profile.h"
 #include "signal_v2_simulator.h"
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+#include "signal_v2_flight_recorder_tap.h"
+#endif
 #include <Arduino.h>
 #if defined(M5CAN_SIGNAL_V2_SERIAL_HIL)
 #include "twai_hil.h"
@@ -443,6 +446,9 @@ public:
         in_flight_=false;
         if(armed&&!stopped_&&submitted_epoch_==epoch_)result(incoming);
         else samples_.invalidate(10); // Never promote disarmed completion.
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+        recorder::tapResult(incoming,ecu_); // const read after handling
+#endif
       }
     }
     const auto load=can_->stats();

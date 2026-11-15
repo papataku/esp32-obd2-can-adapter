@@ -1,0 +1,10 @@
+DIFF signal_v2::(anonymous namespace)::links
+DIFF signal_v2::(anonymous namespace)::manage(char const*, unsigned int)
+DIFF signal_v2::serviceAutoArm(unsigned int)
+DIFF signal_v2::poll()
+DIFF signal_v2::CanOwner::tick(unsigned int, std::array<unsigned short, 5u> const&, bool, unsigned int)
+NEW  signal_v2::recorder::tapAdd(unsigned int&)
+NEW  void signal_v2::recorder::tapResult<m5can::DiagnosticResult, m5can::EcuPhysicalSelector>(m5can::DiagnosticResult const&, m5can::EcuPhysicalSelector co
+DIFF signal_v2::golden_G01
+NEW  signal_v2::recorder::resultTap()::tap
+identical functions: 119 of 125

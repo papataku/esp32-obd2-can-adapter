@@ -1,0 +1,37 @@
+# GCC -S of src/signal_v2_gatt.cpp (owner_live flags), CanOwner::tick, base c3843a6 vs head; .loc/.L labels normalized
+--- 
++++ 
+@@ -376,10 +376,18 @@
+ call8	_ZN9signal_v28CanOwner6resultERKN5m5can16DiagnosticResultE
+ .L:
++l32r	a2, .L
++l32i.n	a8, sp, 48
++movi	a10, -0x748
++add.n	a2, a2, sp
++addi.n	a11, a8, 8
++add.n	a10, a2, a10
++s32i.n	a8, sp, 48
++call8	_ZN9signal_v28recorder9tapResultIN5m5can16DiagnosticResultENS2_19EcuPhysicalSelectorEEEvRKT_RKT0_
+ l32i.n	a8, sp, 48
+ .L:
+ l32i.n	a11, a8, 0
++addi	a9, sp, -96
+ movi	a10, 0xb8
+-addi	a2, sp, -96
+-add.n	a10, a2, a10
++add.n	a10, a9, a10
+ s32i.n	a8, sp, 48
+ call8	_ZNK5m5can10CanMonitor5statsEv
+@@ -460,9 +468,9 @@
+ l8ui	a9, a6, 239
+ bnez.n	a9, .L
+-movi	a9, 0xa0
++movi	a2, 0xa0
+ l32i.n	a11, a8, 0
+-add.n	a9, a9, sp
+ movi	a10, 0xb8
+-add.n	a10, a9, a10
++add.n	a2, a2, sp
++add.n	a10, a2, a10
+ s32i.n	a8, sp, 48
+ call8	_ZNK5m5can10CanMonitor5statsEv

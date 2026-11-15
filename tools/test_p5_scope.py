@@ -24,6 +24,9 @@ def check_tree(root=ROOT):
     old=subprocess.check_output(['git','ls-tree','-r','--name-only',BASE],cwd=ROOT,text=True).splitlines()
     for path in old:
         value=(root/path).read_bytes()
+        # PM Claude 2026-11-15 (V2 flight recorder): exact pinned hooks only.
+        from test_v2_flight_recorder_scope import strip_v2rec
+        value=strip_v2rec(path,value.decode()).encode() if path.endswith(('.h','.cpp','.py','.ini','.sh')) else value
         # PM Claude 2026-11-03 (S1): exact hooks/registration only, see header comment.
         if path in {'src/signal_v2_can_owner.h','tests/run_all.sh'}:value=strip_s1(path,value.decode()).encode()
         if path in SOURCES:value=strip_p5(value.decode()).encode()
@@ -62,7 +65,8 @@ def preprocess(root=ROOT):
                 # with only the exact S1 hooks removed; discovery checks use raw new.
                 comparison=new
                 if path=='src/signal_v2_can_owner.h':
-                    source=base/'s1-owner.h';source.write_text(strip_s1(path,(root/path).read_text()))
+                    from test_v2_flight_recorder_scope import strip_v2rec  # PM Claude 2026-11-15: exact recorder hooks
+                    source=base/'s1-owner.h';source.write_text(strip_s1(path,strip_v2rec(path,(root/path).read_text())))
                     comparison=subprocess.check_output([*common,*flags,str(source)],stderr=subprocess.DEVNULL)
                 if section!=LAB:
                     assert not re.search(rb'Discovery11|discovery11_|P5_',new),(section,path)

@@ -1,0 +1,17 @@
+== m5dial
+functions: base=6520 head=6520 new=0 removed=0 changed=2 identical=6518
+CHANGED  m5can::DriveLog::begin(unsigned int, unsigned int) (71 -> 71 insns)
+CHANGED  setup() (69 -> 69 insns)
+== m5dial_signal_v2_can_29bit_5hz_lab
+functions: base=4715 head=4715 new=0 removed=0 changed=2 identical=4713
+CHANGED  setup() (127 -> 127 insns)
+CHANGED  signal_v2::poll() (1868 -> 1868 insns)
+== m5dial_signal_v2_can_disabled_lab
+functions: base=4560 head=4560 new=0 removed=0 changed=7 identical=4553
+CHANGED  __kernel_sinf (52 -> 52 insns)
+CHANGED  call_start_cpu0 (214 -> 214 insns)
+CHANGED  pxPortInitialiseStack (63 -> 63 insns)
+CHANGED  setup() (101 -> 101 insns)
+CHANGED  signal_v2::poll() (1211 -> 1211 insns)
+CHANGED  soc_get_available_memory_region_max_count (10 -> 10 insns)
+CHANGED  soc_get_available_memory_regions (192 -> 192 insns)

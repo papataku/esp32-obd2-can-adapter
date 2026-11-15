@@ -1,0 +1,10 @@
+m5dial_signal_v2_can_29bit_5hz_owner_live: RAM: [====== ] 57.2% (used 187556 bytes from 327680 bytes) Flash: [=== ] 29.4% (used 983925 bytes from 3342336 bytes)  SUCCESS
+m5dial: RAM: [== ] 24.9% (used 81492 bytes from 327680 bytes) Flash: [==== ] 35.8% (used 1195113 bytes from 3342336 bytes)  SUCCESS
+m5dial_signal_v2_can_29bit_5hz_lab: RAM: [===== ] 50.4% (used 165012 bytes from 327680 bytes) Flash: [=== ] 28.8% (used 961025 bytes from 3342336 bytes)  SUCCESS
+m5dial_signal_v2_can_29bit_10hz_lab: RAM: [===== ] 50.4% (used 165012 bytes from 327680 bytes) Flash: [=== ] 28.8% (used 961049 bytes from 3342336 bytes)  SUCCESS
+m5dial_signal_v2_can_disabled_lab: RAM: [==== ] 42.8% (used 140388 bytes from 327680 bytes) Flash: [=== ] 27.1% (used 905025 bytes from 3342336 bytes)  SUCCESS
+m5dial_signal_v2_can_29bit_serial_hil: RAM: [====== ] 59.4% (used 194508 bytes from 327680 bytes) Flash: [== ] 21.9% (used 732233 bytes from 3342336 bytes)  SUCCESS
+m5dial_signal_v2_can_29bit_passive: RAM: [= ] 6.1% (used 20136 bytes from 327680 bytes) Flash: [== ] 16.1% (used 338293 bytes from 2097152 bytes)  SUCCESS
+m5dial_v2_owner_compile: RAM: [===== ] 45.5% (used 149252 bytes from 327680 bytes) Flash: [=== ] 27.2% (used 908857 bytes from 3342336 bytes)  SUCCESS
+m5dial_signal_v2_can_11bit_discovery_lab: RAM: [=== ] 25.0% (used 82032 bytes from 327680 bytes) Flash: [= ] 8.8% (used 294253 bytes from 3342336 bytes)  SUCCESS
+m5dial_dual_ble_multipid_bench: RAM: [==== ] 42.1% (used 137804 bytes from 327680 bytes) Flash: [=== ] 27.0% (used 900769 bytes from 3342336 bytes)  SUCCESS

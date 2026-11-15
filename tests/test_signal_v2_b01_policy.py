@@ -12,6 +12,7 @@ HIL = "env:m5dial_signal_v2_can_29bit_serial_hil"
 OWNER = "env:m5dial_signal_v2_can_29bit_5hz_owner_live"
 OWNER_MACRO = "M5CAN_SIGNAL_V2_OWNER_CONTINUOUS_LIVE"
 AUTO_MACRO = "M5CAN_SIGNAL_V2_OWNER_AUTO_ARM"
+RECORDER_MACRO = "M5CAN_SIGNAL_V2_FLIGHT_RECORDER"  # PM Claude 2026-11-15: read-only, owner_live only
 
 def flags_by_env(path=None):
     p=configparser.ConfigParser(interpolation=None)
@@ -120,7 +121,7 @@ class SerialHilB01(unittest.TestCase):
         config,flags=flags_by_env()
         self.assert_vehicle_policy(flags)
         # All other effective 5Hz definitions stay the same.
-        self.assertEqual([f for f in flags[OWNER] if OWNER_MACRO not in f and AUTO_MACRO not in f],
+        self.assertEqual([f for f in flags[OWNER] if OWNER_MACRO not in f and AUTO_MACRO not in f and RECORDER_MACRO not in f],
                          [f for f in flags["env:m5dial_signal_v2_can_29bit_5hz_lab"]
                           if "M5CAN_SIGNAL_V2_STAGE_GATED" not in f])
         self.assertEqual(config.get(OWNER,"extends"),
