@@ -321,7 +321,11 @@ class Producer {
       const uint64_t cur[7] = {p.demand, p.admitted, p.completed, p.failed, p.shed, p.denied, p.cancelled};
       for (unsigned k = 0; k < 7; ++k) if (cur[k] != base_pid_[i][k]) return true;
     }
-    return std::memcmp(&cum_, &base_cum_, sizeof(cum_)) != 0;
+    static_assert(sizeof(Cum) % 4 == 0, "Cum is a plain uint32_t block");
+    const uint32_t *x = reinterpret_cast<const uint32_t *>(&cum_);
+    const uint32_t *y = reinterpret_cast<const uint32_t *>(&base_cum_);
+    for (size_t k = 0; k < sizeof(Cum) / 4; ++k) if (x[k] != y[k]) return true;
+    return false;
   }
   uint8_t flags(const OwnerView &v, const CanSamples &s) const {
     return uint8_t((v.armed ? 1 : 0) | (v.stopped ? 2 : 0) | (v.busy ? 4 : 0) |

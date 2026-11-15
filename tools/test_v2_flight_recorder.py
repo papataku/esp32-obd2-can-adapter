@@ -59,7 +59,8 @@ template <class O> void v2recAfterTick(O &owner, uint32_t now, bool armed, uint3
   // A write is legal only before TWAI/arm (boot) or after a latched stop.
   store.armed_now = armed && !v.reason;
   if (V2REC_MODE == 3) {
-    std::memset(&producer.testCum(), 0xFF, sizeof(producer.testCum()));
+    { uint32_t *w = reinterpret_cast<uint32_t *>(&producer.testCum());
+      for (size_t k = 0; k < sizeof(Producer::Cum) / 4; ++k) w[k] = 0xFFFFFFFFu; }
     ResultTap &t = resultTap();
     for (auto &x : t.latency) x = 0xFFFFFFFFu;
     for (auto &x : t.status) x = 0xFFFFFFFFu;
