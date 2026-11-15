@@ -1,5 +1,8 @@
 #include "signal_v2_gatt.h"
 #include "evidence_store.h"
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+#include "signal_v2_flight_recorder.h"
+#endif
 #include <Arduino.h>
 #include <atomic>
 #if defined(ARDUINO_ARCH_ESP32)
@@ -121,6 +124,11 @@ void setup() {
                                     M5CAN_BUILD_SHA);
 #endif
 
+#if defined(M5CAN_V2REC_LINKED)
+  // Boot record before TWAI/BLE start: the only pre-stop flash write.
+  signal_v2::recorder::begin(&g_can,M5CAN_BUILD_SHA,static_cast<uint32_t>(esp_reset_reason()),
+      static_cast<uint32_t>(rtc_get_reset_reason(0)));
+#endif
 #if defined(M5CAN_SIGNAL_V2_CAN_EXPERIMENTAL)
   signal_v2::attachCan(&g_can);
 #endif
@@ -183,6 +191,9 @@ void loop() {
   m5can::bleEvidenceJournal().observeQueueDrops(g_ble.diagnosticDrops());
   for (unsigned n=0;n<8 && g_ble.pollDiagnostic(event);++n) {
     m5can::bleEvidenceJournal().append(event,g_ble.diagnosticDrops());
+#if defined(M5CAN_V2REC_LINKED)
+    signal_v2::recorder::bleEvent(event);
+#endif
     // Long CDC serial writes during a dual-peer session compete with
     // the Arduino loop and can skew the very latencies being diagnosed.
     // Persist complete bounded evidence now; dump it after the run.
@@ -396,6 +407,9 @@ void loop() {
   // Flash only from Arduino loop and only at CAN-idle checkpoints.
   // Never block NimBLE GAP callbacks or CPU0 CAN owner with NVS writes.
   m5can::bleEvidenceJournal().poll(g_can);
+#if defined(M5CAN_V2REC_LINKED)
+  signal_v2::recorder::poll(g_can); // drains owner ring; flash only after latched stop
+#endif
 #endif
 #if defined(M5CAN_DUAL_BLE_EXPERIMENTAL)
   const auto peers=g_ble.peerTraffic();

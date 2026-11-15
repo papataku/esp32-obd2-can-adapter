@@ -1,4 +1,7 @@
 #include "signal_v2_gatt.h"
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+#include "signal_v2_flight_recorder.h"
+#endif
 #include "serial_protocol.h"
 #include "twai_hil.h"
 
@@ -492,6 +495,9 @@ void SerialProtocol::handleUsbLine(const char* line) {
 #endif
 #if defined(M5CAN_SIGNAL_V2_EXPERIMENTAL)
   if(signal_v2::usbCommand(line))return;
+#endif
+#if defined(M5CAN_V2REC_LINKED)
+  if(signal_v2::recorder::usbCommand(line))return; // read-only, no CAN access
 #endif
   if (elm_mode_ && elm_link_ == ElmLink::Usb) {
     handleElmLine(line, ElmLink::Usb);

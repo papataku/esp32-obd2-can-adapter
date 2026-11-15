@@ -164,3 +164,7 @@ python3 tools/test_p5_scope.py
 # PID S1 read-only diagnostics, PM Claude 2026-11-03.
 python3 tools/test_pid_s1_scope.py
 python3 tools/test_pid_s1.py
+
+# Signal V2 flight recorder (read-only, owner_live only), PM Claude 2026-11-15.
+python3 tools/test_v2_flight_recorder_scope.py
+python3 tools/test_v2_flight_recorder.py

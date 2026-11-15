@@ -50,6 +50,9 @@ int EvidenceStore::key(Type type,unsigned slot) {
   if(type==Probe && slot<8)return slot;
   if(type==Failure && slot<8)return 8+slot;
   if(type==Ble && slot<4)return 16+slot;
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+  if(type==V2Rec && slot<kV2RecSlots)return static_cast<int>(20+slot);
+#endif
   return -1;
 }
 uint32_t EvidenceStore::checksum(const Header& h,const void* data,size_t bytes) {
@@ -126,6 +129,13 @@ bool EvidenceStore::protectedSector(uint32_t offset) const {
   for(const auto& i:index_)if(i.offset==offset)return true;
   return false;
 }
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+bool EvidenceStore::reusableByV2Rec(uint32_t offset) {
+  Header h{};
+  if(!flash_->read(offset,&h,sizeof(h)))return false;
+  return h.magic==UINT32_MAX || (h.magic==kRecord && h.type==V2Rec);
+}
+#endif
 bool EvidenceStore::put(Type type,unsigned slot,const void* data,size_t bytes) {
   const int k=key(type,slot);
   if(!status_.ready || k<0 || !data || !bytes || bytes>kMaxBlob ||
@@ -135,7 +145,11 @@ bool EvidenceStore::put(Type type,unsigned slot,const void* data,size_t bytes) {
     const uint32_t candidate=cursor_*kSector;
     if(++cursor_>=status_.sectors)cursor_=2;
     // Preserve every key's latest valid record until the NEW record commits.
-    if(!protectedSector(candidate)){offset=candidate;break;}
+    if(!protectedSector(candidate)
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+       && (type!=V2Rec || reusableByV2Rec(candidate)) // PM 2026-11-15: erase only own/blank sectors
+#endif
+       ){offset=candidate;break;}
   }
   if(offset==UINT32_MAX){++status_.errors;return false;}
   Header h{};h.magic=kRecord;h.type=type;h.slot=slot;

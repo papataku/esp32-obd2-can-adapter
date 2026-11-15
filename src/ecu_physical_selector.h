@@ -22,6 +22,7 @@ class EcuPhysicalSelector {
   State state() const { return state_; }
   bool probing() const { return state_==State::Discover || state_==State::Recheck; }
   bool fixed() const { return state_==State::Fixed; }
+  uint8_t consecutiveBad() const { return consecutive_bad_; } // read-only (V2 recorder)
   bool legacy() const { return state_==State::Legacy; }
   uint32_t chosenResponse() const { return chosen_; }
   uint32_t physicalId() const {
