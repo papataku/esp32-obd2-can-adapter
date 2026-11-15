@@ -63,7 +63,8 @@ def inspect(data):
         magic, version, kind, sequence, slot, size, crc, commit = HEADER.unpack_from(data, offset)
         if magic == 0xffffffff: continue
         if commit != COMMIT: uncommitted += 1; continue
-        if magic != RECORD or version != 1 or not sequence or kind not in [1, 2, 3] or slot >= (4 if kind == 3 else 8) or not 0 < size <= 2304:
+        # PM Claude 2026-11-15: type 4 = V2 flight recorder page (48 slots); decode with decode_v2_flight_recorder.py.
+        if magic != RECORD or version != 1 or not sequence or kind not in [1, 2, 3, 4] or slot >= {3: 4, 4: 48}.get(kind, 8) or not 0 < size <= 2304:
             invalid += 1; continue
         payload = data[offset+32:offset+32+size]
         if zlib.crc32(data[offset:offset+24]+payload) != crc:

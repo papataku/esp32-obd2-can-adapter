@@ -50,6 +50,39 @@ PAIRS = {'platformio.ini': [('    -DM5CAN_SIGNAL_V2_OWNER_AUTO_ARM=1\n'
                              '  if(!flash_->read(offset,&h,sizeof(h)))return false;\n'
                              '  return h.magic==UINT32_MAX || (h.magic==kRecord && h.type==V2Rec);\n'
                              '}\n'
+                             # PM Claude 2026-11-15 (owner 「上書きしてよい」): reclaim oldest type-3 sector.
+                             '// Owner 2026-11-15 "上書きしてよい": with no blank/own sector left, reclaim ONE\n'
+                             '// sector holding a CRC-valid committed type-3 (BLE journal) revision, oldest\n'
+                             '// sequence first. Any type 3 (the journal never starts in V2 builds). Owner,\n'
+                             "// other types, each key's latest record, corrupt/uncommitted/unknown: never.\n"
+                             '// Capped at kV2RecSlots+1 own sectors (48 pages + 1 commit spare).\n'
+                             'uint32_t EvidenceStore::reclaimBleForV2Rec() {\n'
+                             '  uint32_t own=0,floor_offset=0;uint64_t floor_seq=0;\n'
+                             '  for(uint32_t s=2;s<status_.sectors;++s){\n'
+                             '    Header h{};\n'
+                             '    if(flash_->read(s*kSector,&h,sizeof(h)) && h.magic==kRecord && h.type==V2Rec)++own;\n'
+                             '  }\n'
+                             '  if(own>kV2RecSlots)return UINT32_MAX;\n'
+                             '  for(uint32_t round=2;round<status_.sectors;++round){\n'
+                             '    uint32_t best=UINT32_MAX;uint64_t best_seq=UINT64_MAX;\n'
+                             '    for(uint32_t s=2;s<status_.sectors;++s){\n'
+                             '      const uint32_t offset=s*kSector;Header h{};\n'
+                             '      if(!flash_->read(offset,&h,sizeof(h)) || h.magic!=kRecord || h.type!=Ble ||\n'
+                             '         h.commit!=kCommit || protectedSector(offset))continue;\n'
+                             '      if(h.sequence<floor_seq || (h.sequence==floor_seq && offset<=floor_offset))continue;\n'
+                             '      if(h.sequence<best_seq || (h.sequence==best_seq && offset<best))\n'
+                             '        {best=offset;best_seq=h.sequence;}\n'
+                             '    }\n'
+                             '    if(best==UINT32_MAX)return UINT32_MAX;\n'
+                             '    const uint32_t corrupt=status_.corrupt,uncommitted=status_.uncommitted;\n'
+                             '    Header h{};\n'
+                             '    const bool ok=valid(best,h) && h.type==Ble;\n'
+                             '    status_.corrupt=corrupt;status_.uncommitted=uncommitted; // read-only probe\n'
+                             '    if(ok)return best;\n'
+                             '    floor_seq=best_seq;floor_offset=best; // corrupt: skip, never erase\n'
+                             '  }\n'
+                             '  return UINT32_MAX;\n'
+                             '}\n'
                              '#endif\n',
                              '  return false;\n}\n'),
                             ("    // Preserve every key's latest valid record until the NEW record commits.\n"
@@ -60,7 +93,12 @@ PAIRS = {'platformio.ini': [('    -DM5CAN_SIGNAL_V2_OWNER_AUTO_ARM=1\n'
                              '#endif\n'
                              '       ){offset=candidate;break;}\n',
                              "    // Preserve every key's latest valid record until the NEW record commits.\n"
-                             '    if(!protectedSector(candidate)){offset=candidate;break;}\n')],
+                             '    if(!protectedSector(candidate)){offset=candidate;break;}\n'),
+                            ('#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)\n'
+                             '  if(offset==UINT32_MAX && type==V2Rec)offset=reclaimBleForV2Rec(); // one sector per put\n'
+                             '#endif\n'
+                             '  if(offset==UINT32_MAX){++status_.errors;return false;}\n',
+                             '  if(offset==UINT32_MAX){++status_.errors;return false;}\n')],
  'src/evidence_store.h': [(' public:\n'
                            '#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)\n'
                            '  static constexpr uint32_t kV2RecSlots=48; // Signal V2 flight recorder pages\n'
@@ -75,6 +113,7 @@ PAIRS = {'platformio.ini': [('    -DM5CAN_SIGNAL_V2_OWNER_AUTO_ARM=1\n'
                           ('  bool protectedSector(uint32_t offset) const;\n'
                            '#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)\n'
                            '  bool reusableByV2Rec(uint32_t offset); // blank or already a V2Rec sector\n'
+                           '  uint32_t reclaimBleForV2Rec(); // owner 2026-11-15: oldest committed BLE sector\n'
                            '#endif\n',
                            '  bool protectedSector(uint32_t offset) const;\n')],
  'src/main.cpp': [('#include "evidence_store.h"\n'
@@ -212,6 +251,13 @@ PAIRS = {'platformio.ini': [('    -DM5CAN_SIGNAL_V2_OWNER_AUTO_ARM=1\n'
                              '#endif\n',
                              '          (op == 2 || op == 3 || op == 5 || op == 6 || op == 7 || op == 10)) '
                              '{\n')],
+ 'tools/inspect_evidence_partition.py': [
+     ('        # PM Claude 2026-11-15: type 4 = V2 flight recorder page (48 slots); decode with '
+      'decode_v2_flight_recorder.py.\n'
+      "        if magic != RECORD or version != 1 or not sequence or kind not in [1, 2, 3, 4] or slot >= "
+      "{3: 4, 4: 48}.get(kind, 8) or not 0 < size <= 2304:\n",
+      "        if magic != RECORD or version != 1 or not sequence or kind not in [1, 2, 3] or slot >= "
+      "(4 if kind == 3 else 8) or not 0 < size <= 2304:\n")],
  'tests/run_all.sh': [('python3 tools/test_pid_s1.py\n'
                        '\n'
                        '# Signal V2 flight recorder (read-only, owner_live only), PM Claude 2026-11-15.\n'
@@ -375,6 +421,15 @@ def check():
     assert flush.index('!status_.window_open') < flush.index('cp.begin()') < flush.index('writePage(')
     assert 'open_pending_ = true' in rec and rec.count('open_pending_ = true') == 1
     assert "rec[6] == EvStopIdle" in rec, 'flush window opens only on STOP_IDLE'
+    # Reclaim (owner 2026-11-15): one call site, V2Rec only, after the normal
+    # blank/own search failed; erase stays the single erase in put().
+    store = (ROOT / 'src/evidence_store.cpp').read_text()
+    assert store.count('reclaimBleForV2Rec()') == 2 and store.count('flash_->erase(') == 1
+    assert '  if(offset==UINT32_MAX && type==V2Rec)offset=reclaimBleForV2Rec();' in store
+    body = store[store.index('uint32_t EvidenceStore::reclaimBleForV2Rec() {'):store.index('bool EvidenceStore::put(')]
+    body = '\n'.join(l.split('//')[0] for l in body.splitlines())
+    assert not re.search(r'erase|write\(|->put\(', body), 'reclaim selector must be read-only'
+    assert 'h.type!=Ble' in body and 'protectedSector(offset)' in body and 'own>kV2RecSlots' in body
     glue = (ROOT / 'src/signal_v2_flight_recorder.cpp').read_text()
     assert glue.count('evidenceStore().put(') == 1
     assert '#error "flight recorder requires the owner_live image' in glue

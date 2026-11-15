@@ -135,6 +135,38 @@ bool EvidenceStore::reusableByV2Rec(uint32_t offset) {
   if(!flash_->read(offset,&h,sizeof(h)))return false;
   return h.magic==UINT32_MAX || (h.magic==kRecord && h.type==V2Rec);
 }
+// Owner 2026-11-15 "上書きしてよい": with no blank/own sector left, reclaim ONE
+// sector holding a CRC-valid committed type-3 (BLE journal) revision, oldest
+// sequence first. Any type 3 (the journal never starts in V2 builds). Owner,
+// other types, each key's latest record, corrupt/uncommitted/unknown: never.
+// Capped at kV2RecSlots+1 own sectors (48 pages + 1 commit spare).
+uint32_t EvidenceStore::reclaimBleForV2Rec() {
+  uint32_t own=0,floor_offset=0;uint64_t floor_seq=0;
+  for(uint32_t s=2;s<status_.sectors;++s){
+    Header h{};
+    if(flash_->read(s*kSector,&h,sizeof(h)) && h.magic==kRecord && h.type==V2Rec)++own;
+  }
+  if(own>kV2RecSlots)return UINT32_MAX;
+  for(uint32_t round=2;round<status_.sectors;++round){
+    uint32_t best=UINT32_MAX;uint64_t best_seq=UINT64_MAX;
+    for(uint32_t s=2;s<status_.sectors;++s){
+      const uint32_t offset=s*kSector;Header h{};
+      if(!flash_->read(offset,&h,sizeof(h)) || h.magic!=kRecord || h.type!=Ble ||
+         h.commit!=kCommit || protectedSector(offset))continue;
+      if(h.sequence<floor_seq || (h.sequence==floor_seq && offset<=floor_offset))continue;
+      if(h.sequence<best_seq || (h.sequence==best_seq && offset<best))
+        {best=offset;best_seq=h.sequence;}
+    }
+    if(best==UINT32_MAX)return UINT32_MAX;
+    const uint32_t corrupt=status_.corrupt,uncommitted=status_.uncommitted;
+    Header h{};
+    const bool ok=valid(best,h) && h.type==Ble;
+    status_.corrupt=corrupt;status_.uncommitted=uncommitted; // read-only probe
+    if(ok)return best;
+    floor_seq=best_seq;floor_offset=best; // corrupt: skip, never erase
+  }
+  return UINT32_MAX;
+}
 #endif
 bool EvidenceStore::put(Type type,unsigned slot,const void* data,size_t bytes) {
   const int k=key(type,slot);
@@ -151,6 +183,9 @@ bool EvidenceStore::put(Type type,unsigned slot,const void* data,size_t bytes) {
 #endif
        ){offset=candidate;break;}
   }
+#if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
+  if(offset==UINT32_MAX && type==V2Rec)offset=reclaimBleForV2Rec(); // one sector per put
+#endif
   if(offset==UINT32_MAX){++status_.errors;return false;}
   Header h{};h.magic=kRecord;h.type=type;h.slot=slot;
   h.sequence=++status_.last_sequence;h.bytes=bytes;h.crc=checksum(h,data,bytes);
