@@ -15,6 +15,10 @@
    Recorder stores report puts and armed-write violations on stderr: the
    violation count must be 0 (writes only after a latched stop).
 4. Positive control: a hook that calls owner.invalidate() changes the trace.
+5. Owner decision 2026-11-15 (reclaim of old BLE-journal sectors): the C++
+   tests reclaim one oldest type-3 sector per page write on a full store; here a
+   mixed type 1/3/4 + corrupt/uncommitted image must still decode with both
+   decode_v2_flight_recorder.py and inspect_evidence_partition.py.
 """
 import json, os, pathlib, re, subprocess, sys, tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -128,6 +132,28 @@ def run_decoder(tmp, exe):
           'SUMMARY values match firmware text; CSV %d rows' % (len(rows) - 1))
 
 
+def run_mixed(tmp, exe):
+    img = tmp / 'mixed.bin'
+    m = re.search(r'v2rec=(\d+) ble=(\d+)', run([str(exe), 'mixed', str(img)]))
+    v2rec, ble = int(m.group(1)), int(m.group(2)) - 3  # 3 type-3 headers are corrupt/uncommitted
+    out = json.loads(run([sys.executable, str(ROOT / 'tools/decode_v2_flight_recorder.py'), str(img)]))
+    assert [b['boot'] for b in out['boots']] == [1, 2], out['boots']
+    stops = [r for b in out['boots'] for r in b['records'] if r['type'] == 'STOP']
+    assert len(stops) == 1 and stops[0]['reason'] == 'QUERY_ADMISSION_FAILED', stops
+    assert out['other_record_types'] == {'1': 1, '3': ble}, out['other_record_types']
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('inspector', ROOT / 'tools/inspect_evidence_partition.py')
+    inspector = importlib.util.module_from_spec(spec); spec.loader.exec_module(inspector)
+    res = inspector.inspect(img.read_bytes())
+    kinds = {}
+    for r in res['records']: kinds[r['type']] = kinds.get(r['type'], 0) + 1
+    assert kinds == {1: 1, 3: ble, 4: v2rec}, kinds
+    assert res['invalid_sectors'] == 3 and res['uncommitted_sectors'] == 1, res
+    assert sum(r['current_key_revision'] for r in res['records'] if r['type'] == 3) == 4
+    print('PASS mixed partition (owner + Probe + %d Ble + %d V2Rec + 3 corrupt + 1 uncommitted): '
+          'decode_v2_flight_recorder and inspect_evidence_partition both decode it' % (ble, v2rec))
+
+
 def trace_equivalence(tmp):
     base = tmp / 'base'; base.mkdir()
     archive = subprocess.Popen(['git', 'archive', BASE], cwd=ROOT, stdout=subprocess.PIPE)
@@ -180,6 +206,7 @@ def main():
         tmp = pathlib.Path(d)
         exe = run_unit(tmp)
         run_decoder(tmp, exe)
+        run_mixed(tmp, exe)
         trace_equivalence(tmp)
 
 

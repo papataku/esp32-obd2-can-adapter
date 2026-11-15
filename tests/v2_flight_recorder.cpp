@@ -18,7 +18,7 @@ using m5can::EvidenceStore;
 struct Flash final : m5can::EvidenceFlash {
   std::vector<uint8_t> bytes = std::vector<uint8_t>(0x180000, 0xFF);
   std::vector<unsigned> erases = std::vector<unsigned>(0x180000 / 4096, 0);
-  bool fail_write = false, armed = false;
+  bool fail_write = false, armed = false, fail_erase = false, fail_write_only = false;
   unsigned writes = 0, erase_count = 0, armed_violations = 0;
   uint32_t size() const override { return uint32_t(bytes.size()); }
   bool read(uint32_t o, void *p, size_t n) override {
@@ -27,7 +27,7 @@ struct Flash final : m5can::EvidenceFlash {
   }
   bool write(uint32_t o, const void *p, size_t n) override {
     if (armed) ++armed_violations;
-    if (fail_write || o > bytes.size() || n > bytes.size() - o) return false;
+    if (fail_write || fail_write_only || o > bytes.size() || n > bytes.size() - o) return false;
     const auto *s = static_cast<const uint8_t *>(p);
     for (size_t i = 0; i < n; ++i) {
       if ((bytes[o + i] & s[i]) != s[i]) return false;  // NOR: 1->0 only
@@ -37,7 +37,7 @@ struct Flash final : m5can::EvidenceFlash {
   }
   bool erase(uint32_t o) override {
     if (armed) ++armed_violations;
-    if (fail_write || o % 4096 || o + 4096 > bytes.size()) return false;
+    if (fail_write || fail_erase || o % 4096 || o + 4096 > bytes.size()) return false;
     std::fill_n(bytes.begin() + o, 4096, 0xFF);
     ++erases[o / 4096]; ++erase_count; return true;
   }
@@ -344,6 +344,176 @@ static void testEvictionPolicy() {
   std::puts("PASS RAM journal: pinned head page, oldest tail evicted before stop with overflow flag");
 }
 
+
+// ---- Reclaim of old BLE-journal (type 3) sectors, owner decision 2026-11-15 ----
+// Store header layout (flash ABI): magic u32, version u16, type u16, seq u64,
+// slot u32, bytes u32, crc u32, commit u32.
+static uint16_t typeAt(const Flash &f, unsigned sector) {
+  uint16_t t; std::memcpy(&t, f.bytes.data() + sector * 4096 + 6, 2); return t;
+}
+static uint32_t magicAt(const Flash &f, unsigned sector) {
+  uint32_t m; std::memcpy(&m, f.bytes.data() + sector * 4096, 4); return m;
+}
+static uint64_t seqAt(const Flash &f, unsigned sector) {
+  uint64_t q; std::memcpy(&q, f.bytes.data() + sector * 4096 + 8, 8); return q;
+}
+static constexpr unsigned kSectors = 0x180000 / 4096;
+static constexpr unsigned kSpecial = 7;  // sectors 2..6 hold non-reclaimable records
+// Bench layout: owner x2 + every data sector a committed record. Sectors 2..6
+// carry the OLDEST sequences but must never be reclaimed: Probe (other type),
+// CRC-corrupt Ble, uncommitted Ble, unknown type 9, CRC-corrupt Ble with a
+// valid-looking header. Sectors 7..383 hold CRC-valid Ble revisions.
+static void fillFullBle(Flash &flash) {
+  EvidenceStore store;
+  CHECK(store.begin(flash, true));
+  uint8_t blob[100];
+  for (unsigned i = 0; i < kSectors - 2; ++i) {
+    std::memset(blob, int(i & 0xFF), sizeof(blob));
+    const auto t = i == 0 ? EvidenceStore::Probe : EvidenceStore::Ble;
+    CHECK(store.put(t, i % 4, blob, sizeof(blob)));
+  }
+  for (unsigned s = 2; s < kSectors; ++s) CHECK(magicAt(flash, s) == 0x4D354552u);
+  flash.bytes[3 * 4096 + 40] ^= 0x01;                                     // CRC corrupt
+  std::memset(flash.bytes.data() + 4 * 4096 + 28, 0xFF, 4);               // uncommitted
+  flash.bytes[5 * 4096 + 6] = 9;                                          // unknown type
+  flash.bytes[6 * 4096 + 32 + 99] ^= 0x80;                                // CRC corrupt (tail)
+  CHECK(typeAt(flash, 2) == EvidenceStore::Probe);
+  EvidenceStore check;
+  CHECK(check.begin(flash, false));
+  CHECK(check.status().corrupt == 3 && check.status().uncommitted == 1);
+}
+static unsigned countType(const Flash &f, uint16_t type) {
+  unsigned n = 0;
+  for (unsigned s = 2; s < kSectors; ++s) n += magicAt(f, s) == 0x4D354552u && typeAt(f, s) == type;
+  return n;
+}
+// Sector currently holding the oldest Ble revision that is not the latest of its key.
+static unsigned expectedReclaim(const Flash &f) {
+  uint64_t latest[4] = {0, 0, 0, 0};
+  for (unsigned s = kSpecial; s < kSectors; ++s)
+    if (magicAt(f, s) == 0x4D354552u && typeAt(f, s) == EvidenceStore::Ble) {
+      uint32_t slot; std::memcpy(&slot, f.bytes.data() + s * 4096 + 16, 4);
+      latest[slot] = std::max(latest[slot], seqAt(f, s));
+    }
+  unsigned best = 0; uint64_t best_seq = UINT64_MAX;
+  for (unsigned s = kSpecial; s < kSectors; ++s)
+    if (magicAt(f, s) == 0x4D354552u && typeAt(f, s) == EvidenceStore::Ble) {
+      const uint64_t q = seqAt(f, s);
+      bool is_latest = false;
+      for (uint64_t l : latest) is_latest |= l == q;
+      if (!is_latest && q < best_seq) { best_seq = q; best = s; }
+    }
+  return best;
+}
+
+static void testReclaimFullBleStore() {
+  Flash flash;
+  fillFullBle(flash);
+  const std::vector<uint8_t> keep(flash.bytes.begin(), flash.bytes.begin() + kSpecial * 4096);
+  const unsigned ble0 = countType(flash, EvidenceStore::Ble);
+  std::vector<unsigned> order;
+  // PR #77 behaviour on this image was boot_page=failed. Now: one reclaim per boot page.
+  for (unsigned boot = 1; boot <= 49; ++boot) {
+    const unsigned want = expectedReclaim(flash);
+    CHECK(want >= kSpecial);
+    const auto erases = flash.erases;
+    auto r = runBoot(flash, 1, false, 0);
+    CHECK(r.st.boot_written && !r.st.store_failed && r.st.puts == 1 && r.st.put_failures == 0);
+    unsigned erased = 0, which = 0;
+    for (unsigned s = 0; s < kSectors; ++s) if (flash.erases[s] != erases[s]) { ++erased; which = s; }
+    CHECK(erased == 1 && which == want);                 // exactly one, oldest first
+    CHECK(typeAt(flash, which) == EvidenceStore::V2Rec);
+    order.push_back(which);
+    CHECK(countType(flash, EvidenceStore::Ble) == ble0 - boot);
+    CHECK(countType(flash, EvidenceStore::V2Rec) == boot);
+  }
+  for (size_t i = 1; i < order.size(); ++i) CHECK(seqAt(flash, order[i]) > seqAt(flash, order[i - 1]));
+  // 48 pages + 1 commit spare reached: V2Rec now rotates within its own sectors.
+  const std::vector<uint8_t> ble_before = flash.bytes;
+  for (unsigned boot = 0; boot < 40; ++boot) {
+    auto r = runBoot(flash, 1, boot % 4 == 0, boot % 4 == 0 ? 20 : 0);
+    CHECK(r.st.boot_written && !r.st.store_failed && r.flash_writes_before_stop == 0);
+  }
+  CHECK(countType(flash, EvidenceStore::Ble) == ble0 - 49 && countType(flash, EvidenceStore::V2Rec) == 49);
+  for (unsigned s = 0; s < kSectors; ++s)
+    if (!(magicAt(flash, s) == 0x4D354552u && typeAt(flash, s) == EvidenceStore::V2Rec))
+      CHECK(std::equal(ble_before.begin() + s * 4096, ble_before.begin() + (s + 1) * 4096, flash.bytes.begin() + s * 4096));
+  CHECK(std::equal(keep.begin(), keep.end(), flash.bytes.begin()));  // owner + Probe/corrupt/uncommitted/unknown
+  CHECK(flash.armed_violations == 0);
+  EvidenceStore store;
+  CHECK(store.begin(flash, false));
+  StoreAdapter a(store);
+  unsigned pages = 0;
+  for (unsigned slot = 0; slot < kSlots; ++slot) pages += a.length(slot) != 0;
+  CHECK(pages == kSlots);
+  for (unsigned k = 0; k < 4; ++k) CHECK(store.length(EvidenceStore::Ble, k) == 100);  // latest per key kept
+  std::printf("PASS reclaim: full Ble store, 49 boots reclaimed one oldest Ble sector each (sectors %u..%u), "
+              "then 40 boots with 0 Ble erases; 48 pages + 1 spare; owner/Probe/corrupt/uncommitted/unknown untouched\n",
+              order.front(), order.back());
+}
+
+static void testReclaimOnlyAsNeeded() {
+  Flash flash;
+  fillFullBle(flash);
+  const unsigned ble0 = countType(flash, EvidenceStore::Ble);
+  const auto fill_erases = flash.erases;
+  auto r = runBoot(flash, 1, true, 40);  // boot page + latched-stop flush pages
+  CHECK(r.flash_writes_before_stop == 0 && flash.armed_violations == 0);
+  CHECK(r.st.puts >= 2 && r.st.puts <= kMaxPutsPerBoot && !r.st.store_failed);
+  CHECK(countType(flash, EvidenceStore::V2Rec) == r.st.puts);
+  CHECK(countType(flash, EvidenceStore::Ble) == ble0 - r.st.puts);
+  unsigned erased = 0;
+  for (unsigned k = 0; k < kSectors; ++k) erased += flash.erases[k] - fill_erases[k];
+  CHECK(erased == r.st.puts);  // one reclaim (erase) per page write, no more
+  std::printf("PASS reclaim: stop boot wrote %u pages, reclaimed exactly %u Ble sectors\n", r.st.puts, erased);
+}
+
+static void testReclaimFailure() {
+  {  // Erase fails at boot: sector intact, persistence off for this boot.
+    Flash flash;
+    fillFullBle(flash);
+    const std::vector<uint8_t> before = flash.bytes;
+    flash.fail_erase = true;
+    auto r = runBoot(flash, 1, true, 3);
+    flash.fail_erase = false;
+    CHECK(!r.st.boot_written && r.st.store_failed && r.st.puts == 1 && r.st.put_failures == 1);
+    CHECK(flash.bytes == before);
+    CHECK(r.flash_writes_before_stop == 0 && flash.armed_violations == 0);
+    auto next = runBoot(flash, 1, false, 0);  // next boot retries once
+    CHECK(next.st.boot_written && countType(flash, EvidenceStore::V2Rec) == 1);
+  }
+  {  // Write fails after the erase: that old Ble revision is gone, nothing else.
+    Flash flash;
+    fillFullBle(flash);
+    const unsigned want = expectedReclaim(flash);
+    const unsigned ble0 = countType(flash, EvidenceStore::Ble);
+    flash.fail_write_only = true;
+    auto r = runBoot(flash, 1, true, 3);
+    flash.fail_write_only = false;
+    CHECK(!r.st.boot_written && r.st.store_failed && r.st.puts == 1);
+    CHECK(magicAt(flash, want) == UINT32_MAX && countType(flash, EvidenceStore::Ble) == ble0 - 1);
+    CHECK(countType(flash, EvidenceStore::V2Rec) == 0);
+  }
+  {  // Failure inside the latched-stop flush (reclaim path): no further puts that boot.
+    Flash flash;
+    fillFullBle(flash);
+    auto r = runBoot(flash, 1, true, 3, true);
+    CHECK(r.st.boot_written && r.st.store_failed && r.st.puts == 2 && r.st.put_failures == 1);
+    CHECK(r.flash_writes_before_stop == 0 && flash.armed_violations == 0);
+  }
+  std::puts("PASS reclaim failure: erase/write failure disables persistence for the boot; erase failure leaves Ble intact");
+}
+
+static void writeMixedImage(const char *path) {
+  Flash flash;
+  fillFullBle(flash);
+  runBoot(flash, 1, false, 1);
+  runBoot(flash, 9 /*BROWNOUT*/, true, 4);
+  std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char *>(flash.bytes.data()),
+                                              std::streamsize(flash.bytes.size()));
+  std::printf("v2rec=%u ble=%u\n", countType(flash, EvidenceStore::V2Rec), countType(flash, EvidenceStore::Ble));
+}
+
 static void writeImage(const char *path) {
   Flash flash;
   runBoot(flash, 1, false, 1);
@@ -373,11 +543,15 @@ static void writeImage(const char *path) {
 
 int main(int argc, char **argv) {
   if (argc == 3 && !std::strcmp(argv[1], "image")) { writeImage(argv[2]); return 0; }
+  if (argc == 3 && !std::strcmp(argv[1], "mixed")) { writeMixedImage(argv[2]); return 0; }
   testRing();
   testProducerRecords();
   testRetentionAndOwnership();
   testFailureInjection();
   testBootLoopLimiter();
   testEvictionPolicy();
+  testReclaimFullBleStore();
+  testReclaimOnlyAsNeeded();
+  testReclaimFailure();
   std::puts("PASS V2 flight recorder host tests");
 }

@@ -48,6 +48,7 @@ class EvidenceStore {
   bool protectedSector(uint32_t offset) const;
 #if defined(M5CAN_SIGNAL_V2_FLIGHT_RECORDER)
   bool reusableByV2Rec(uint32_t offset); // blank or already a V2Rec sector
+  uint32_t reclaimBleForV2Rec(); // owner 2026-11-15: oldest committed BLE sector
 #endif
   EvidenceFlash* flash_=nullptr;
   Status status_{};
